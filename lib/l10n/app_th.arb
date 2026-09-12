@@ -291,5 +291,8 @@
   "aboutFeatureRealtime": "ข้อมูลตลาดแบบเรียลไทม์",
   "aboutFeatureAlerts": "การแจ้งเตือนอัจฉริยะ",
   "aboutFeatureGlobalCoverage": "ครอบคลุมตลาดทั่วโลก",
-  "aboutFeaturePremiumTools": "เครื่องมือพรีเมียม"
+  "aboutFeaturePremiumTools": "เครื่องมือพรีเมียม",
+  "chartModeLine": "เส้น",
+  "chartModeCandle": "แท่งเทียน",
+  "chartCandleCaption": "แท่งเทียนสาธิตแบบสด — แท่งใหม่เกิดขึ้นทุกประมาณ 20 วินาที"
 }

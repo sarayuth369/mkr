@@ -798,4 +798,14 @@ class AppLocalizationsTh extends AppLocalizations {
 
   @override
   String get aboutFeaturePremiumTools => 'เครื่องมือพรีเมียม';
+
+  @override
+  String get chartModeLine => 'เส้น';
+
+  @override
+  String get chartModeCandle => 'แท่งเทียน';
+
+  @override
+  String get chartCandleCaption =>
+      'แท่งเทียนสาธิตแบบสด — แท่งใหม่เกิดขึ้นทุกประมาณ 20 วินาที';
 }

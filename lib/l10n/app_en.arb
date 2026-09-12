@@ -291,5 +291,8 @@
   "aboutFeatureRealtime": "Real-time market data",
   "aboutFeatureAlerts": "Smart alerts",
   "aboutFeatureGlobalCoverage": "Global market coverage",
-  "aboutFeaturePremiumTools": "Premium tools"
+  "aboutFeaturePremiumTools": "Premium tools",
+  "chartModeLine": "Line",
+  "chartModeCandle": "Candle",
+  "chartCandleCaption": "Live demo candles — a new candle forms every ~20 seconds"
 }

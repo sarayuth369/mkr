@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/ai_insight_card.dart';
+import '../../../../core/widgets/candlestick_chart.dart';
 import '../../../../core/widgets/day_range_bar.dart';
+import '../../../../domain/market_candle.dart';
 import '../../../../core/widgets/economic_event_card.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
@@ -103,11 +105,7 @@ class _MarketDetailBody extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 16),
-                PriceChart(
-                  series: controller.series,
-                  isUp: quote.isUp,
-                  onTimeframeChanged: controller.loadSeries,
-                ),
+                _ChartSection(symbol: symbol, controller: controller, isUp: quote.isUp),
                 const SizedBox(height: 20),
                 MarketSentimentGauge(changePct: quote.changePct),
                 if (quote.low != null && quote.high != null) ...[
@@ -159,6 +157,70 @@ class _MarketDetailBody extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+enum _ChartMode { line, candle }
+
+class _ChartSection extends StatefulWidget {
+  const _ChartSection({required this.symbol, required this.controller, required this.isUp});
+
+  final String symbol;
+  final MarketDetailController controller;
+  final bool isUp;
+
+  @override
+  State<_ChartSection> createState() => _ChartSectionState();
+}
+
+class _ChartSectionState extends State<_ChartSection> {
+  _ChartMode _mode = _ChartMode.line;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: SegmentedButton<_ChartMode>(
+            segments: [
+              ButtonSegment(value: _ChartMode.line, label: Text(l10n.chartModeLine), icon: const Icon(Icons.show_chart, size: 16)),
+              ButtonSegment(value: _ChartMode.candle, label: Text(l10n.chartModeCandle), icon: const Icon(Icons.candlestick_chart_outlined, size: 16)),
+            ],
+            selected: {_mode},
+            onSelectionChanged: (s) => setState(() => _mode = s.first),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_mode == _ChartMode.line)
+          PriceChart(
+            series: widget.controller.series,
+            isUp: widget.isUp,
+            onTimeframeChanged: widget.controller.loadSeries,
+          )
+        else ...[
+          StreamBuilder<List<MarketCandle>>(
+            stream: context.read<MarketService>().watchCandles(widget.symbol),
+            builder: (context, snapshot) {
+              final candles = snapshot.data ?? const <MarketCandle>[];
+              if (candles.length < 2) {
+                return const LoadingSkeleton(height: 180, width: double.infinity, borderRadius: 12);
+              }
+              return CandlestickChart(candles: candles);
+            },
+          ),
+          const SizedBox(height: 6),
+          Text(
+            l10n.chartCandleCaption,
+            style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ],
     );
   }
 }

@@ -72,22 +72,16 @@ class NewsCard extends StatelessWidget {
                 children: [
                   Icon(Icons.source_outlined, size: 12, color: theme.colorScheme.onSurfaceVariant),
                   const SizedBox(width: 4),
-                  Text(
-                    article.source,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                  Expanded(
+                    child: Text(
+                      article.source,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  if (article.isMock) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      'MOCK',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.outline,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ],

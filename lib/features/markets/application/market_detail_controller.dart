@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_state.dart';
@@ -53,6 +55,27 @@ class MarketDetailController extends ChangeNotifier {
   ChartTimeframe _timeframe = ChartTimeframe.d1;
   ChartTimeframe get timeframe => _timeframe;
 
+  StreamSubscription<List<MarketQuote>>? _liveSubscription;
+
+  void _watchLiveQuote() {
+    _liveSubscription?.cancel();
+    _liveSubscription = _marketService.watchQuotes([symbol]).listen((updates) {
+      if (updates.isEmpty) return;
+      final live = updates.first;
+      _quoteState = ApiState.success(live, lastUpdated: _marketService.lastUpdated);
+      if (_series.isNotEmpty && _timeframe == ChartTimeframe.d1) {
+        _series = [..._series]..[_series.length - 1] = live.price;
+      }
+      notifyListeners();
+    });
+  }
+
+  @override
+  void dispose() {
+    _liveSubscription?.cancel();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     _quoteState = const ApiState.loading();
     _aiState = const ApiState.loading();
@@ -61,6 +84,7 @@ class MarketDetailController extends ChangeNotifier {
     try {
       final quote = await _marketService.getQuote(symbol);
       _quoteState = quote == null ? const ApiState.empty() : ApiState.success(quote);
+      if (quote != null) _watchLiveQuote();
     } catch (e) {
       _quoteState = ApiState.error(e.toString());
     }

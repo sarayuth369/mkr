@@ -1,5 +1,6 @@
 import '../../../core/widgets/price_chart.dart';
 import '../../../domain/asset_class.dart';
+import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
 
@@ -33,7 +34,20 @@ abstract class MarketService {
   /// to be live.
   Stream<List<MarketQuote>> watchQuotes(List<String> symbols);
 
+  /// Subscribe to the OHLC candle history (oldest first, current forming
+  /// candle last) for a single symbol, updating as ticks arrive. Backs the
+  /// candlestick chart the same way [watchQuotes] backs price lists — same
+  /// underlying tick source, so price/sparkline/candle stay consistent.
+  Stream<List<MarketCandle>> watchCandles(String symbol);
+
   /// Re-establish the data connection (no-op for the mock beyond resetting
   /// [lastUpdated]).
   Future<void> reconnect();
+
+  /// Pause background simulation/streaming (e.g. app backgrounded) to avoid
+  /// wasted work; [resume] restarts it. No-op for a real push-based
+  /// implementation that doesn't poll.
+  void pause();
+
+  void resume();
 }

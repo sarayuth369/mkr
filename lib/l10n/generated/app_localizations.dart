@@ -1627,6 +1627,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Premium tools'**
   String get aboutFeaturePremiumTools;
+
+  /// No description provided for @chartModeLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Line'**
+  String get chartModeLine;
+
+  /// No description provided for @chartModeCandle.
+  ///
+  /// In en, this message translates to:
+  /// **'Candle'**
+  String get chartModeCandle;
+
+  /// No description provided for @chartCandleCaption.
+  ///
+  /// In en, this message translates to:
+  /// **'Live demo candles — a new candle forms every ~20 seconds'**
+  String get chartCandleCaption;
 }
 
 class _AppLocalizationsDelegate

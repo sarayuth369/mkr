@@ -799,4 +799,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get aboutFeaturePremiumTools => 'Premium tools';
+
+  @override
+  String get chartModeLine => 'Line';
+
+  @override
+  String get chartModeCandle => 'Candle';
+
+  @override
+  String get chartCandleCaption =>
+      'Live demo candles — a new candle forms every ~20 seconds';
 }

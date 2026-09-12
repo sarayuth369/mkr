@@ -107,8 +107,43 @@ class MkrApp extends StatelessWidget {
   }
 }
 
-class _AppView extends StatelessWidget {
+class _AppView extends StatefulWidget {
   const _AppView();
+
+  @override
+  State<_AppView> createState() => _AppViewState();
+}
+
+class _AppViewState extends State<_AppView> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Pause the demo market simulation while backgrounded so it doesn't
+    // keep ticking (and draining battery) for a screen nobody can see;
+    // resume the moment the app is visible again. No-op for a real
+    // push-based backend that doesn't poll.
+    final marketService = context.read<MarketService>();
+    switch (state) {
+      case AppLifecycleState.resumed:
+        marketService.resume();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+        marketService.pause();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

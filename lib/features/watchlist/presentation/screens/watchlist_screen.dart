@@ -52,44 +52,67 @@ class WatchlistScreen extends StatelessWidget {
               ),
             ],
           ),
-          success: (quotes, isStale, lastUpdated) => Column(
-            children: [
-              if (!entitlement.hasUnlimitedWatchlist && quotes.length >= Entitlement.freeWatchlistLimit)
-                _LimitBanner(
-                  message: l10n.watchlistLimitReached(quotes.length, Entitlement.freeWatchlistLimit),
-                  onUpgrade: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
-                ),
-              Expanded(
-                child: ReorderableListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: quotes.length,
-                  // ignore: deprecated_member_use
-                  onReorder: controller.reorder,
-                  itemBuilder: (context, index) {
-                    final quote = quotes[index];
-                    return Dismissible(
-                      key: ValueKey(quote.symbol),
-                      direction: DismissDirection.endToStart,
-                      onDismissed: (_) => controller.remove(quote.symbol),
-                      background: Container(
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        color: Theme.of(context).colorScheme.errorContainer,
-                        child: const Icon(Icons.delete_outline),
-                      ),
-                      child: AssetRow(
-                        quote: quote,
-                        sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
+          success: (quotes, isStale, lastUpdated) {
+            // A free account can end up with more saved symbols than its
+            // current limit allows (e.g. the seeded default watchlist).
+            // Never show a contradictory "6 / 3" style count — clamp the
+            // displayed "active" count to the limit and render the rest as
+            // locked preview rows instead of just silently listing them all
+            // as if they were fully usable.
+            final activeCount = entitlement.hasUnlimitedWatchlist
+                ? quotes.length
+                : quotes.length.clamp(0, Entitlement.freeWatchlistLimit);
+            final isOverLimit = !entitlement.hasUnlimitedWatchlist && quotes.length > activeCount;
+
+            return Column(
+              children: [
+                if (!entitlement.hasUnlimitedWatchlist && quotes.isNotEmpty)
+                  _LimitBanner(
+                    message: l10n.watchlistLimitReached(activeCount, Entitlement.freeWatchlistLimit),
+                    onUpgrade: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
+                  ),
+                Expanded(
+                  child: ReorderableListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: quotes.length,
+                    // ignore: deprecated_member_use
+                    onReorder: controller.reorder,
+                    itemBuilder: (context, index) {
+                      final quote = quotes[index];
+                      final isLocked = isOverLimit && index >= activeCount;
+                      return Dismissible(
+                        key: ValueKey(quote.symbol),
+                        direction: DismissDirection.endToStart,
+                        onDismissed: (_) => controller.remove(quote.symbol),
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          color: Theme.of(context).colorScheme.errorContainer,
+                          child: const Icon(Icons.delete_outline),
                         ),
-                      ),
-                    );
-                  },
+                        child: isLocked
+                            ? Opacity(
+                                opacity: 0.5,
+                                child: AssetRow(
+                                  quote: quote,
+                                  trailing: Icon(Icons.lock_outline, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                  onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
+                                ),
+                              )
+                            : AssetRow(
+                                quote: quote,
+                                sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
+                                ),
+                              ),
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            );
+          },
         ),
       ),
     );
