@@ -17,4 +17,10 @@ abstract class MarketAIService {
   Future<AIInsight> summarizeNews(NewsArticle article);
 
   Future<AIInsight> analyzeMarketImpact(EconomicEvent event);
+
+  /// Free-text question answering for the AI Ask assistant. Same safety
+  /// rule as every other method here: descriptive analysis/education/risk
+  /// context only — never a direct buy/sell instruction or a guaranteed
+  /// prediction.
+  Future<String> ask(String question);
 }

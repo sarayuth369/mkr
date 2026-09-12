@@ -79,6 +79,7 @@ class WatchlistScreen extends StatelessWidget {
                       ),
                       child: AssetRow(
                         quote: quote,
+                        sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
                         ),

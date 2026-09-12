@@ -19,6 +19,8 @@ class MarketQuote {
     this.open,
     this.prevClose,
     this.volume,
+    this.week52High,
+    this.week52Low,
     this.currency = 'USD',
   });
 
@@ -33,6 +35,12 @@ class MarketQuote {
   final double? open;
   final double? prevClose;
   final double? volume;
+
+  /// 52-week high/low — only populated for a handful of featured symbols in
+  /// the mock catalog; `null` elsewhere, in which case the UI simply omits
+  /// the row rather than showing a fabricated range.
+  final double? week52High;
+  final double? week52Low;
   final String currency;
 
   bool get isUp => changePct >= 0;
@@ -54,6 +62,8 @@ class MarketQuote {
       open: open,
       prevClose: prevClose,
       volume: volume,
+      week52High: week52High,
+      week52Low: week52Low,
       currency: currency,
     );
   }

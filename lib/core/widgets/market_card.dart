@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../domain/market_quote.dart';
@@ -31,6 +33,7 @@ class MarketCard extends StatefulWidget {
 class _MarketCardState extends State<MarketCard> {
   double? _previousPrice;
   Color? _flashColor;
+  Timer? _flashTimer;
 
   @override
   void didUpdateWidget(covariant MarketCard oldWidget) {
@@ -43,10 +46,17 @@ class _MarketCardState extends State<MarketCard> {
             ? marketColors.gain.withValues(alpha: 0.14)
             : marketColors.loss.withValues(alpha: 0.14);
       });
-      Future.delayed(const Duration(milliseconds: 700), () {
+      _flashTimer?.cancel();
+      _flashTimer = Timer(const Duration(milliseconds: 700), () {
         if (mounted) setState(() => _flashColor = null);
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _flashTimer?.cancel();
+    super.dispose();
   }
 
   @override

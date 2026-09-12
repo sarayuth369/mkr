@@ -3,10 +3,12 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/ai_insight_card.dart';
+import '../../../../core/widgets/day_range_bar.dart';
 import '../../../../core/widgets/economic_event_card.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/market_data_status_chip.dart';
+import '../../../../core/widgets/market_sentiment_gauge.dart';
 import '../../../../core/widgets/news_card.dart';
 import '../../../../core/widgets/price_chart.dart';
 import '../../../../core/utils/formatters.dart';
@@ -106,6 +108,21 @@ class _MarketDetailBody extends StatelessWidget {
                   isUp: quote.isUp,
                   onTimeframeChanged: controller.loadSeries,
                 ),
+                const SizedBox(height: 20),
+                MarketSentimentGauge(changePct: quote.changePct),
+                if (quote.low != null && quote.high != null) ...[
+                  const SizedBox(height: 16),
+                  DayRangeBar(label: l10n.marketDetailDayRange, low: quote.low!, high: quote.high!, value: quote.price),
+                ],
+                if (quote.week52Low != null && quote.week52High != null) ...[
+                  const SizedBox(height: 16),
+                  DayRangeBar(
+                    label: l10n.marketDetail52WeekRange,
+                    low: quote.week52Low!,
+                    high: quote.week52High!,
+                    value: quote.price,
+                  ),
+                ],
                 const SizedBox(height: 20),
                 _StatsGrid(quote: quote),
                 const SizedBox(height: 20),

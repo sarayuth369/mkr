@@ -13,7 +13,7 @@ void main() {
     await tester.pumpWidget(MkrApp(store: store));
     await tester.pumpAndSettle();
 
-    expect(find.text('MKR'), findsWidgets);
+    expect(find.text('Market Radar'), findsWidgets);
 
     for (final label in ['Markets', 'Watchlist', 'Alerts', 'Settings', 'Home']) {
       await tester.tap(find.text(label));

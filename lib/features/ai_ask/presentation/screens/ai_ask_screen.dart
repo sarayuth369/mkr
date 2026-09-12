@@ -1,0 +1,205 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../../../core/theme/app_theme.dart';
+import '../../../../l10n/generated/app_localizations.dart';
+import '../../application/ai_ask_controller.dart';
+import '../../domain/chat_message.dart';
+
+class AiAskScreen extends StatefulWidget {
+  const AiAskScreen({super.key});
+
+  @override
+  State<AiAskScreen> createState() => _AiAskScreenState();
+}
+
+class _AiAskScreenState extends State<AiAskScreen> {
+  final _inputController = TextEditingController();
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _inputController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  Future<void> _sendPrompt(String text) async {
+    _inputController.clear();
+    await context.read<AiAskController>().send(text);
+    _scrollToBottom();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final controller = context.watch<AiAskController>();
+    final aiColor = context.marketColors.aiAccent;
+
+    final suggestedPrompts = [
+      l10n.aiAskPromptGoldOutlook,
+      l10n.aiAskPromptFedImpact,
+      l10n.aiAskPromptTopMovers,
+      l10n.aiAskPromptMarketSummary,
+      l10n.aiAskPromptExplainStock,
+      l10n.aiAskPromptWhyMoving,
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(l10n.aiAskTitle, style: theme.textTheme.titleMedium),
+            Text(
+              l10n.aiAskSubtitle,
+              style: theme.textTheme.labelSmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: controller.messages.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.auto_awesome, size: 40, color: aiColor),
+                          const SizedBox(height: 12),
+                          Text(
+                            l10n.aiAskSubtitle,
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: controller.messages.length,
+                    itemBuilder: (context, index) => _MessageBubble(message: controller.messages[index]),
+                  ),
+          ),
+          if (controller.isResponding)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: aiColor)),
+                  const SizedBox(width: 8),
+                  Text(l10n.aiAskThinking, style: theme.textTheme.labelSmall),
+                ],
+              ),
+            ),
+          SizedBox(
+            height: 40,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: suggestedPrompts.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              itemBuilder: (context, index) => ActionChip(
+                label: Text(suggestedPrompts[index]),
+                onPressed: controller.isResponding ? null : () => _sendPrompt(suggestedPrompts[index]),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: EdgeInsets.only(
+              left: 12,
+              right: 12,
+              bottom: MediaQuery.of(context).viewInsets.bottom > 0 ? 12 : MediaQuery.of(context).padding.bottom + 12,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _inputController,
+                    decoration: InputDecoration(hintText: l10n.aiAskInputHint),
+                    onSubmitted: controller.isResponding ? null : _sendPrompt,
+                    textInputAction: TextInputAction.send,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: controller.isResponding ? null : () => _sendPrompt(_inputController.text),
+                  icon: const Icon(Icons.send),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isUser = message.role == ChatRole.user;
+    final aiColor = context.marketColors.aiAccent;
+
+    final bubble = Container(
+      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isUser ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        message.text,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: isUser ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface,
+        ),
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: isUser
+            ? [bubble]
+            : [
+                CircleAvatar(
+                  radius: 14,
+                  backgroundColor: aiColor.withValues(alpha: 0.15),
+                  child: Icon(Icons.auto_awesome, size: 14, color: aiColor),
+                ),
+                const SizedBox(width: 8),
+                Flexible(child: bubble),
+              ],
+      ),
+    );
+  }
+}

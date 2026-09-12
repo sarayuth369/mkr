@@ -347,7 +347,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsTerms => 'Terms of Service';
 
   @override
-  String get settingsAbout => 'About MKR';
+  String get settingsAbout => 'About Market Radar';
 
   @override
   String get settingsAppVersion => 'App version';
@@ -582,7 +582,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String watchlistLimitReached(int count, int limit) {
-    return '$count/$limit · Upgrade for unlimited watchlist';
+    return '$count / $limit assets · Upgrade for unlimited watchlist';
   }
 
   @override
@@ -597,12 +597,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get badgeBestValue => 'BEST VALUE';
-
-  @override
-  String get premiumCtaUpgradeToPro => 'Upgrade to Pro';
-
-  @override
-  String get premiumCtaUpgradeToAiPro => 'Upgrade to AI Pro';
 
   @override
   String get premiumCtaGetLifetime => 'Get Lifetime';
@@ -685,4 +679,124 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get close => 'Close';
+
+  @override
+  String get aiAskTitle => 'AI Market Assistant';
+
+  @override
+  String get aiAskSubtitle => 'Ask anything about investing';
+
+  @override
+  String get aiAskInputHint => 'Ask about markets, stocks, investing…';
+
+  @override
+  String get aiAskPromptGoldOutlook => 'Gold outlook';
+
+  @override
+  String get aiAskPromptFedImpact => 'Fed impact';
+
+  @override
+  String get aiAskPromptTopMovers => 'Top market movers';
+
+  @override
+  String get aiAskPromptMarketSummary => 'Market summary';
+
+  @override
+  String get aiAskPromptExplainStock => 'Explain this stock';
+
+  @override
+  String get aiAskPromptWhyMoving => 'Why is the market moving?';
+
+  @override
+  String get aiAskThinking => 'Thinking…';
+
+  @override
+  String get homeHeaderTitle => 'Market Radar';
+
+  @override
+  String get homeHeaderSubtitle => 'See the market. Smarter.';
+
+  @override
+  String get homeGlobalMarkets => 'Global Markets';
+
+  @override
+  String get homeGlobalMarketsMixed => 'Mixed but resilient';
+
+  @override
+  String get homeGlobalMarketsGold => 'Gold';
+
+  @override
+  String get homeGlobalMarketsGoldUp => 'Holding firm near recent highs';
+
+  @override
+  String get homeGlobalMarketsGoldDown => 'Pulling back from recent highs';
+
+  @override
+  String get homeGlobalMarketsCrypto => 'Crypto';
+
+  @override
+  String get homeGlobalMarketsCryptoUp => 'Trading higher amid renewed inflows';
+
+  @override
+  String get homeGlobalMarketsCryptoDown =>
+      'Trading lower amid cautious risk appetite';
+
+  @override
+  String get marketDetailSentiment => 'Market Sentiment';
+
+  @override
+  String get marketDetailBullish => 'Bullish';
+
+  @override
+  String get marketDetailBearish => 'Bearish';
+
+  @override
+  String get marketDetailDayRange => 'Day Range';
+
+  @override
+  String get marketDetail52WeekRange => '52-Week Range';
+
+  @override
+  String get alertStatusTriggered => 'Triggered';
+
+  @override
+  String get alertStatusPaused => 'Paused';
+
+  @override
+  String get premiumMonthly => 'Monthly';
+
+  @override
+  String get premiumYearly => 'Yearly';
+
+  @override
+  String premiumSavePercent(int percent) {
+    return 'Save $percent%';
+  }
+
+  @override
+  String get premiumCtaGetPro => 'Get Pro';
+
+  @override
+  String get premiumCtaGetAiPro => 'Get AI Pro';
+
+  @override
+  String get aboutHeadline => 'Your Global Market Intelligence';
+
+  @override
+  String get aboutFeatureDashboard => 'Modern market dashboard';
+
+  @override
+  String get aboutFeatureAiAssistant => 'AI Market Assistant';
+
+  @override
+  String get aboutFeatureRealtime => 'Real-time market data';
+
+  @override
+  String get aboutFeatureAlerts => 'Smart alerts';
+
+  @override
+  String get aboutFeatureGlobalCoverage => 'Global market coverage';
+
+  @override
+  String get aboutFeaturePremiumTools => 'Premium tools';
 }

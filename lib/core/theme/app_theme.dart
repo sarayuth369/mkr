@@ -16,6 +16,8 @@ class MarketColors extends ThemeExtension<MarketColors> {
     required this.demo,
     required this.stale,
     required this.offline,
+    required this.aiAccent,
+    required this.premiumAccent,
   });
 
   final Color gain;
@@ -29,6 +31,15 @@ class MarketColors extends ThemeExtension<MarketColors> {
   final Color stale;
   final Color offline;
 
+  /// Violet/indigo accent reserved for AI-generated content (AI Market
+  /// Brief, AI Ask) — keeps AI surfaces visually distinct from plain market
+  /// data without looking like a generic chatbot.
+  final Color aiAccent;
+
+  /// Accent for Premium/subscription surfaces (paywall hero, Settings
+  /// upsell card).
+  final Color premiumAccent;
+
   static const light = MarketColors(
     gain: Color(0xFF1B8A5A),
     loss: Color(0xFFD1373F),
@@ -40,6 +51,8 @@ class MarketColors extends ThemeExtension<MarketColors> {
     demo: Color(0xFF8A6D1B),
     stale: Color(0xFFB56A1E),
     offline: Color(0xFF8A2E2E),
+    aiAccent: Color(0xFF6D5BD0),
+    premiumAccent: Color(0xFF7C3AED),
   );
 
   static const dark = MarketColors(
@@ -53,6 +66,8 @@ class MarketColors extends ThemeExtension<MarketColors> {
     demo: Color(0xFFE0B341),
     stale: Color(0xFFE08D41),
     offline: Color(0xFFFF6B6B),
+    aiAccent: Color(0xFF9C8CFF),
+    premiumAccent: Color(0xFFB18AFF),
   );
 
   @override
@@ -67,6 +82,8 @@ class MarketColors extends ThemeExtension<MarketColors> {
     Color? demo,
     Color? stale,
     Color? offline,
+    Color? aiAccent,
+    Color? premiumAccent,
   }) {
     return MarketColors(
       gain: gain ?? this.gain,
@@ -79,6 +96,8 @@ class MarketColors extends ThemeExtension<MarketColors> {
       demo: demo ?? this.demo,
       stale: stale ?? this.stale,
       offline: offline ?? this.offline,
+      aiAccent: aiAccent ?? this.aiAccent,
+      premiumAccent: premiumAccent ?? this.premiumAccent,
     );
   }
 
@@ -96,6 +115,8 @@ class MarketColors extends ThemeExtension<MarketColors> {
       demo: Color.lerp(demo, other.demo, t)!,
       stale: Color.lerp(stale, other.stale, t)!,
       offline: Color.lerp(offline, other.offline, t)!,
+      aiAccent: Color.lerp(aiAccent, other.aiAccent, t)!,
+      premiumAccent: Color.lerp(premiumAccent, other.premiumAccent, t)!,
     );
   }
 }

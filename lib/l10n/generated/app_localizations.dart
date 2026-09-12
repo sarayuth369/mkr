@@ -773,7 +773,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsAbout.
   ///
   /// In en, this message translates to:
-  /// **'About MKR'**
+  /// **'About Market Radar'**
   String get settingsAbout;
 
   /// No description provided for @settingsAppVersion.
@@ -1217,7 +1217,7 @@ abstract class AppLocalizations {
   /// No description provided for @watchlistLimitReached.
   ///
   /// In en, this message translates to:
-  /// **'{count}/{limit} · Upgrade for unlimited watchlist'**
+  /// **'{count} / {limit} assets · Upgrade for unlimited watchlist'**
   String watchlistLimitReached(int count, int limit);
 
   /// No description provided for @premiumHeroTitle.
@@ -1243,18 +1243,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'BEST VALUE'**
   String get badgeBestValue;
-
-  /// No description provided for @premiumCtaUpgradeToPro.
-  ///
-  /// In en, this message translates to:
-  /// **'Upgrade to Pro'**
-  String get premiumCtaUpgradeToPro;
-
-  /// No description provided for @premiumCtaUpgradeToAiPro.
-  ///
-  /// In en, this message translates to:
-  /// **'Upgrade to AI Pro'**
-  String get premiumCtaUpgradeToAiPro;
 
   /// No description provided for @premiumCtaGetLifetime.
   ///
@@ -1405,6 +1393,240 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Close'**
   String get close;
+
+  /// No description provided for @aiAskTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'AI Market Assistant'**
+  String get aiAskTitle;
+
+  /// No description provided for @aiAskSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask anything about investing'**
+  String get aiAskSubtitle;
+
+  /// No description provided for @aiAskInputHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask about markets, stocks, investing…'**
+  String get aiAskInputHint;
+
+  /// No description provided for @aiAskPromptGoldOutlook.
+  ///
+  /// In en, this message translates to:
+  /// **'Gold outlook'**
+  String get aiAskPromptGoldOutlook;
+
+  /// No description provided for @aiAskPromptFedImpact.
+  ///
+  /// In en, this message translates to:
+  /// **'Fed impact'**
+  String get aiAskPromptFedImpact;
+
+  /// No description provided for @aiAskPromptTopMovers.
+  ///
+  /// In en, this message translates to:
+  /// **'Top market movers'**
+  String get aiAskPromptTopMovers;
+
+  /// No description provided for @aiAskPromptMarketSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Market summary'**
+  String get aiAskPromptMarketSummary;
+
+  /// No description provided for @aiAskPromptExplainStock.
+  ///
+  /// In en, this message translates to:
+  /// **'Explain this stock'**
+  String get aiAskPromptExplainStock;
+
+  /// No description provided for @aiAskPromptWhyMoving.
+  ///
+  /// In en, this message translates to:
+  /// **'Why is the market moving?'**
+  String get aiAskPromptWhyMoving;
+
+  /// No description provided for @aiAskThinking.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking…'**
+  String get aiAskThinking;
+
+  /// No description provided for @homeHeaderTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Market Radar'**
+  String get homeHeaderTitle;
+
+  /// No description provided for @homeHeaderSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'See the market. Smarter.'**
+  String get homeHeaderSubtitle;
+
+  /// No description provided for @homeGlobalMarkets.
+  ///
+  /// In en, this message translates to:
+  /// **'Global Markets'**
+  String get homeGlobalMarkets;
+
+  /// No description provided for @homeGlobalMarketsMixed.
+  ///
+  /// In en, this message translates to:
+  /// **'Mixed but resilient'**
+  String get homeGlobalMarketsMixed;
+
+  /// No description provided for @homeGlobalMarketsGold.
+  ///
+  /// In en, this message translates to:
+  /// **'Gold'**
+  String get homeGlobalMarketsGold;
+
+  /// No description provided for @homeGlobalMarketsGoldUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Holding firm near recent highs'**
+  String get homeGlobalMarketsGoldUp;
+
+  /// No description provided for @homeGlobalMarketsGoldDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Pulling back from recent highs'**
+  String get homeGlobalMarketsGoldDown;
+
+  /// No description provided for @homeGlobalMarketsCrypto.
+  ///
+  /// In en, this message translates to:
+  /// **'Crypto'**
+  String get homeGlobalMarketsCrypto;
+
+  /// No description provided for @homeGlobalMarketsCryptoUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Trading higher amid renewed inflows'**
+  String get homeGlobalMarketsCryptoUp;
+
+  /// No description provided for @homeGlobalMarketsCryptoDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Trading lower amid cautious risk appetite'**
+  String get homeGlobalMarketsCryptoDown;
+
+  /// No description provided for @marketDetailSentiment.
+  ///
+  /// In en, this message translates to:
+  /// **'Market Sentiment'**
+  String get marketDetailSentiment;
+
+  /// No description provided for @marketDetailBullish.
+  ///
+  /// In en, this message translates to:
+  /// **'Bullish'**
+  String get marketDetailBullish;
+
+  /// No description provided for @marketDetailBearish.
+  ///
+  /// In en, this message translates to:
+  /// **'Bearish'**
+  String get marketDetailBearish;
+
+  /// No description provided for @marketDetailDayRange.
+  ///
+  /// In en, this message translates to:
+  /// **'Day Range'**
+  String get marketDetailDayRange;
+
+  /// No description provided for @marketDetail52WeekRange.
+  ///
+  /// In en, this message translates to:
+  /// **'52-Week Range'**
+  String get marketDetail52WeekRange;
+
+  /// No description provided for @alertStatusTriggered.
+  ///
+  /// In en, this message translates to:
+  /// **'Triggered'**
+  String get alertStatusTriggered;
+
+  /// No description provided for @alertStatusPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused'**
+  String get alertStatusPaused;
+
+  /// No description provided for @premiumMonthly.
+  ///
+  /// In en, this message translates to:
+  /// **'Monthly'**
+  String get premiumMonthly;
+
+  /// No description provided for @premiumYearly.
+  ///
+  /// In en, this message translates to:
+  /// **'Yearly'**
+  String get premiumYearly;
+
+  /// No description provided for @premiumSavePercent.
+  ///
+  /// In en, this message translates to:
+  /// **'Save {percent}%'**
+  String premiumSavePercent(int percent);
+
+  /// No description provided for @premiumCtaGetPro.
+  ///
+  /// In en, this message translates to:
+  /// **'Get Pro'**
+  String get premiumCtaGetPro;
+
+  /// No description provided for @premiumCtaGetAiPro.
+  ///
+  /// In en, this message translates to:
+  /// **'Get AI Pro'**
+  String get premiumCtaGetAiPro;
+
+  /// No description provided for @aboutHeadline.
+  ///
+  /// In en, this message translates to:
+  /// **'Your Global Market Intelligence'**
+  String get aboutHeadline;
+
+  /// No description provided for @aboutFeatureDashboard.
+  ///
+  /// In en, this message translates to:
+  /// **'Modern market dashboard'**
+  String get aboutFeatureDashboard;
+
+  /// No description provided for @aboutFeatureAiAssistant.
+  ///
+  /// In en, this message translates to:
+  /// **'AI Market Assistant'**
+  String get aboutFeatureAiAssistant;
+
+  /// No description provided for @aboutFeatureRealtime.
+  ///
+  /// In en, this message translates to:
+  /// **'Real-time market data'**
+  String get aboutFeatureRealtime;
+
+  /// No description provided for @aboutFeatureAlerts.
+  ///
+  /// In en, this message translates to:
+  /// **'Smart alerts'**
+  String get aboutFeatureAlerts;
+
+  /// No description provided for @aboutFeatureGlobalCoverage.
+  ///
+  /// In en, this message translates to:
+  /// **'Global market coverage'**
+  String get aboutFeatureGlobalCoverage;
+
+  /// No description provided for @aboutFeaturePremiumTools.
+  ///
+  /// In en, this message translates to:
+  /// **'Premium tools'**
+  String get aboutFeaturePremiumTools;
 }
 
 class _AppLocalizationsDelegate

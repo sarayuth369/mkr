@@ -98,4 +98,73 @@ class MockMarketAIService implements MarketAIService {
       generatedAt: DateTime.now(),
     );
   }
+
+  @override
+  Future<String> ask(String question) async {
+    await Future.delayed(const Duration(milliseconds: 500));
+    final q = question.toLowerCase();
+
+    if (q.contains('gold') || q.contains('xau')) {
+      final gold = MockMarketCatalog.bySymbol('XAU/USD');
+      return 'Gold is trading near ${gold != null ? gold.price.toStringAsFixed(2) : 'recent levels'}, '
+          'supported by a softer dollar and steady central-bank demand. Key '
+          'levels to watch are the recent support and resistance zones — a '
+          'break either way often follows real-yield and dollar moves.\n\n'
+          'This is analysis for context, not a guarantee of future direction.';
+    }
+    if (q.contains('fed') || q.contains('rate') || q.contains('fomc')) {
+      return 'The Fed\'s tone on rates is a major driver for equities, gold '
+          'and the dollar. A more cautious (dovish) tone tends to support '
+          'risk assets and gold; a firmer (hawkish) tone tends to lift the '
+          'dollar and pressure rate-sensitive sectors.\n\n'
+          'Watch the policy statement language and the press conference Q&A '
+          'for the market\'s actual read — headlines alone can be misleading.';
+    }
+    if (q.contains('nvda') || q.contains('nvidia')) {
+      final nvda = MockMarketCatalog.bySymbol('NVDA');
+      return 'NVDA has been moving on AI-infrastructure demand commentary '
+          'and broader semiconductor sentiment${nvda != null ? ' — currently around ${nvda.price.toStringAsFixed(2)}' : ''}. '
+          'Earnings updates and data-center spending trends from major '
+          'customers are the main things influencing sentiment right now.\n\n'
+          'Individual stock moves can be volatile — this is context, not a recommendation.';
+    }
+    if ((q.contains('qqq') && q.contains('spy')) || (q.contains('compare') && q.contains('etf'))) {
+      return 'QQQ tracks the Nasdaq-100 (tech/growth heavy), while SPY tracks '
+          'the S&P 500 (broader, more diversified across sectors). QQQ '
+          'typically shows larger swings in both directions since it is more '
+          'concentrated in a smaller number of large tech names.\n\n'
+          'Which fits better depends on your own diversification and risk '
+          'tolerance — this is educational context, not a recommendation.';
+    }
+    if (q.contains('dollar') || q.contains('dxy') || q.contains('usd')) {
+      return 'The US dollar and gold often move inversely: since gold is '
+          'priced in dollars, a weaker dollar makes gold cheaper for holders '
+          'of other currencies (supportive of price), while a stronger '
+          'dollar tends to weigh on gold. Real (inflation-adjusted) US '
+          'yields are the other major driver.\n\n'
+          'This relationship is a general tendency, not a fixed rule.';
+    }
+    if (q.contains('crypto') || q.contains('bitcoin') || q.contains('btc')) {
+      final btc = MockMarketCatalog.bySymbol('BTC');
+      return 'Crypto markets are trading with elevated volatility${btc != null ? ', with BTC around ${btc.price.toStringAsFixed(0)}' : ''}. '
+          'Flows into spot ETFs, broader risk sentiment, and liquidity '
+          'conditions are the main things moving prices at the moment.\n\n'
+          'Crypto remains a high-volatility asset class — treat any single '
+          'data point as context, not certainty.';
+    }
+    if (q.contains('portfolio') || q.contains('diversif')) {
+      return 'Diversification generally means spreading exposure across '
+          'asset classes (equities, gold, bonds, cash) and regions so that no '
+          'single event drives your whole outcome. The right mix depends on '
+          'your own goals, time horizon and risk tolerance.\n\n'
+          'This is general education, not personalized financial advice.';
+    }
+
+    return 'Markets are digesting a mix of macro data, earnings and central '
+        'bank commentary right now. The clearest way to stay oriented is to '
+        'watch the highest-impact items on today\'s economic calendar and '
+        'how price reacts around them, rather than any single headline.\n\n'
+        'This is general market context — not financial advice, and not a '
+        'guarantee of any outcome.';
+  }
 }

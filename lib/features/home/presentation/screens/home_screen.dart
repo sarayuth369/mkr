@@ -2,18 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/network/api_state.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/ai_insight_card.dart';
+import '../../../../core/widgets/app_logo_mark.dart';
 import '../../../../core/widgets/asset_row.dart';
 import '../../../../core/widgets/error_state.dart';
+import '../../../../core/widgets/global_markets_banner.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/market_card.dart';
 import '../../../../core/widgets/market_data_status_chip.dart';
+import '../../../../core/widgets/price_chart.dart';
 import '../../../../core/widgets/radar_card.dart';
 import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../ads/presentation/widgets/ad_banner_slot.dart';
+import '../../../ai_ask/presentation/screens/ai_ask_screen.dart';
 import '../../../gold/presentation/screens/gold_radar_screen.dart';
+import '../../../markets/domain/market_service.dart';
 import '../../../markets/presentation/screens/market_detail_screen.dart';
 import '../../../news/presentation/screens/news_screen.dart';
 import '../../../calendar/presentation/screens/calendar_screen.dart';
@@ -29,8 +35,34 @@ class HomeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(l10n.appName),
+        toolbarHeight: 64,
+        title: Row(
+          children: [
+            const AppLogoMark(size: 36),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(l10n.homeHeaderTitle, style: Theme.of(context).textTheme.titleMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                    l10n.homeHeaderSubtitle,
+                    style: Theme.of(context).textTheme.labelSmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.auto_awesome_outlined),
+            tooltip: l10n.aiAskTitle,
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AiAskScreen())),
+          ),
           IconButton(
             icon: const Icon(Icons.article_outlined),
             tooltip: l10n.newsTitle,
@@ -49,10 +81,12 @@ class HomeScreen extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           children: [
             MarketDataStatusChip(mode: controller.mode, lastUpdated: controller.lastUpdated),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
+            _GlobalMarketsSection(controller: controller),
+            const SizedBox(height: 20),
             Text(l10n.homeMarketPulse, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 10),
-            _PulseRow(controller: controller),
+            _PulseSection(controller: controller),
             const SizedBox(height: 24),
             Text(l10n.homeTodaysRadar, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
@@ -107,41 +141,134 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _PulseRow extends StatelessWidget {
-  const _PulseRow({required this.controller});
+class _GlobalMarketsSection extends StatelessWidget {
+  const _GlobalMarketsSection({required this.controller});
 
   final HomeController controller;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 128,
-      child: controller.pulseState.when(
-        loading: () => ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: 3,
-          separatorBuilder: (_, __) => const SizedBox(width: 10),
-          itemBuilder: (_, __) => const LoadingSkeleton(width: 156, height: 120, borderRadius: 16),
+    final l10n = AppLocalizations.of(context);
+    final brief = controller.briefState.dataOrNull;
+    final gold = controller.gold;
+    MarketQuote? btc;
+    for (final q in controller.pulseState.dataOrNull ?? const <MarketQuote>[]) {
+      if (q.symbol == 'BTC') {
+        btc = q;
+        break;
+      }
+    }
+
+    final pages = <GlobalMarketsPage>[
+      if (brief != null) (headline: l10n.homeGlobalMarketsMixed, subtitle: brief.summary),
+      if (gold != null)
+        (
+          headline: l10n.homeGlobalMarketsGold,
+          subtitle: gold.isUp ? l10n.homeGlobalMarketsGoldUp : l10n.homeGlobalMarketsGoldDown,
         ),
-        error: (message) => ErrorState(message: message, onRetry: controller.refresh),
-        empty: () => const SizedBox.shrink(),
-        success: (quotes, isStale, lastUpdated) => ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: quotes.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 10),
-          itemBuilder: (context, index) {
-            final quote = quotes[index];
-            return MarketCard(
-              quote: quote,
-              featured: true,
-              sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 14),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
-              ),
-            );
-          },
+      if (btc != null)
+        (
+          headline: l10n.homeGlobalMarketsCrypto,
+          subtitle: btc.isUp ? l10n.homeGlobalMarketsCryptoUp : l10n.homeGlobalMarketsCryptoDown,
         ),
-      ),
+    ];
+
+    if (pages.isEmpty) return const SizedBox.shrink();
+    return GlobalMarketsBanner(title: l10n.homeGlobalMarkets, pages: pages);
+  }
+}
+
+class _PulseSection extends StatefulWidget {
+  const _PulseSection({required this.controller});
+
+  final HomeController controller;
+
+  @override
+  State<_PulseSection> createState() => _PulseSectionState();
+}
+
+class _PulseSectionState extends State<_PulseSection> {
+  String? _selectedSymbol;
+  List<double>? _series;
+  ChartTimeframe _timeframe = ChartTimeframe.d1;
+  bool _loadingSeries = false;
+
+  Future<void> _selectSymbol(String symbol) async {
+    setState(() {
+      _selectedSymbol = symbol;
+      _loadingSeries = true;
+    });
+    final series = await context.read<MarketService>().getPriceSeries(symbol, _timeframe);
+    if (!mounted) return;
+    setState(() {
+      _series = series;
+      _loadingSeries = false;
+    });
+  }
+
+  Future<void> _changeTimeframe(ChartTimeframe timeframe) async {
+    if (_selectedSymbol == null) return;
+    setState(() {
+      _timeframe = timeframe;
+      _loadingSeries = true;
+    });
+    final series = await context.read<MarketService>().getPriceSeries(_selectedSymbol!, timeframe);
+    if (!mounted) return;
+    setState(() {
+      _series = series;
+      _loadingSeries = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 128,
+          child: widget.controller.pulseState.when(
+            loading: () => ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: 3,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, __) => const LoadingSkeleton(width: 156, height: 120, borderRadius: 16),
+            ),
+            error: (message) => ErrorState(message: message, onRetry: widget.controller.refresh),
+            empty: () => const SizedBox.shrink(),
+            success: (quotes, isStale, lastUpdated) {
+              if (_selectedSymbol == null && quotes.isNotEmpty) {
+                WidgetsBinding.instance.addPostFrameCallback((_) => _selectSymbol(quotes.first.symbol));
+              }
+              return ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: quotes.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  final quote = quotes[index];
+                  return MarketCard(
+                    quote: quote,
+                    featured: true,
+                    sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 14),
+                    onTap: () => _selectSymbol(quote.symbol),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        if (_selectedSymbol != null) ...[
+          const SizedBox(height: 14),
+          _loadingSeries || _series == null
+              ? const LoadingSkeleton(height: 90, width: double.infinity, borderRadius: 12)
+              : PriceChart(
+                  series: _series!,
+                  isUp: (MockMarketCatalog.bySymbol(_selectedSymbol!)?.changePct ?? 0) >= 0,
+                  height: 90,
+                  onTimeframeChanged: _changeTimeframe,
+                ),
+        ],
+      ],
     );
   }
 }
@@ -163,6 +290,7 @@ class _SnapshotList extends StatelessWidget {
           for (final quote in quotes)
             AssetRow(
               quote: quote,
+              sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
               ),
@@ -207,7 +335,19 @@ class _AiBriefSection extends StatelessWidget {
       loading: () => const LoadingSkeleton(height: 200, width: double.infinity, borderRadius: 16),
       error: (message) => ErrorState(message: message, onRetry: controller.refresh),
       empty: () => const SizedBox.shrink(),
-      success: (insight, isStale, lastUpdated) => AIInsightCard(insight: insight, title: l10n.homeAiBrief),
+      success: (insight, isStale, lastUpdated) => Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: LinearGradient(
+            colors: [
+              context.marketColors.aiAccent.withValues(alpha: 0.55),
+              context.marketColors.aiAccent.withValues(alpha: 0.15),
+            ],
+          ),
+        ),
+        padding: const EdgeInsets.all(1.5),
+        child: AIInsightCard(insight: insight, title: l10n.homeAiBrief),
+      ),
     );
   }
 }

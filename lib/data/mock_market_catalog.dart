@@ -22,6 +22,8 @@ class MockMarketCatalog {
       low: 3388.20,
       open: 3394.40,
       prevClose: 3394.40,
+      week52High: 3500.00,
+      week52Low: 1984.50,
     ),
     const MarketQuote(
       symbol: 'DXY',
@@ -60,6 +62,8 @@ class MockMarketCatalog {
       open: 184.50,
       prevClose: 184.48,
       volume: 245800000,
+      week52High: 195.00,
+      week52Low: 86.62,
     ),
     const MarketQuote(
       symbol: 'AAPL',
@@ -69,6 +73,8 @@ class MockMarketCatalog {
       changeAbs: -1.05,
       changePct: -0.45,
       volume: 52300000,
+      week52High: 260.10,
+      week52Low: 164.08,
     ),
     const MarketQuote(
       symbol: 'MSFT',
@@ -114,6 +120,8 @@ class MockMarketCatalog {
       changeAbs: 6.70,
       changePct: 2.77,
       volume: 88900000,
+      week52High: 488.54,
+      week52Low: 138.80,
     ),
     const MarketQuote(
       symbol: 'QQQ',
@@ -132,6 +140,8 @@ class MockMarketCatalog {
       price: 5872.30,
       changeAbs: 12.40,
       changePct: 0.21,
+      week52High: 6100.80,
+      week52Low: 4835.04,
     ),
     const MarketQuote(
       symbol: 'NDX',
@@ -140,6 +150,8 @@ class MockMarketCatalog {
       price: 18631.90,
       changeAbs: -22.10,
       changePct: -0.12,
+      week52High: 20173.90,
+      week52Low: 14784.03,
     ),
     const MarketQuote(
       symbol: 'DJI',
@@ -177,6 +189,8 @@ class MockMarketCatalog {
       low: 94200.00,
       open: 94580.00,
       prevClose: 94580.00,
+      week52High: 108135.00,
+      week52Low: 49121.00,
     ),
     const MarketQuote(
       symbol: 'ETH',

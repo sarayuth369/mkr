@@ -11,6 +11,22 @@ String alertTypeLabel(AppLocalizations l10n, AlertType type) => switch (type) {
       AlertType.radar => l10n.alertTypeRadar,
     };
 
+/// Derived purely in the presentation layer from [Alert.isEnabled] +
+/// [Alert.lastTriggeredAt] — no domain/model change needed.
+enum AlertStatus { active, triggered, paused }
+
+AlertStatus alertStatusOf(Alert alert) {
+  if (!alert.isEnabled) return AlertStatus.paused;
+  if (alert.lastTriggeredAt != null) return AlertStatus.triggered;
+  return AlertStatus.active;
+}
+
+String alertStatusLabel(AppLocalizations l10n, AlertStatus status) => switch (status) {
+      AlertStatus.active => l10n.alertStatusActive,
+      AlertStatus.triggered => l10n.alertStatusTriggered,
+      AlertStatus.paused => l10n.alertStatusPaused,
+    };
+
 String radarTransitionLabel(AppLocalizations l10n, RadarTransition transition) => switch (transition) {
       RadarTransition.neutralToBullish => l10n.radarTransitionNeutralBullish,
       RadarTransition.neutralToBearish => l10n.radarTransitionNeutralBearish,
@@ -66,6 +82,13 @@ class AlertCard extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
     final accent = _accentColor(context);
+    final colors = context.marketColors;
+    final status = alertStatusOf(alert);
+    final statusColor = switch (status) {
+      AlertStatus.active => colors.gain,
+      AlertStatus.triggered => colors.impactMedium,
+      AlertStatus.paused => theme.colorScheme.onSurfaceVariant,
+    };
 
     return Card(
       child: ListTile(
@@ -83,12 +106,16 @@ class AlertCard extends StatelessWidget {
         subtitle: Row(
           children: [
             Text(alertTypeLabel(l10n, alert.type).toUpperCase(), style: theme.textTheme.labelSmall),
-            const Text('  ·  ', style: TextStyle(fontSize: 10)),
-            Text(
-              alert.isEnabled ? l10n.alertStatusActive : l10n.alertStatusInactive,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: alert.isEnabled ? context.marketColors.gain : theme.colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w700,
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                alertStatusLabel(l10n, status).toUpperCase(),
+                style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w800),
               ),
             ),
           ],

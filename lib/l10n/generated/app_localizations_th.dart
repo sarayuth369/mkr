@@ -347,7 +347,7 @@ class AppLocalizationsTh extends AppLocalizations {
   String get settingsTerms => 'ข้อกำหนดการใช้งาน';
 
   @override
-  String get settingsAbout => 'เกี่ยวกับ MKR';
+  String get settingsAbout => 'เกี่ยวกับ Market Radar';
 
   @override
   String get settingsAppVersion => 'เวอร์ชันแอป';
@@ -582,7 +582,7 @@ class AppLocalizationsTh extends AppLocalizations {
 
   @override
   String watchlistLimitReached(int count, int limit) {
-    return '$count/$limit · อัปเกรดเพื่อรายการติดตามไม่จำกัด';
+    return '$count / $limit รายการ · อัปเกรดเพื่อรายการติดตามไม่จำกัด';
   }
 
   @override
@@ -597,12 +597,6 @@ class AppLocalizationsTh extends AppLocalizations {
 
   @override
   String get badgeBestValue => 'คุ้มค่าที่สุด';
-
-  @override
-  String get premiumCtaUpgradeToPro => 'อัปเกรดเป็น Pro';
-
-  @override
-  String get premiumCtaUpgradeToAiPro => 'อัปเกรดเป็น AI Pro';
 
   @override
   String get premiumCtaGetLifetime => 'รับแบบตลอดชีพ';
@@ -685,4 +679,123 @@ class AppLocalizationsTh extends AppLocalizations {
 
   @override
   String get close => 'ปิด';
+
+  @override
+  String get aiAskTitle => 'ผู้ช่วย AI ตลาดการเงิน';
+
+  @override
+  String get aiAskSubtitle => 'ถามอะไรก็ได้เกี่ยวกับการลงทุน';
+
+  @override
+  String get aiAskInputHint => 'ถามเกี่ยวกับตลาด หุ้น การลงทุน…';
+
+  @override
+  String get aiAskPromptGoldOutlook => 'แนวโน้มทองคำ';
+
+  @override
+  String get aiAskPromptFedImpact => 'ผลกระทบจาก Fed';
+
+  @override
+  String get aiAskPromptTopMovers => 'หุ้นเคลื่อนไหวสูงสุด';
+
+  @override
+  String get aiAskPromptMarketSummary => 'สรุปภาพตลาด';
+
+  @override
+  String get aiAskPromptExplainStock => 'อธิบายหุ้นตัวนี้';
+
+  @override
+  String get aiAskPromptWhyMoving => 'ทำไมตลาดถึงเคลื่อนไหว';
+
+  @override
+  String get aiAskThinking => 'กำลังคิด…';
+
+  @override
+  String get homeHeaderTitle => 'Market Radar';
+
+  @override
+  String get homeHeaderSubtitle => 'รู้ทันตลาด ฉลาดกว่าเดิม';
+
+  @override
+  String get homeGlobalMarkets => 'ตลาดโลก';
+
+  @override
+  String get homeGlobalMarketsMixed => 'ผสมผสานแต่ยังแข็งแกร่ง';
+
+  @override
+  String get homeGlobalMarketsGold => 'ทองคำ';
+
+  @override
+  String get homeGlobalMarketsGoldUp => 'ยืนราคาแข็งแกร่งใกล้จุดสูงสุด';
+
+  @override
+  String get homeGlobalMarketsGoldDown => 'ปรับตัวลงจากจุดสูงสุดล่าสุด';
+
+  @override
+  String get homeGlobalMarketsCrypto => 'คริปโต';
+
+  @override
+  String get homeGlobalMarketsCryptoUp => 'ปรับตัวขึ้นจากแรงซื้อใหม่';
+
+  @override
+  String get homeGlobalMarketsCryptoDown => 'ปรับตัวลงท่ามกลางความระมัดระวัง';
+
+  @override
+  String get marketDetailSentiment => 'อารมณ์ตลาด';
+
+  @override
+  String get marketDetailBullish => 'ขาขึ้น';
+
+  @override
+  String get marketDetailBearish => 'ขาลง';
+
+  @override
+  String get marketDetailDayRange => 'ช่วงราคาวันนี้';
+
+  @override
+  String get marketDetail52WeekRange => 'ช่วงราคา 52 สัปดาห์';
+
+  @override
+  String get alertStatusTriggered => 'ทำงานแล้ว';
+
+  @override
+  String get alertStatusPaused => 'หยุดชั่วคราว';
+
+  @override
+  String get premiumMonthly => 'รายเดือน';
+
+  @override
+  String get premiumYearly => 'รายปี';
+
+  @override
+  String premiumSavePercent(int percent) {
+    return 'ประหยัด $percent%';
+  }
+
+  @override
+  String get premiumCtaGetPro => 'รับ Pro';
+
+  @override
+  String get premiumCtaGetAiPro => 'รับ AI Pro';
+
+  @override
+  String get aboutHeadline => 'ข้อมูลเชิงลึกตลาดโลกของคุณ';
+
+  @override
+  String get aboutFeatureDashboard => 'แดชบอร์ดตลาดที่ทันสมัย';
+
+  @override
+  String get aboutFeatureAiAssistant => 'ผู้ช่วย AI ตลาดการเงิน';
+
+  @override
+  String get aboutFeatureRealtime => 'ข้อมูลตลาดแบบเรียลไทม์';
+
+  @override
+  String get aboutFeatureAlerts => 'การแจ้งเตือนอัจฉริยะ';
+
+  @override
+  String get aboutFeatureGlobalCoverage => 'ครอบคลุมตลาดทั่วโลก';
+
+  @override
+  String get aboutFeaturePremiumTools => 'เครื่องมือพรีเมียม';
 }

@@ -10,6 +10,7 @@ import '../features/ads/data/mock_ad_service.dart';
 import '../features/ads/domain/ad_service.dart';
 import '../features/ai/data/mock_market_ai_service.dart';
 import '../features/ai/domain/market_ai_service.dart';
+import '../features/ai_ask/application/ai_ask_controller.dart';
 import '../features/alerts/application/alerts_controller.dart';
 import '../features/alerts/data/mock_alert_repository.dart';
 import '../features/alerts/data/mock_notification_service.dart';
@@ -99,6 +100,7 @@ class MkrApp extends StatelessWidget {
             calendarService: ctx.read<EconomicCalendarService>(),
           ),
         ),
+        ChangeNotifierProvider(create: (ctx) => AiAskController(ctx.read<MarketAIService>())),
       ],
       child: const _AppView(),
     );

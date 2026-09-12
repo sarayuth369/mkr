@@ -186,58 +186,73 @@ class _SubscriptionCard extends StatelessWidget {
     final theme = Theme.of(context);
     final isFree = entitlement.tier == PremiumTier.free;
 
+    final onGradient = Colors.white;
+    final premiumAccent = context.marketColors.premiumAccent;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Card(
-        color: isFree ? theme.colorScheme.primaryContainer : theme.colorScheme.surfaceContainerHigh,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.workspace_premium,
-                  color: isFree ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        isFree ? l10n.settingsUnlockPro : premiumTierLabel(l10n, entitlement.tier),
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: isFree ? theme.colorScheme.onPrimaryContainer : null,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        isFree ? l10n.settingsUnlockProSubtitle : l10n.settingsActive,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: isFree ? theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.85) : context.marketColors.gain,
-                          fontWeight: isFree ? null : FontWeight.w700,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+        clipBehavior: Clip.antiAlias,
+        color: isFree ? null : theme.colorScheme.surfaceContainerHigh,
+        child: Container(
+          decoration: isFree
+              ? BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [premiumAccent, theme.colorScheme.primary],
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  isFree ? l10n.settingsViewPlans : l10n.settingsManagePlan,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: isFree ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.primary,
+                )
+              : null,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.workspace_premium,
+                    color: isFree ? onGradient : theme.colorScheme.primary,
                   ),
-                ),
-                Icon(Icons.chevron_right, color: isFree ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.primary),
-              ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isFree ? l10n.settingsUnlockPro : premiumTierLabel(l10n, entitlement.tier),
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: isFree ? onGradient : null,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          isFree ? l10n.settingsUnlockProSubtitle : l10n.settingsActive,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: isFree ? onGradient.withValues(alpha: 0.9) : context.marketColors.gain,
+                            fontWeight: isFree ? null : FontWeight.w700,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    isFree ? l10n.settingsViewPlans : l10n.settingsManagePlan,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: isFree ? onGradient : theme.colorScheme.primary,
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, color: isFree ? onGradient : theme.colorScheme.primary),
+                ],
+              ),
             ),
           ),
         ),
