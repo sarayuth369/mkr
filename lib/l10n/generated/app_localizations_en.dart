@@ -1,0 +1,406 @@
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for English (`en`).
+class AppLocalizationsEn extends AppLocalizations {
+  AppLocalizationsEn([String locale = 'en']) : super(locale);
+
+  @override
+  String get appName => 'MKR';
+
+  @override
+  String get navHome => 'Home';
+
+  @override
+  String get navMarkets => 'Markets';
+
+  @override
+  String get navWatchlist => 'Watchlist';
+
+  @override
+  String get navAlerts => 'Alerts';
+
+  @override
+  String get navSettings => 'Settings';
+
+  @override
+  String get homeMarketStatus => 'Market Status';
+
+  @override
+  String get homeTodaysRadar => 'Today\'s Radar';
+
+  @override
+  String get homeAiBrief => 'AI Market Brief';
+
+  @override
+  String get homeGoldRadar => 'Gold Radar';
+
+  @override
+  String get homeUsMarket => 'US Market';
+
+  @override
+  String get homeCrypto => 'Crypto';
+
+  @override
+  String get seeAll => 'See all';
+
+  @override
+  String get retry => 'Retry';
+
+  @override
+  String get loading => 'Loading…';
+
+  @override
+  String get somethingWentWrong => 'Something went wrong';
+
+  @override
+  String get noDataYet => 'No data yet';
+
+  @override
+  String lastUpdated(String time) {
+    return 'Last updated $time';
+  }
+
+  @override
+  String get staleData => 'Showing cached data — offline';
+
+  @override
+  String get demoDataBanner => 'Demo data for preview purposes';
+
+  @override
+  String get aiWhatHappened => 'What happened';
+
+  @override
+  String get aiWhyItMatters => 'Why it matters';
+
+  @override
+  String get aiWhatToWatch => 'What to watch';
+
+  @override
+  String get aiRisks => 'Risks';
+
+  @override
+  String get aiWhatIsDriving => 'What is driving this?';
+
+  @override
+  String get aiKeyImportantToday => 'What\'s important today';
+
+  @override
+  String get marketsTitle => 'Markets';
+
+  @override
+  String get searchSymbolHint => 'Search symbol or name';
+
+  @override
+  String get categoryGold => 'Gold';
+
+  @override
+  String get categoryUsStocks => 'US Stocks';
+
+  @override
+  String get categoryIndices => 'Indices';
+
+  @override
+  String get categoryCrypto => 'Crypto';
+
+  @override
+  String get categoryForex => 'Forex';
+
+  @override
+  String get categoryThailand => 'Thailand';
+
+  @override
+  String get marketDetailHigh => 'High';
+
+  @override
+  String get marketDetailLow => 'Low';
+
+  @override
+  String get marketDetailOpen => 'Open';
+
+  @override
+  String get marketDetailPrevClose => 'Prev. Close';
+
+  @override
+  String get marketDetailVolume => 'Volume';
+
+  @override
+  String get marketDetailRelatedNews => 'Related News';
+
+  @override
+  String get marketDetailRelatedEvents => 'Related Events';
+
+  @override
+  String get marketDetailAiInsight => 'AI Insight';
+
+  @override
+  String get addToWatchlist => 'Add to Watchlist';
+
+  @override
+  String get removeFromWatchlist => 'Remove from Watchlist';
+
+  @override
+  String get createAlert => 'Create Alert';
+
+  @override
+  String get timeframe1D => '1D';
+
+  @override
+  String get timeframe1W => '1W';
+
+  @override
+  String get timeframe1M => '1M';
+
+  @override
+  String get timeframe3M => '3M';
+
+  @override
+  String get timeframe1Y => '1Y';
+
+  @override
+  String get goldSupport => 'Support';
+
+  @override
+  String get goldResistance => 'Resistance';
+
+  @override
+  String get goldTrend => 'Trend';
+
+  @override
+  String get goldMomentum => 'Momentum';
+
+  @override
+  String get goldVolatility => 'Volatility';
+
+  @override
+  String get goldImportantEvents => 'Important Events';
+
+  @override
+  String get calendarTitle => 'Economic Calendar';
+
+  @override
+  String get filterAll => 'All';
+
+  @override
+  String get filterHigh => 'High';
+
+  @override
+  String get filterMedium => 'Medium';
+
+  @override
+  String get filterLow => 'Low';
+
+  @override
+  String get calendarPrevious => 'Previous';
+
+  @override
+  String get calendarForecast => 'Forecast';
+
+  @override
+  String get calendarActual => 'Actual';
+
+  @override
+  String get newsTitle => 'News Radar';
+
+  @override
+  String get newsAffectedAssets => 'Affected';
+
+  @override
+  String get watchlistTitle => 'Watchlist';
+
+  @override
+  String get watchlistEmpty => 'Your watchlist is empty';
+
+  @override
+  String get watchlistAddSome => 'Add symbols to track them here';
+
+  @override
+  String get alertsTitle => 'Alerts';
+
+  @override
+  String get alertsEmpty => 'No alerts yet';
+
+  @override
+  String get alertsCreateFirst => 'Create your first alert';
+
+  @override
+  String get alertTypePrice => 'Price';
+
+  @override
+  String get alertTypePercentage => 'Percentage';
+
+  @override
+  String get alertTypeEvent => 'Event';
+
+  @override
+  String get alertTypeRadar => 'Radar';
+
+  @override
+  String get alertEnable => 'Enabled';
+
+  @override
+  String get delete => 'Delete';
+
+  @override
+  String get save => 'Save';
+
+  @override
+  String get cancel => 'Cancel';
+
+  @override
+  String get portfolioTitle => 'Portfolio';
+
+  @override
+  String get portfolioTotalValue => 'Total Value';
+
+  @override
+  String get portfolioDailyPl => 'Daily P/L';
+
+  @override
+  String get portfolioTotalPl => 'Total P/L';
+
+  @override
+  String get portfolioAllocation => 'Allocation';
+
+  @override
+  String get portfolioAddHolding => 'Add Holding';
+
+  @override
+  String get portfolioSymbol => 'Symbol';
+
+  @override
+  String get portfolioQuantity => 'Quantity';
+
+  @override
+  String get portfolioAvgPrice => 'Average Price';
+
+  @override
+  String get portfolioEmpty => 'No holdings yet';
+
+  @override
+  String get premiumTitle => 'Premium';
+
+  @override
+  String get premiumFree => 'Free';
+
+  @override
+  String get premiumPro => 'Pro';
+
+  @override
+  String get premiumAiPro => 'AI Pro';
+
+  @override
+  String get premiumLifetime => 'Pro Lifetime';
+
+  @override
+  String get premiumPerMonth => '/month';
+
+  @override
+  String get premiumPerYear => '/year';
+
+  @override
+  String get premiumOneTime => 'one-time';
+
+  @override
+  String get premiumUpgrade => 'Upgrade';
+
+  @override
+  String get premiumCurrentPlan => 'Current Plan';
+
+  @override
+  String get premiumSimulatePurchase => 'Simulate purchase (Phase 1 mock)';
+
+  @override
+  String get premiumRestorePurchases => 'Restore Purchases';
+
+  @override
+  String get settingsTitle => 'Settings';
+
+  @override
+  String get settingsAccount => 'Account';
+
+  @override
+  String get settingsAppearance => 'Appearance';
+
+  @override
+  String get settingsNotifications => 'Notifications';
+
+  @override
+  String get settingsMarketPreferences => 'Market preferences';
+
+  @override
+  String get settingsCurrency => 'Currency';
+
+  @override
+  String get settingsLanguage => 'Language';
+
+  @override
+  String get settingsSubscription => 'Subscription';
+
+  @override
+  String get settingsRestorePurchases => 'Restore Purchases';
+
+  @override
+  String get settingsPrivacyPolicy => 'Privacy Policy';
+
+  @override
+  String get settingsTerms => 'Terms of Service';
+
+  @override
+  String get settingsAbout => 'About MKR';
+
+  @override
+  String get settingsAppVersion => 'App version';
+
+  @override
+  String get settingsThemeLight => 'Light';
+
+  @override
+  String get settingsThemeDark => 'Dark';
+
+  @override
+  String get settingsThemeSystem => 'System';
+
+  @override
+  String get onboardingTitle1 => 'Know what matters in the market.';
+
+  @override
+  String get onboardingTitle2 => 'Track Gold, Stocks, Crypto and Forex.';
+
+  @override
+  String get onboardingTitle3 => 'Get alerts when important things happen.';
+
+  @override
+  String get onboardingTitle4 => 'AI-powered market brief.';
+
+  @override
+  String get onboardingStart => 'Start using MKR';
+
+  @override
+  String get onboardingSkip => 'Skip';
+
+  @override
+  String get authLogin => 'Log in';
+
+  @override
+  String get authRegister => 'Register';
+
+  @override
+  String get authLogout => 'Log out';
+
+  @override
+  String get authEmail => 'Email';
+
+  @override
+  String get authPassword => 'Password';
+
+  @override
+  String get authContinueAsGuest => 'Continue as guest';
+
+  @override
+  String get financialDisclaimer =>
+      'MKR provides market information and analytical content for informational and educational purposes only. It does not constitute investment, financial, trading, or other professional advice. Market data may be delayed or inaccurate. Users should conduct their own research and consider their own risk tolerance before making financial decisions.';
+}

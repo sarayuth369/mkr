@@ -1,0 +1,309 @@
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../../../core/theme/app_theme.dart';
+import '../../../../core/utils/formatters.dart';
+import '../../../../core/widgets/empty_state.dart';
+import '../../../../core/widgets/error_state.dart';
+import '../../../../core/widgets/loading_skeleton.dart';
+import '../../../../data/mock_market_catalog.dart';
+import '../../../billing/application/entitlement_controller.dart';
+import '../../../billing/presentation/widgets/premium_gate.dart';
+import '../../application/portfolio_controller.dart';
+import '../../domain/portfolio_calculations.dart';
+import '../../domain/portfolio_holding.dart';
+
+class PortfolioScreen extends StatelessWidget {
+  const PortfolioScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final entitlement = context.watch<EntitlementController>().entitlement;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Portfolio'),
+        actions: [
+          if (entitlement.hasPortfolio)
+            IconButton(
+              icon: const Icon(Icons.add),
+              tooltip: 'Add Holding',
+              onPressed: () => _showAddHoldingSheet(context),
+            ),
+        ],
+      ),
+      body: PremiumGate(
+        isUnlocked: entitlement.hasPortfolio,
+        featureName: 'Portfolio',
+        child: const _PortfolioBody(),
+      ),
+    );
+  }
+
+  void _showAddHoldingSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => const _AddHoldingSheet(),
+    );
+  }
+}
+
+class _PortfolioBody extends StatelessWidget {
+  const _PortfolioBody();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<PortfolioController>();
+
+    return RefreshIndicator(
+      onRefresh: controller.refresh,
+      child: controller.state.when(
+        loading: () => const Padding(padding: EdgeInsets.all(16), child: LoadingSkeletonList(rows: 4)),
+        error: (message) => ErrorState(message: message, onRetry: controller.refresh),
+        empty: () => ListView(
+          children: const [EmptyState(message: 'No holdings yet. Add your first holding.', icon: Icons.pie_chart_outline)],
+        ),
+        success: (summary, isStale, lastUpdated) => ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _SummaryCard(summary: summary),
+            const SizedBox(height: 20),
+            if (summary.lines.isNotEmpty) _AllocationChart(summary: summary),
+            const SizedBox(height: 20),
+            Text('Holdings', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            for (final line in summary.lines)
+              Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  title: Text(line.holding.symbol, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text('${line.holding.quantity} @ ${Formatters.price(line.holding.avgPrice)}'),
+                  trailing: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(Formatters.price(line.marketValue)),
+                      Text(
+                        '${Formatters.changeAbs(line.totalPL)} (${line.totalPLPct.toStringAsFixed(1)}%)',
+                        style: TextStyle(
+                          color: line.totalPL >= 0 ? context.marketColors.gain : context.marketColors.loss,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                  onLongPress: () => controller.removeHolding(line.holding.symbol),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({required this.summary});
+
+  final PortfolioSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final marketColors = context.marketColors;
+    final plColor = summary.totalPL >= 0 ? marketColors.gain : marketColors.loss;
+    final dailyColor = summary.dailyPL >= 0 ? marketColors.gain : marketColors.loss;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total Value', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            Text(Formatters.price(summary.totalValue), style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _stat(theme, 'Daily P/L', Formatters.changeAbs(summary.dailyPL), dailyColor),
+                ),
+                Expanded(
+                  child: _stat(
+                    theme,
+                    'Total P/L',
+                    '${Formatters.changeAbs(summary.totalPL)} (${summary.totalPLPct.toStringAsFixed(1)}%)',
+                    plColor,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _stat(ThemeData theme, String label, String value, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        Text(value, style: theme.textTheme.titleSmall?.copyWith(color: color, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+}
+
+class _AllocationChart extends StatelessWidget {
+  const _AllocationChart({required this.summary});
+
+  final PortfolioSummary summary;
+
+  static const _palette = [
+    Color(0xFF1857A4),
+    Color(0xFF3DDC97),
+    Color(0xFFE0B341),
+    Color(0xFFD1373F),
+    Color(0xFF9C6ADE),
+    Color(0xFF4CC9F0),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final allocation = summary.allocationBySymbol();
+    final entries = allocation.entries.toList();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Allocation', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 160,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: PieChart(
+                      PieChartData(
+                        sectionsSpace: 2,
+                        centerSpaceRadius: 30,
+                        sections: [
+                          for (var i = 0; i < entries.length; i++)
+                            PieChartSectionData(
+                              value: entries[i].value * 100,
+                              color: _palette[i % _palette.length],
+                              title: '',
+                              radius: 50,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        for (var i = 0; i < entries.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Row(
+                              children: [
+                                Container(width: 10, height: 10, color: _palette[i % _palette.length]),
+                                const SizedBox(width: 6),
+                                Text('${entries[i].key} ${(entries[i].value * 100).toStringAsFixed(0)}%',
+                                    style: Theme.of(context).textTheme.labelSmall),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AddHoldingSheet extends StatefulWidget {
+  const _AddHoldingSheet();
+
+  @override
+  State<_AddHoldingSheet> createState() => _AddHoldingSheetState();
+}
+
+class _AddHoldingSheetState extends State<_AddHoldingSheet> {
+  late String _symbol = MockMarketCatalog.all.first.symbol;
+  final _quantityController = TextEditingController();
+  final _avgPriceController = TextEditingController();
+
+  @override
+  void dispose() {
+    _quantityController.dispose();
+    _avgPriceController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Add Holding', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _symbol,
+            decoration: const InputDecoration(labelText: 'Symbol'),
+            items: [
+              for (final q in MockMarketCatalog.all)
+                DropdownMenuItem(value: q.symbol, child: Text('${q.symbol} — ${q.name}')),
+            ],
+            onChanged: (v) => setState(() => _symbol = v ?? _symbol),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _quantityController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Quantity'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _avgPriceController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Average Price'),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: () {
+              final quantity = double.tryParse(_quantityController.text);
+              final avgPrice = double.tryParse(_avgPriceController.text);
+              if (quantity == null || avgPrice == null || quantity <= 0 || avgPrice <= 0) return;
+              context.read<PortfolioController>().addHolding(
+                    PortfolioHolding(symbol: _symbol, quantity: quantity, avgPrice: avgPrice),
+                  );
+              Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+}
