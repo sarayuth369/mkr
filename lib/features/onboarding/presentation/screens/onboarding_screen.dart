@@ -104,7 +104,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             duration: const Duration(milliseconds: 250),
                             curve: Curves.easeOut,
                           ),
-                  child: Text(isLast ? l10n.onboardingStart : 'Next'),
+                  child: Text(isLast ? l10n.onboardingStart : l10n.onboardingNext),
                 ),
               ),
             ),

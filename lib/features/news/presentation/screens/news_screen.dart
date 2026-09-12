@@ -6,6 +6,7 @@ import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/mock_data_banner.dart';
 import '../../../../core/widgets/news_card.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../application/news_controller.dart';
 
 class NewsScreen extends StatelessWidget {
@@ -13,10 +14,11 @@ class NewsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<NewsController>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('News Radar')),
+      appBar: AppBar(title: Text(l10n.newsTitle)),
       body: RefreshIndicator(
         onRefresh: controller.refresh,
         child: controller.state.when(
@@ -26,7 +28,7 @@ class NewsScreen extends StatelessWidget {
           ),
           error: (message) => ErrorState(message: message, onRetry: controller.refresh),
           empty: () => ListView(
-            children: const [EmptyState(message: 'No news yet', icon: Icons.article_outlined)],
+            children: [EmptyState(message: l10n.newsEmpty, icon: Icons.article_outlined)],
           ),
           success: (articles, isStale, lastUpdated) => ListView.separated(
             padding: const EdgeInsets.all(16),

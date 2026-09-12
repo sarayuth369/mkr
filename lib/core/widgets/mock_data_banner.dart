@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/generated/app_localizations.dart';
+
 /// Unmistakable "this is demo data" banner for screens (News, Calendar)
 /// whose spec explicitly requires mock content to never be confused with a
 /// real feed.
 class MockDataBanner extends StatelessWidget {
-  const MockDataBanner({super.key, this.text = 'Demo data for preview purposes'});
+  const MockDataBanner({super.key, this.text});
 
-  final String text;
+  final String? text;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +26,7 @@ class MockDataBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              text,
+              text ?? AppLocalizations.of(context).demoDataBanner,
               style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onTertiaryContainer),
             ),
           ),

@@ -8,6 +8,7 @@ import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../data/mock_market_catalog.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../billing/application/entitlement_controller.dart';
 import '../../../billing/presentation/widgets/premium_gate.dart';
 import '../../application/portfolio_controller.dart';
@@ -19,23 +20,24 @@ class PortfolioScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final entitlement = context.watch<EntitlementController>().entitlement;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Portfolio'),
+        title: Text(l10n.portfolioTitle),
         actions: [
           if (entitlement.hasPortfolio)
             IconButton(
               icon: const Icon(Icons.add),
-              tooltip: 'Add Holding',
+              tooltip: l10n.portfolioAddHolding,
               onPressed: () => _showAddHoldingSheet(context),
             ),
         ],
       ),
       body: PremiumGate(
         isUnlocked: entitlement.hasPortfolio,
-        featureName: 'Portfolio',
+        featureName: l10n.portfolioTitle,
         child: const _PortfolioBody(),
       ),
     );
@@ -55,6 +57,7 @@ class _PortfolioBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<PortfolioController>();
 
     return RefreshIndicator(
@@ -63,7 +66,12 @@ class _PortfolioBody extends StatelessWidget {
         loading: () => const Padding(padding: EdgeInsets.all(16), child: LoadingSkeletonList(rows: 4)),
         error: (message) => ErrorState(message: message, onRetry: controller.refresh),
         empty: () => ListView(
-          children: const [EmptyState(message: 'No holdings yet. Add your first holding.', icon: Icons.pie_chart_outline)],
+          children: [
+            EmptyState(
+              message: '${l10n.portfolioEmpty}. ${l10n.portfolioEmptyHint}',
+              icon: Icons.pie_chart_outline,
+            ),
+          ],
         ),
         success: (summary, isStale, lastUpdated) => ListView(
           padding: const EdgeInsets.all(16),
@@ -72,7 +80,7 @@ class _PortfolioBody extends StatelessWidget {
             const SizedBox(height: 20),
             if (summary.lines.isNotEmpty) _AllocationChart(summary: summary),
             const SizedBox(height: 20),
-            Text('Holdings', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            Text(l10n.portfolioHoldingsSectionTitle, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             for (final line in summary.lines)
               Card(
@@ -112,6 +120,7 @@ class _SummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final marketColors = context.marketColors;
     final plColor = summary.totalPL >= 0 ? marketColors.gain : marketColors.loss;
     final dailyColor = summary.dailyPL >= 0 ? marketColors.gain : marketColors.loss;
@@ -122,18 +131,18 @@ class _SummaryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Total Value', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            Text(l10n.portfolioTotalValue, style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
             Text(Formatters.price(summary.totalValue), style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
-                  child: _stat(theme, 'Daily P/L', Formatters.changeAbs(summary.dailyPL), dailyColor),
+                  child: _stat(theme, l10n.portfolioDailyPl, Formatters.changeAbs(summary.dailyPL), dailyColor),
                 ),
                 Expanded(
                   child: _stat(
                     theme,
-                    'Total P/L',
+                    l10n.portfolioTotalPl,
                     '${Formatters.changeAbs(summary.totalPL)} (${summary.totalPLPct.toStringAsFixed(1)}%)',
                     plColor,
                   ),
@@ -173,6 +182,7 @@ class _AllocationChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final allocation = summary.allocationBySymbol();
     final entries = allocation.entries.toList();
     return Card(
@@ -181,7 +191,7 @@ class _AllocationChart extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Allocation', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            Text(l10n.portfolioAllocation, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 12),
             SizedBox(
               height: 160,
@@ -255,6 +265,7 @@ class _AddHoldingSheetState extends State<_AddHoldingSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -266,11 +277,11 @@ class _AddHoldingSheetState extends State<_AddHoldingSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Add Holding', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+          Text(l10n.portfolioAddHolding, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             initialValue: _symbol,
-            decoration: const InputDecoration(labelText: 'Symbol'),
+            decoration: InputDecoration(labelText: l10n.portfolioSymbol),
             items: [
               for (final q in MockMarketCatalog.all)
                 DropdownMenuItem(value: q.symbol, child: Text('${q.symbol} — ${q.name}')),
@@ -281,13 +292,13 @@ class _AddHoldingSheetState extends State<_AddHoldingSheet> {
           TextField(
             controller: _quantityController,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(labelText: 'Quantity'),
+            decoration: InputDecoration(labelText: l10n.portfolioQuantity),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _avgPriceController,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(labelText: 'Average Price'),
+            decoration: InputDecoration(labelText: l10n.portfolioAvgPrice),
           ),
           const SizedBox(height: 16),
           FilledButton(
@@ -300,7 +311,7 @@ class _AddHoldingSheetState extends State<_AddHoldingSheet> {
                   );
               Navigator.pop(context);
             },
-            child: const Text('Save'),
+            child: Text(l10n.save),
           ),
         ],
       ),

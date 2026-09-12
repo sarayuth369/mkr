@@ -5,6 +5,7 @@ import '../../../../core/widgets/alert_card.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../billing/application/entitlement_controller.dart';
 import '../../../billing/domain/entitlement.dart';
 import '../../../billing/presentation/screens/paywall_screen.dart';
@@ -16,16 +17,17 @@ class AlertsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<AlertsController>();
     final entitlement = context.watch<EntitlementController>().entitlement;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Alerts'),
+        title: Text(l10n.alertsTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
-            tooltip: 'Create Alert',
+            tooltip: l10n.createAlert,
             onPressed: () => _createAlert(context, controller, entitlement),
           ),
         ],
@@ -38,9 +40,9 @@ class AlertsScreen extends StatelessWidget {
           empty: () => ListView(
             children: [
               EmptyState(
-                message: 'No alerts yet. Create your first alert.',
+                message: '${l10n.alertsEmpty}. ${l10n.alertsCreateFirst}.',
                 icon: Icons.notifications_none,
-                actionLabel: 'Create Alert',
+                actionLabel: l10n.createAlert,
                 onAction: () => _createAlert(context, controller, entitlement),
               ),
             ],

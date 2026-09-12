@@ -135,5 +135,66 @@
   "authEmail": "อีเมล",
   "authPassword": "รหัสผ่าน",
   "authContinueAsGuest": "ใช้งานแบบผู้เยี่ยมชม",
-  "financialDisclaimer": "MKR ให้ข้อมูลตลาดและเนื้อหาวิเคราะห์เพื่อวัตถุประสงค์ในการให้ข้อมูลและการศึกษาเท่านั้น ไม่ถือเป็นคำแนะนำด้านการลงทุน การเงิน การเทรด หรือคำแนะนำทางวิชาชีพอื่นใด ข้อมูลตลาดอาจล่าช้าหรือคลาดเคลื่อน ผู้ใช้ควรศึกษาข้อมูลด้วยตนเองและพิจารณาความเสี่ยงที่ยอมรับได้ก่อนตัดสินใจทางการเงิน"
+  "financialDisclaimer": "MKR ให้ข้อมูลตลาดและเนื้อหาวิเคราะห์เพื่อวัตถุประสงค์ในการให้ข้อมูลและการศึกษาเท่านั้น ไม่ถือเป็นคำแนะนำด้านการลงทุน การเงิน การเทรด หรือคำแนะนำทางวิชาชีพอื่นใด ข้อมูลตลาดอาจล่าช้าหรือคลาดเคลื่อน ผู้ใช้ควรศึกษาข้อมูลด้วยตนเองและพิจารณาความเสี่ยงที่ยอมรับได้ก่อนตัดสินใจทางการเงิน",
+  "settingsAccountGuest": "ผู้เยี่ยมชม",
+  "purchasesRestoredMessage": "กู้คืนการซื้อเรียบร้อยแล้ว",
+  "homeNothingScheduled": "วันนี้ยังไม่มีเหตุการณ์สำคัญ",
+  "marketsNoMarketsAvailable": "ไม่มีข้อมูลตลาด",
+  "marketsNoSymbolsMatch": "ไม่พบสัญลักษณ์ที่ตรงกับการค้นหา",
+  "marketDetailSymbolNotFound": "ไม่พบสัญลักษณ์นี้",
+  "goldRadarUnavailable": "ไม่มีข้อมูลทองคำ",
+  "goldSpotSubtitle": "ทองคำสปอต",
+  "goldAiInsightTitle": "อะไรคือปัจจัยขับเคลื่อนราคาทองคำ",
+  "trendBullish": "ขาขึ้น",
+  "trendNeutral": "เป็นกลาง",
+  "trendBearish": "ขาลง",
+  "momentumStrong": "แรง",
+  "momentumModerate": "ปานกลาง",
+  "momentumWeak": "อ่อน",
+  "volatilityElevated": "สูง",
+  "volatilityNormal": "ปกติ",
+  "volatilityLow": "ต่ำ",
+  "radarTransitionNeutralBullish": "เป็นกลาง → ขาขึ้น",
+  "radarTransitionNeutralBearish": "เป็นกลาง → ขาลง",
+  "radarTransitionBullishNeutral": "ขาขึ้น → เป็นกลาง",
+  "radarTransitionBearishNeutral": "ขาลง → เป็นกลาง",
+  "priceDirectionAbove": "สูงกว่า",
+  "priceDirectionBelow": "ต่ำกว่า",
+  "targetPriceLabel": "ราคาเป้าหมาย",
+  "percentageThresholdLabel": "เกณฑ์เปอร์เซ็นต์ (±%)",
+  "eventKeywordLabel": "คำค้นเหตุการณ์ (เช่น CPI, FOMC, NFP, Fed Speech)",
+  "radarTransitionFieldLabel": "การเปลี่ยนแปลงเรดาร์",
+  "portfolioEmptyHint": "เพิ่มการถือครองแรกของคุณ",
+  "portfolioHoldingsSectionTitle": "การถือครอง",
+  "watchlistAddSymbolTooltip": "เพิ่มสัญลักษณ์",
+  "newsEmpty": "ยังไม่มีข่าว",
+  "premiumChooseYourPlan": "เลือกแผนของคุณ",
+  "premiumFreeFeatures": "ข้อมูลตลาดพื้นฐาน · ข่าวพื้นฐาน · ปฏิทินพื้นฐาน\nรายการติดตามและแจ้งเตือนแบบจำกัด · สรุป AI พื้นฐาน · มีโฆษณา",
+  "premiumSimulatePurchaseDialogTitle": "จำลองการซื้อ",
+  "premiumMockPurchaseConfirm": "นี่คือการจำลองการซื้อสำหรับ Phase 1 สำหรับ {title} ({price}) จะไม่มีการชำระเงินจริงเกิดขึ้น ดำเนินการต่อหรือไม่",
+  "@premiumMockPurchaseConfirm": {
+    "placeholders": {
+      "title": {"type": "String"},
+      "price": {"type": "String"}
+    }
+  },
+  "confirmLabel": "ยืนยัน",
+  "premiumActivatedMessage": "เปิดใช้งาน {title} แล้ว (จำลอง)",
+  "@premiumActivatedMessage": {
+    "placeholders": {
+      "title": {"type": "String"}
+    }
+  },
+  "premiumGateFeatureLocked": "{feature} เป็นฟีเจอร์พรีเมียม",
+  "@premiumGateFeatureLocked": {
+    "placeholders": {
+      "feature": {"type": "String"}
+    }
+  },
+  "authHaveAccountLogin": "มีบัญชีอยู่แล้ว? เข้าสู่ระบบ",
+  "authNewHereRegister": "ยังไม่มีบัญชี? สมัครสมาชิก",
+  "calendarNoEventsYet": "ยังไม่มีเหตุการณ์",
+  "calendarNoEventsMatchFilter": "ไม่พบเหตุการณ์ที่ตรงกับตัวกรองนี้",
+  "aiDisclaimerShort": "เพื่อข้อมูลเท่านั้น ไม่ใช่คำแนะนำทางการเงิน ข้อมูลอาจล่าช้า",
+  "onboardingNext": "ถัดไป"
 }

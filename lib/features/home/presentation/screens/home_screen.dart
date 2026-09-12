@@ -8,6 +8,7 @@ import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/market_card.dart';
 import '../../../../core/widgets/radar_card.dart';
 import '../../../../domain/market_quote.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../ads/presentation/widgets/ad_banner_slot.dart';
 import '../../../gold/presentation/screens/gold_radar_screen.dart';
 import '../../../markets/presentation/screens/market_detail_screen.dart';
@@ -20,20 +21,21 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<HomeController>();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MKR'),
+        title: Text(l10n.appName),
         actions: [
           IconButton(
             icon: const Icon(Icons.article_outlined),
-            tooltip: 'News',
+            tooltip: l10n.newsTitle,
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NewsScreen())),
           ),
           IconButton(
             icon: const Icon(Icons.event_note_outlined),
-            tooltip: 'Economic Calendar',
+            tooltip: l10n.calendarTitle,
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CalendarScreen())),
           ),
         ],
@@ -43,18 +45,19 @@ class HomeScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Market Status', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            Text(l10n.homeMarketStatus, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 10),
             _StatusRow(controller: controller),
             const SizedBox(height: 24),
-            Text("Today's Radar", style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            Text(l10n.homeTodaysRadar, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
             _RadarSection(controller: controller),
             const SizedBox(height: 24),
             _AiBriefSection(controller: controller),
             const SizedBox(height: 24),
             _SectionHeader(
-              title: 'Gold Radar',
+              title: l10n.homeGoldRadar,
+              seeAllLabel: l10n.seeAll,
               onSeeAll: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const GoldRadarScreen())),
             ),
             const SizedBox(height: 8),
@@ -67,11 +70,11 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 24),
-            Text('US Market', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            Text(l10n.homeUsMarket, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 10),
             _QuoteRow(state: controller.usMarketState),
             const SizedBox(height: 24),
-            Text('Crypto', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            Text(l10n.homeCrypto, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 10),
             _QuoteRow(state: controller.cryptoState),
             const SizedBox(height: 24),
@@ -84,9 +87,10 @@ class HomeScreen extends StatelessWidget {
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, required this.onSeeAll});
+  const _SectionHeader({required this.title, required this.seeAllLabel, required this.onSeeAll});
 
   final String title;
+  final String seeAllLabel;
   final VoidCallback onSeeAll;
 
   @override
@@ -95,7 +99,7 @@ class _SectionHeader extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-        TextButton(onPressed: onSeeAll, child: const Text('See all')),
+        TextButton(onPressed: onSeeAll, child: Text(seeAllLabel)),
       ],
     );
   }
@@ -182,12 +186,13 @@ class _RadarSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return controller.radarState.when(
       loading: () => const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: LoadingSkeletonList(rows: 2, rowHeight: 40)),
       error: (message) => ErrorState(message: message, onRetry: controller.refresh),
-      empty: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 12),
-        child: Text('Nothing major scheduled today'),
+      empty: () => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Text(l10n.homeNothingScheduled),
       ),
       success: (items, isStale, lastUpdated) => Column(
         children: [for (final item in items) RadarCard(item: item)],
@@ -203,11 +208,12 @@ class _AiBriefSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return controller.briefState.when(
       loading: () => const LoadingSkeleton(height: 200, width: double.infinity, borderRadius: 16),
       error: (message) => ErrorState(message: message, onRetry: controller.refresh),
       empty: () => const SizedBox.shrink(),
-      success: (insight, isStale, lastUpdated) => AIInsightCard(insight: insight),
+      success: (insight, isStale, lastUpdated) => AIInsightCard(insight: insight, title: l10n.homeAiBrief),
     );
   }
 }

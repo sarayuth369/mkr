@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/generated/app_localizations.dart';
 import '../utils/formatters.dart';
 
 /// Shown whenever an [ApiState.success] carries isStale=true — makes cached
@@ -12,6 +13,10 @@ class StaleDataBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
+    final text = lastUpdated == null
+        ? l10n.staleData
+        : '${l10n.staleData} · ${l10n.lastUpdated(Formatters.dateTime(lastUpdated!))}';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -25,9 +30,7 @@ class StaleDataBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              lastUpdated == null
-                  ? 'Showing cached data — offline'
-                  : 'Showing cached data — offline · Last updated ${Formatters.dateTime(lastUpdated!)}',
+              text,
               style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onErrorContainer),
             ),
           ),

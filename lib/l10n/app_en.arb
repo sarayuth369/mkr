@@ -135,5 +135,66 @@
   "authEmail": "Email",
   "authPassword": "Password",
   "authContinueAsGuest": "Continue as guest",
-  "financialDisclaimer": "MKR provides market information and analytical content for informational and educational purposes only. It does not constitute investment, financial, trading, or other professional advice. Market data may be delayed or inaccurate. Users should conduct their own research and consider their own risk tolerance before making financial decisions."
+  "financialDisclaimer": "MKR provides market information and analytical content for informational and educational purposes only. It does not constitute investment, financial, trading, or other professional advice. Market data may be delayed or inaccurate. Users should conduct their own research and consider their own risk tolerance before making financial decisions.",
+  "settingsAccountGuest": "Guest",
+  "purchasesRestoredMessage": "Purchases restored",
+  "homeNothingScheduled": "Nothing major scheduled today",
+  "marketsNoMarketsAvailable": "No markets available",
+  "marketsNoSymbolsMatch": "No symbols match your search",
+  "marketDetailSymbolNotFound": "Symbol not found",
+  "goldRadarUnavailable": "Gold data unavailable",
+  "goldSpotSubtitle": "Gold Spot",
+  "goldAiInsightTitle": "What is driving Gold?",
+  "trendBullish": "Bullish",
+  "trendNeutral": "Neutral",
+  "trendBearish": "Bearish",
+  "momentumStrong": "Strong",
+  "momentumModerate": "Moderate",
+  "momentumWeak": "Weak",
+  "volatilityElevated": "Elevated",
+  "volatilityNormal": "Normal",
+  "volatilityLow": "Low",
+  "radarTransitionNeutralBullish": "Neutral → Bullish",
+  "radarTransitionNeutralBearish": "Neutral → Bearish",
+  "radarTransitionBullishNeutral": "Bullish → Neutral",
+  "radarTransitionBearishNeutral": "Bearish → Neutral",
+  "priceDirectionAbove": "Above",
+  "priceDirectionBelow": "Below",
+  "targetPriceLabel": "Target price",
+  "percentageThresholdLabel": "Percentage threshold (±%)",
+  "eventKeywordLabel": "Event keyword (e.g. CPI, FOMC, NFP, Fed Speech)",
+  "radarTransitionFieldLabel": "Radar transition",
+  "portfolioEmptyHint": "Add your first holding",
+  "portfolioHoldingsSectionTitle": "Holdings",
+  "watchlistAddSymbolTooltip": "Add symbol",
+  "newsEmpty": "No news yet",
+  "premiumChooseYourPlan": "Choose your plan",
+  "premiumFreeFeatures": "Basic market data · Basic news · Basic calendar\nLimited watchlist & alerts · Basic AI brief · Ads",
+  "premiumSimulatePurchaseDialogTitle": "Simulate purchase",
+  "premiumMockPurchaseConfirm": "This is a Phase 1 mock purchase for {title} ({price}). No real payment will be made. Continue?",
+  "@premiumMockPurchaseConfirm": {
+    "placeholders": {
+      "title": {"type": "String"},
+      "price": {"type": "String"}
+    }
+  },
+  "confirmLabel": "Confirm",
+  "premiumActivatedMessage": "{title} activated (mock)",
+  "@premiumActivatedMessage": {
+    "placeholders": {
+      "title": {"type": "String"}
+    }
+  },
+  "premiumGateFeatureLocked": "{feature} is a premium feature",
+  "@premiumGateFeatureLocked": {
+    "placeholders": {
+      "feature": {"type": "String"}
+    }
+  },
+  "authHaveAccountLogin": "Have an account? Log in",
+  "authNewHereRegister": "New here? Register",
+  "calendarNoEventsYet": "No events yet",
+  "calendarNoEventsMatchFilter": "No events match this filter",
+  "aiDisclaimerShort": "Informational only — not financial advice. Data may be delayed.",
+  "onboardingNext": "Next"
 }

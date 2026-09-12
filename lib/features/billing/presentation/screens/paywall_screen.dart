@@ -2,30 +2,33 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/widgets/premium_badge.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../application/entitlement_controller.dart';
 import '../../domain/entitlement.dart';
 import '../../domain/product.dart';
+import '../premium_tier_label.dart';
 
 class PaywallScreen extends StatelessWidget {
   const PaywallScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<EntitlementController>();
     final currentTier = controller.entitlement.tier;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Premium')),
+      appBar: AppBar(title: Text(l10n.premiumTitle)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            'Choose your plan',
+            l10n.premiumChooseYourPlan,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
-            'Current plan: ${currentTier.label}',
+            '${l10n.premiumCurrentPlan}: ${premiumTierLabel(l10n, currentTier)}',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -45,11 +48,11 @@ class PaywallScreen extends StatelessWidget {
                 await controller.restore();
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Purchases restored')),
+                    SnackBar(content: Text(l10n.purchasesRestoredMessage)),
                   );
                 }
               },
-              child: const Text('Restore Purchases'),
+              child: Text(l10n.premiumRestorePurchases),
             ),
           ),
         ],
@@ -65,6 +68,7 @@ class _FreeTierCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -73,14 +77,13 @@ class _FreeTierCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('Free', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text(l10n.premiumFree, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                 const Spacer(),
-                if (isCurrent) const Chip(label: Text('Current Plan')),
+                if (isCurrent) Chip(label: Text(l10n.premiumCurrentPlan)),
               ],
             ),
             const SizedBox(height: 8),
-            const Text('Basic market data · Basic news · Basic calendar\n'
-                'Limited watchlist & alerts · Basic AI brief · Ads'),
+            Text(l10n.premiumFreeFeatures),
           ],
         ),
       ),
@@ -97,6 +100,7 @@ class _ProductCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -105,7 +109,7 @@ class _ProductCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text(product.title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text(premiumTierLabel(l10n, product.tier), style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(width: 8),
                 PremiumBadge(tier: product.tier),
                 const Spacer(),
@@ -128,10 +132,10 @@ class _ProductCard extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: isCurrent
-                  ? const OutlinedButton(onPressed: null, child: Text('Current Plan'))
+                  ? OutlinedButton(onPressed: null, child: Text(l10n.premiumCurrentPlan))
                   : FilledButton(
                       onPressed: () => _confirmPurchase(context, product),
-                      child: const Text('Simulate purchase (Phase 1 mock)'),
+                      child: Text(l10n.premiumSimulatePurchase),
                     ),
             ),
           ],
@@ -141,18 +145,17 @@ class _ProductCard extends StatelessWidget {
   }
 
   Future<void> _confirmPurchase(BuildContext context, Product product) async {
+    final l10n = AppLocalizations.of(context);
     final controller = context.read<EntitlementController>();
+    final productTitle = premiumTierLabel(l10n, product.tier);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Simulate purchase'),
-        content: Text(
-          'This is a Phase 1 mock purchase for ${product.title} (${product.priceLabel}). '
-          'No real payment will be made. Continue?',
-        ),
+        title: Text(l10n.premiumSimulatePurchaseDialogTitle),
+        content: Text(l10n.premiumMockPurchaseConfirm(productTitle, product.priceLabel)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Confirm')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.cancel)),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(l10n.confirmLabel)),
         ],
       ),
     );
@@ -160,7 +163,7 @@ class _ProductCard extends StatelessWidget {
       await controller.purchase(product);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${product.title} activated (mock)')),
+          SnackBar(content: Text(l10n.premiumActivatedMessage(productTitle))),
         );
       }
     }

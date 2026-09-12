@@ -6,10 +6,11 @@ import '../../../../core/constants/legal_text.dart';
 import '../../../../core/localization/locale_controller.dart';
 import '../../../../core/persistence/app_local_store.dart';
 import '../../../../core/theme/theme_controller.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../auth/application/auth_controller.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../billing/application/entitlement_controller.dart';
-import '../../../billing/domain/entitlement.dart';
+import '../../../billing/presentation/premium_tier_label.dart';
 import '../../../billing/presentation/screens/paywall_screen.dart';
 import 'static_text_screen.dart';
 
@@ -20,6 +21,7 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final auth = context.watch<AuthController>();
     final entitlement = context.watch<EntitlementController>().entitlement;
     final themeController = context.watch<ThemeController>();
@@ -27,75 +29,77 @@ class SettingsScreen extends StatelessWidget {
     final store = context.read<AppLocalStore>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: Text(l10n.settingsTitle)),
       body: ListView(
         children: [
           ListTile(
             leading: const Icon(Icons.account_circle_outlined),
-            title: const Text('Account'),
-            subtitle: Text(auth.profile?.isGuest == true ? 'Guest' : auth.profile?.email ?? ''),
+            title: Text(l10n.settingsAccount),
+            subtitle: Text(auth.profile?.isGuest == true ? l10n.settingsAccountGuest : auth.profile?.email ?? ''),
             trailing: auth.profile?.isGuest == true
                 ? FilledButton(
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const LoginScreen()),
                     ),
-                    child: const Text('Log in'),
+                    child: Text(l10n.authLogin),
                   )
                 : TextButton(
                     onPressed: auth.logout,
-                    child: const Text('Log out'),
+                    child: Text(l10n.authLogout),
                   ),
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.workspace_premium_outlined),
-            title: const Text('Subscription'),
-            subtitle: Text('Current: ${entitlement.tier.label}'),
+            title: Text(l10n.settingsSubscription),
+            subtitle: Text('${l10n.premiumCurrentPlan}: ${premiumTierLabel(l10n, entitlement.tier)}'),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
           ),
           ListTile(
             leading: const Icon(Icons.restore_outlined),
-            title: const Text('Restore Purchases'),
+            title: Text(l10n.settingsRestorePurchases),
             onTap: () async {
               await context.read<EntitlementController>().restore();
               if (context.mounted) {
                 ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('Purchases restored')));
+                    .showSnackBar(SnackBar(content: Text(l10n.purchasesRestoredMessage)));
               }
             },
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.brightness_6_outlined),
-            title: const Text('Appearance'),
+            title: Text(l10n.settingsAppearance),
             trailing: DropdownButton<ThemeMode>(
               value: themeController.mode,
               underline: const SizedBox.shrink(),
-              items: const [
-                DropdownMenuItem(value: ThemeMode.system, child: Text('System')),
-                DropdownMenuItem(value: ThemeMode.light, child: Text('Light')),
-                DropdownMenuItem(value: ThemeMode.dark, child: Text('Dark')),
+              items: [
+                DropdownMenuItem(value: ThemeMode.system, child: Text(l10n.settingsThemeSystem)),
+                DropdownMenuItem(value: ThemeMode.light, child: Text(l10n.settingsThemeLight)),
+                DropdownMenuItem(value: ThemeMode.dark, child: Text(l10n.settingsThemeDark)),
               ],
               onChanged: (mode) => mode == null ? null : themeController.setMode(mode),
             ),
           ),
           ListTile(
             leading: const Icon(Icons.language_outlined),
-            title: const Text('Language'),
-            trailing: DropdownButton<Locale?>(
+            title: Text(l10n.settingsLanguage),
+            // Language names are shown in their own endonym (English / ไทย)
+            // regardless of the active app locale — standard practice for a
+            // language picker, not a hard-coded Thai UI string.
+            trailing: DropdownButton<Locale>(
               value: localeController.locale,
               underline: const SizedBox.shrink(),
               items: const [
-                DropdownMenuItem(value: null, child: Text('System')),
                 DropdownMenuItem(value: Locale('en'), child: Text('English')),
                 DropdownMenuItem(value: Locale('th'), child: Text('ไทย')),
               ],
-              onChanged: localeController.setLocale,
+              onChanged: (value) => value == null ? null : localeController.setLocale(value),
             ),
           ),
           ListTile(
             leading: const Icon(Icons.attach_money_outlined),
-            title: const Text('Currency'),
+            title: Text(l10n.settingsCurrency),
             trailing: DropdownButton<String>(
               value: store.currency,
               underline: const SizedBox.shrink(),
@@ -108,42 +112,42 @@ class SettingsScreen extends StatelessWidget {
           ),
           ListTile(
             leading: const Icon(Icons.notifications_outlined),
-            title: const Text('Notifications'),
+            title: Text(l10n.settingsNotifications),
             onTap: () {},
           ),
           ListTile(
             leading: const Icon(Icons.tune_outlined),
-            title: const Text('Market preferences'),
+            title: Text(l10n.settingsMarketPreferences),
             onTap: () {},
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.privacy_tip_outlined),
-            title: const Text('Privacy Policy'),
+            title: Text(l10n.settingsPrivacyPolicy),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const StaticTextScreen(title: 'Privacy Policy', body: LegalText.privacyPolicy),
+              builder: (_) => StaticTextScreen(title: l10n.settingsPrivacyPolicy, body: LegalText.privacyPolicy),
             )),
           ),
           ListTile(
             leading: const Icon(Icons.description_outlined),
-            title: const Text('Terms of Service'),
+            title: Text(l10n.settingsTerms),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const StaticTextScreen(title: 'Terms of Service', body: LegalText.termsOfService),
+              builder: (_) => StaticTextScreen(title: l10n.settingsTerms, body: LegalText.termsOfService),
             )),
           ),
           ListTile(
             leading: const Icon(Icons.info_outline),
-            title: const Text('About MKR'),
+            title: Text(l10n.settingsAbout),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const StaticTextScreen(
-                title: 'About MKR',
-                body: '${LegalText.aboutMkr}\n\n${Disclaimer.full}\n\nApp version: $appVersion',
+              builder: (_) => StaticTextScreen(
+                title: l10n.settingsAbout,
+                body: '${LegalText.aboutMkr}\n\n${Disclaimer.full}\n\n${l10n.settingsAppVersion}: $appVersion',
               ),
             )),
           ),
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('App version: $appVersion', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('${l10n.settingsAppVersion}: $appVersion', style: const TextStyle(fontSize: 12, color: Colors.grey)),
           ),
         ],
       ),

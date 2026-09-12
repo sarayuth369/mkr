@@ -11,24 +11,44 @@ import '../../../../core/widgets/price_chart.dart';
 import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../domain/market_trend.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../application/gold_radar_controller.dart';
 import '../../domain/gold_radar_data.dart';
+
+String trendLabel(AppLocalizations l10n, MarketTrend trend) => switch (trend) {
+      MarketTrend.bullish => l10n.trendBullish,
+      MarketTrend.neutral => l10n.trendNeutral,
+      MarketTrend.bearish => l10n.trendBearish,
+    };
+
+String momentumLabel(AppLocalizations l10n, MomentumLevel level) => switch (level) {
+      MomentumLevel.strong => l10n.momentumStrong,
+      MomentumLevel.moderate => l10n.momentumModerate,
+      MomentumLevel.weak => l10n.momentumWeak,
+    };
+
+String volatilityLabel(AppLocalizations l10n, VolatilityLevel level) => switch (level) {
+      VolatilityLevel.elevated => l10n.volatilityElevated,
+      VolatilityLevel.normal => l10n.volatilityNormal,
+      VolatilityLevel.low => l10n.volatilityLow,
+    };
 
 class GoldRadarScreen extends StatelessWidget {
   const GoldRadarScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<GoldRadarController>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Gold Radar')),
+      appBar: AppBar(title: Text(l10n.homeGoldRadar)),
       body: RefreshIndicator(
         onRefresh: controller.retry,
         child: controller.state.when(
           loading: () => const Padding(padding: EdgeInsets.all(16), child: LoadingSkeletonList(rows: 5)),
           error: (message) => ErrorState(message: message, onRetry: controller.retry),
-          empty: () => const Center(child: Text('Gold data unavailable')),
+          empty: () => Center(child: Text(l10n.goldRadarUnavailable)),
           success: (data, isStale, lastUpdated) => ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -40,17 +60,17 @@ class GoldRadarScreen extends StatelessWidget {
               const SizedBox(height: 20),
               _RelatedMarkets(data: data),
               const SizedBox(height: 20),
-              Text('AI: Gold Insight', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+              Text(l10n.goldAiInsightTitle, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
               controller.aiState.when(
                 loading: () => const LoadingSkeleton(height: 160, width: double.infinity, borderRadius: 16),
                 error: (message) => ErrorState(message: message),
                 empty: () => const SizedBox.shrink(),
-                success: (insight, _, __) => AIInsightCard(insight: insight, title: 'What is driving Gold?'),
+                success: (insight, _, __) => AIInsightCard(insight: insight, title: l10n.goldAiInsightTitle),
               ),
               if (controller.importantEvents.isNotEmpty) ...[
                 const SizedBox(height: 20),
-                Text('Important Events', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                Text(l10n.goldImportantEvents, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 8),
                 for (final event in controller.importantEvents)
                   Padding(
@@ -74,11 +94,12 @@ class _PriceHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final color = data.gold.isUp ? context.marketColors.gain : context.marketColors.loss;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('XAU/USD · Gold Spot', style: theme.textTheme.titleMedium),
+        Text('XAU/USD · ${l10n.goldSpotSubtitle}', style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -104,12 +125,13 @@ class _MetricsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final metrics = <(String, String)>[
-      ('Trend', data.trend.label),
-      ('Momentum', data.momentumLabel),
-      ('Volatility', data.volatilityLabel),
-      ('Support', Formatters.price(data.support)),
-      ('Resistance', Formatters.price(data.resistance)),
+      (l10n.goldTrend, trendLabel(l10n, data.trend)),
+      (l10n.goldMomentum, momentumLabel(l10n, data.momentum)),
+      (l10n.goldVolatility, volatilityLabel(l10n, data.volatility)),
+      (l10n.goldSupport, Formatters.price(data.support)),
+      (l10n.goldResistance, Formatters.price(data.resistance)),
     ];
     return Wrap(
       spacing: 24,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../application/entitlement_controller.dart';
 import '../screens/paywall_screen.dart';
 
@@ -22,6 +23,7 @@ class PremiumGate extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isUnlocked) return child;
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -31,7 +33,7 @@ class PremiumGate extends StatelessWidget {
             Icon(Icons.lock_outline, size: 48, color: theme.colorScheme.outline),
             const SizedBox(height: 12),
             Text(
-              '$featureName is a premium feature',
+              l10n.premiumGateFeatureLocked(featureName),
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium,
             ),
@@ -40,7 +42,7 @@ class PremiumGate extends StatelessWidget {
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const PaywallScreen()),
               ),
-              child: const Text('Upgrade'),
+              child: Text(l10n.premiumUpgrade),
             ),
           ],
         ),

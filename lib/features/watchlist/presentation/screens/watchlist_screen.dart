@@ -7,6 +7,7 @@ import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_quote.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../billing/application/entitlement_controller.dart';
 import '../../../billing/domain/entitlement.dart';
 import '../../../billing/presentation/screens/paywall_screen.dart';
@@ -18,16 +19,17 @@ class WatchlistScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<WatchlistController>();
     final entitlement = context.watch<EntitlementController>().entitlement;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Watchlist'),
+        title: Text(l10n.watchlistTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
-            tooltip: 'Add symbol',
+            tooltip: l10n.watchlistAddSymbolTooltip,
             onPressed: () => _showAddSymbolSheet(context, controller, entitlement),
           ),
         ],
@@ -43,9 +45,9 @@ class WatchlistScreen extends StatelessWidget {
           empty: () => ListView(
             children: [
               EmptyState(
-                message: 'Your watchlist is empty. Add symbols to track them here.',
+                message: '${l10n.watchlistEmpty}. ${l10n.watchlistAddSome}.',
                 icon: Icons.star_border,
-                actionLabel: 'Add symbol',
+                actionLabel: l10n.watchlistAddSymbolTooltip,
                 onAction: () => _showAddSymbolSheet(context, controller, entitlement),
               ),
             ],
@@ -114,6 +116,7 @@ class _AddSymbolSheetState extends State<_AddSymbolSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final results = MockMarketCatalog.search(_query)
         .where((q) => !widget.controller.contains(q.symbol))
         .toList();
@@ -129,9 +132,9 @@ class _AddSymbolSheetState extends State<_AddSymbolSheet> {
           children: [
             TextField(
               autofocus: true,
-              decoration: const InputDecoration(
-                hintText: 'Search symbol or name',
-                prefixIcon: Icon(Icons.search),
+              decoration: InputDecoration(
+                hintText: l10n.searchSymbolHint,
+                prefixIcon: const Icon(Icons.search),
               ),
               onChanged: (value) => setState(() => _query = value),
             ),

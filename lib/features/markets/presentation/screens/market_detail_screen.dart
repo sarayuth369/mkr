@@ -10,6 +10,7 @@ import '../../../../core/widgets/news_card.dart';
 import '../../../../core/widgets/price_chart.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../domain/market_quote.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../ai/domain/market_ai_service.dart';
 import '../../../alerts/presentation/screens/create_alert_screen.dart';
 import '../../../calendar/domain/economic_calendar_service.dart';
@@ -45,6 +46,7 @@ class _MarketDetailBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<MarketDetailController>();
     final watchlist = context.watch<WatchlistController>();
     final marketColors = context.marketColors;
@@ -56,12 +58,12 @@ class _MarketDetailBody extends StatelessWidget {
         actions: [
           IconButton(
             icon: Icon(inWatchlist ? Icons.star : Icons.star_border),
-            tooltip: inWatchlist ? 'Remove from Watchlist' : 'Add to Watchlist',
+            tooltip: inWatchlist ? l10n.removeFromWatchlist : l10n.addToWatchlist,
             onPressed: () => inWatchlist ? watchlist.remove(symbol) : watchlist.add(symbol),
           ),
           IconButton(
             icon: const Icon(Icons.notifications_none),
-            tooltip: 'Create Alert',
+            tooltip: l10n.createAlert,
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => CreateAlertScreen(initialSymbol: symbol)),
             ),
@@ -71,7 +73,7 @@ class _MarketDetailBody extends StatelessWidget {
       body: controller.quoteState.when(
         loading: () => const Padding(padding: EdgeInsets.all(16), child: LoadingSkeletonList(rows: 4)),
         error: (message) => ErrorState(message: message, onRetry: controller.retry),
-        empty: () => const Center(child: Text('Symbol not found')),
+        empty: () => Center(child: Text(l10n.marketDetailSymbolNotFound)),
         success: (quote, isStale, lastUpdated) {
           final changeColor = quote.isUp ? marketColors.gain : marketColors.loss;
           return RefreshIndicator(
@@ -104,17 +106,17 @@ class _MarketDetailBody extends StatelessWidget {
                 const SizedBox(height: 20),
                 _StatsGrid(quote: quote),
                 const SizedBox(height: 20),
-                Text('AI Insight', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                Text(l10n.marketDetailAiInsight, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 8),
                 controller.aiState.when(
                   loading: () => const LoadingSkeleton(height: 160, width: double.infinity, borderRadius: 16),
                   error: (message) => ErrorState(message: message),
                   empty: () => const SizedBox.shrink(),
-                  success: (insight, _, __) => AIInsightCard(insight: insight, title: '$symbol AI Insight'),
+                  success: (insight, _, __) => AIInsightCard(insight: insight, title: '$symbol ${l10n.marketDetailAiInsight}'),
                 ),
                 if (controller.relatedEvents.isNotEmpty) ...[
                   const SizedBox(height: 20),
-                  Text('Related Events', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                  Text(l10n.marketDetailRelatedEvents, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
                   for (final event in controller.relatedEvents)
                     Padding(
@@ -124,7 +126,7 @@ class _MarketDetailBody extends StatelessWidget {
                 ],
                 if (controller.relatedNews.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  Text('Related News', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                  Text(l10n.marketDetailRelatedNews, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
                   for (final article in controller.relatedNews)
                     Padding(
@@ -149,12 +151,13 @@ class _StatsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final stats = <(String, String?)>[
-      ('Open', quote.open != null ? Formatters.price(quote.open!) : null),
-      ('Prev. Close', quote.prevClose != null ? Formatters.price(quote.prevClose!) : null),
-      ('High', quote.high != null ? Formatters.price(quote.high!) : null),
-      ('Low', quote.low != null ? Formatters.price(quote.low!) : null),
-      ('Volume', quote.volume != null ? Formatters.volume(quote.volume!) : null),
+      (l10n.marketDetailOpen, quote.open != null ? Formatters.price(quote.open!) : null),
+      (l10n.marketDetailPrevClose, quote.prevClose != null ? Formatters.price(quote.prevClose!) : null),
+      (l10n.marketDetailHigh, quote.high != null ? Formatters.price(quote.high!) : null),
+      (l10n.marketDetailLow, quote.low != null ? Formatters.price(quote.low!) : null),
+      (l10n.marketDetailVolume, quote.volume != null ? Formatters.volume(quote.volume!) : null),
     ].where((s) => s.$2 != null).toList();
 
     if (stats.isEmpty) return const SizedBox.shrink();

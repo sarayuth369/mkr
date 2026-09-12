@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/widgets/alert_card.dart';
 import '../../../../data/mock_market_catalog.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../billing/application/entitlement_controller.dart';
 import '../../../billing/presentation/screens/paywall_screen.dart';
 import '../../application/alerts_controller.dart';
@@ -35,10 +37,11 @@ class _CreateAlertScreenState extends State<CreateAlertScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final entitlement = context.watch<EntitlementController>().entitlement;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Create Alert')),
+      appBar: AppBar(title: Text(l10n.createAlert)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -47,7 +50,7 @@ class _CreateAlertScreenState extends State<CreateAlertScreen> {
             children: [
               for (final type in AlertType.values)
                 ChoiceChip(
-                  label: Text(type.name.toUpperCase()),
+                  label: Text(alertTypeLabel(l10n, type).toUpperCase()),
                   selected: _type == type,
                   onSelected: (_) {
                     final needsAdvanced = type == AlertType.event || type == AlertType.radar;
@@ -64,14 +67,15 @@ class _CreateAlertScreenState extends State<CreateAlertScreen> {
           if (_type == AlertType.price || _type == AlertType.percentage || _type == AlertType.radar)
             _SymbolPicker(
               value: _symbol,
+              label: l10n.portfolioSymbol,
               onChanged: (value) => setState(() => _symbol = value),
             ),
           const SizedBox(height: 16),
           if (_type == AlertType.price) ...[
             SegmentedButton<PriceDirection>(
-              segments: const [
-                ButtonSegment(value: PriceDirection.above, label: Text('Above'), icon: Icon(Icons.arrow_upward)),
-                ButtonSegment(value: PriceDirection.below, label: Text('Below'), icon: Icon(Icons.arrow_downward)),
+              segments: [
+                ButtonSegment(value: PriceDirection.above, label: Text(l10n.priceDirectionAbove), icon: const Icon(Icons.arrow_upward)),
+                ButtonSegment(value: PriceDirection.below, label: Text(l10n.priceDirectionBelow), icon: const Icon(Icons.arrow_downward)),
               ],
               selected: {_direction},
               onSelectionChanged: (s) => setState(() => _direction = s.first),
@@ -80,31 +84,32 @@ class _CreateAlertScreenState extends State<CreateAlertScreen> {
             TextField(
               controller: _priceController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Target price'),
+              decoration: InputDecoration(labelText: l10n.targetPriceLabel),
             ),
           ],
           if (_type == AlertType.percentage)
             TextField(
               controller: _percentageController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Percentage threshold (±%)'),
+              decoration: InputDecoration(labelText: l10n.percentageThresholdLabel),
             ),
           if (_type == AlertType.event)
             TextField(
               controller: _eventKeywordController,
-              decoration: const InputDecoration(labelText: 'Event keyword (e.g. CPI, FOMC, NFP, Fed Speech)'),
+              decoration: InputDecoration(labelText: l10n.eventKeywordLabel),
             ),
           if (_type == AlertType.radar)
             DropdownButtonFormField<RadarTransition>(
               initialValue: _transition,
-              decoration: const InputDecoration(labelText: 'Radar transition'),
+              decoration: InputDecoration(labelText: l10n.radarTransitionFieldLabel),
               items: [
-                for (final t in RadarTransition.values) DropdownMenuItem(value: t, child: Text(t.label)),
+                for (final t in RadarTransition.values)
+                  DropdownMenuItem(value: t, child: Text(radarTransitionLabel(l10n, t))),
               ],
               onChanged: (value) => setState(() => _transition = value ?? _transition),
             ),
           const SizedBox(height: 24),
-          FilledButton(onPressed: _save, child: const Text('Save')),
+          FilledButton(onPressed: _save, child: Text(l10n.save)),
         ],
       ),
     );
@@ -133,16 +138,17 @@ class _CreateAlertScreenState extends State<CreateAlertScreen> {
 }
 
 class _SymbolPicker extends StatelessWidget {
-  const _SymbolPicker({required this.value, required this.onChanged});
+  const _SymbolPicker({required this.value, required this.label, required this.onChanged});
 
   final String value;
+  final String label;
   final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
       initialValue: value,
-      decoration: const InputDecoration(labelText: 'Symbol'),
+      decoration: InputDecoration(labelText: label),
       items: [
         for (final q in MockMarketCatalog.all)
           DropdownMenuItem(value: q.symbol, child: Text('${q.symbol} — ${q.name}')),

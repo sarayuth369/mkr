@@ -883,6 +883,276 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'MKR provides market information and analytical content for informational and educational purposes only. It does not constitute investment, financial, trading, or other professional advice. Market data may be delayed or inaccurate. Users should conduct their own research and consider their own risk tolerance before making financial decisions.'**
   String get financialDisclaimer;
+
+  /// No description provided for @settingsAccountGuest.
+  ///
+  /// In en, this message translates to:
+  /// **'Guest'**
+  String get settingsAccountGuest;
+
+  /// No description provided for @purchasesRestoredMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Purchases restored'**
+  String get purchasesRestoredMessage;
+
+  /// No description provided for @homeNothingScheduled.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing major scheduled today'**
+  String get homeNothingScheduled;
+
+  /// No description provided for @marketsNoMarketsAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'No markets available'**
+  String get marketsNoMarketsAvailable;
+
+  /// No description provided for @marketsNoSymbolsMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'No symbols match your search'**
+  String get marketsNoSymbolsMatch;
+
+  /// No description provided for @marketDetailSymbolNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Symbol not found'**
+  String get marketDetailSymbolNotFound;
+
+  /// No description provided for @goldRadarUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Gold data unavailable'**
+  String get goldRadarUnavailable;
+
+  /// No description provided for @goldSpotSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Gold Spot'**
+  String get goldSpotSubtitle;
+
+  /// No description provided for @goldAiInsightTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'What is driving Gold?'**
+  String get goldAiInsightTitle;
+
+  /// No description provided for @trendBullish.
+  ///
+  /// In en, this message translates to:
+  /// **'Bullish'**
+  String get trendBullish;
+
+  /// No description provided for @trendNeutral.
+  ///
+  /// In en, this message translates to:
+  /// **'Neutral'**
+  String get trendNeutral;
+
+  /// No description provided for @trendBearish.
+  ///
+  /// In en, this message translates to:
+  /// **'Bearish'**
+  String get trendBearish;
+
+  /// No description provided for @momentumStrong.
+  ///
+  /// In en, this message translates to:
+  /// **'Strong'**
+  String get momentumStrong;
+
+  /// No description provided for @momentumModerate.
+  ///
+  /// In en, this message translates to:
+  /// **'Moderate'**
+  String get momentumModerate;
+
+  /// No description provided for @momentumWeak.
+  ///
+  /// In en, this message translates to:
+  /// **'Weak'**
+  String get momentumWeak;
+
+  /// No description provided for @volatilityElevated.
+  ///
+  /// In en, this message translates to:
+  /// **'Elevated'**
+  String get volatilityElevated;
+
+  /// No description provided for @volatilityNormal.
+  ///
+  /// In en, this message translates to:
+  /// **'Normal'**
+  String get volatilityNormal;
+
+  /// No description provided for @volatilityLow.
+  ///
+  /// In en, this message translates to:
+  /// **'Low'**
+  String get volatilityLow;
+
+  /// No description provided for @radarTransitionNeutralBullish.
+  ///
+  /// In en, this message translates to:
+  /// **'Neutral → Bullish'**
+  String get radarTransitionNeutralBullish;
+
+  /// No description provided for @radarTransitionNeutralBearish.
+  ///
+  /// In en, this message translates to:
+  /// **'Neutral → Bearish'**
+  String get radarTransitionNeutralBearish;
+
+  /// No description provided for @radarTransitionBullishNeutral.
+  ///
+  /// In en, this message translates to:
+  /// **'Bullish → Neutral'**
+  String get radarTransitionBullishNeutral;
+
+  /// No description provided for @radarTransitionBearishNeutral.
+  ///
+  /// In en, this message translates to:
+  /// **'Bearish → Neutral'**
+  String get radarTransitionBearishNeutral;
+
+  /// No description provided for @priceDirectionAbove.
+  ///
+  /// In en, this message translates to:
+  /// **'Above'**
+  String get priceDirectionAbove;
+
+  /// No description provided for @priceDirectionBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'Below'**
+  String get priceDirectionBelow;
+
+  /// No description provided for @targetPriceLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Target price'**
+  String get targetPriceLabel;
+
+  /// No description provided for @percentageThresholdLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Percentage threshold (±%)'**
+  String get percentageThresholdLabel;
+
+  /// No description provided for @eventKeywordLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Event keyword (e.g. CPI, FOMC, NFP, Fed Speech)'**
+  String get eventKeywordLabel;
+
+  /// No description provided for @radarTransitionFieldLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Radar transition'**
+  String get radarTransitionFieldLabel;
+
+  /// No description provided for @portfolioEmptyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Add your first holding'**
+  String get portfolioEmptyHint;
+
+  /// No description provided for @portfolioHoldingsSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Holdings'**
+  String get portfolioHoldingsSectionTitle;
+
+  /// No description provided for @watchlistAddSymbolTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Add symbol'**
+  String get watchlistAddSymbolTooltip;
+
+  /// No description provided for @newsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No news yet'**
+  String get newsEmpty;
+
+  /// No description provided for @premiumChooseYourPlan.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose your plan'**
+  String get premiumChooseYourPlan;
+
+  /// No description provided for @premiumFreeFeatures.
+  ///
+  /// In en, this message translates to:
+  /// **'Basic market data · Basic news · Basic calendar\nLimited watchlist & alerts · Basic AI brief · Ads'**
+  String get premiumFreeFeatures;
+
+  /// No description provided for @premiumSimulatePurchaseDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Simulate purchase'**
+  String get premiumSimulatePurchaseDialogTitle;
+
+  /// No description provided for @premiumMockPurchaseConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a Phase 1 mock purchase for {title} ({price}). No real payment will be made. Continue?'**
+  String premiumMockPurchaseConfirm(String title, String price);
+
+  /// No description provided for @confirmLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get confirmLabel;
+
+  /// No description provided for @premiumActivatedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'{title} activated (mock)'**
+  String premiumActivatedMessage(String title);
+
+  /// No description provided for @premiumGateFeatureLocked.
+  ///
+  /// In en, this message translates to:
+  /// **'{feature} is a premium feature'**
+  String premiumGateFeatureLocked(String feature);
+
+  /// No description provided for @authHaveAccountLogin.
+  ///
+  /// In en, this message translates to:
+  /// **'Have an account? Log in'**
+  String get authHaveAccountLogin;
+
+  /// No description provided for @authNewHereRegister.
+  ///
+  /// In en, this message translates to:
+  /// **'New here? Register'**
+  String get authNewHereRegister;
+
+  /// No description provided for @calendarNoEventsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No events yet'**
+  String get calendarNoEventsYet;
+
+  /// No description provided for @calendarNoEventsMatchFilter.
+  ///
+  /// In en, this message translates to:
+  /// **'No events match this filter'**
+  String get calendarNoEventsMatchFilter;
+
+  /// No description provided for @aiDisclaimerShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Informational only — not financial advice. Data may be delayed.'**
+  String get aiDisclaimerShort;
+
+  /// No description provided for @onboardingNext.
+  ///
+  /// In en, this message translates to:
+  /// **'Next'**
+  String get onboardingNext;
 }
 
 class _AppLocalizationsDelegate

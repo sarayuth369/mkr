@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../application/auth_controller.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -25,8 +26,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text(_isRegisterMode ? 'Register' : 'Log in')),
+      appBar: AppBar(title: Text(_isRegisterMode ? l10n.authRegister : l10n.authLogin)),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -36,28 +38,28 @@ class _LoginScreenState extends State<LoginScreen> {
             TextField(
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(labelText: 'Email'),
+              decoration: InputDecoration(labelText: l10n.authEmail),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _passwordController,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'Password'),
+              decoration: InputDecoration(labelText: l10n.authPassword),
             ),
             const SizedBox(height: 20),
             FilledButton(
               onPressed: _submitting ? null : _submit,
-              child: Text(_isRegisterMode ? 'Register' : 'Log in'),
+              child: Text(_isRegisterMode ? l10n.authRegister : l10n.authLogin),
             ),
             const SizedBox(height: 8),
             TextButton(
               onPressed: () => setState(() => _isRegisterMode = !_isRegisterMode),
-              child: Text(_isRegisterMode ? 'Have an account? Log in' : 'New here? Register'),
+              child: Text(_isRegisterMode ? l10n.authHaveAccountLogin : l10n.authNewHereRegister),
             ),
             const SizedBox(height: 16),
             OutlinedButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Continue as guest'),
+              child: Text(l10n.authContinueAsGuest),
             ),
           ],
         ),

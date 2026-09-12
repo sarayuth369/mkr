@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../features/ai/domain/ai_insight.dart';
-import '../constants/disclaimer.dart';
+import '../../l10n/generated/app_localizations.dart';
 
 class AIInsightCard extends StatelessWidget {
-  const AIInsightCard({super.key, required this.insight, this.title = 'AI Market Brief'});
+  const AIInsightCard({super.key, required this.insight, required this.title});
 
   final AIInsight insight;
   final String title;
@@ -12,6 +12,7 @@ class AIInsightCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -28,14 +29,14 @@ class AIInsightCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(insight.summary, style: theme.textTheme.bodyMedium),
             const SizedBox(height: 12),
-            _section(theme, 'Why it matters', insight.whyItMatters),
+            _section(theme, l10n.aiWhyItMatters, insight.whyItMatters),
             const SizedBox(height: 10),
-            _bulletSection(theme, 'What to watch', insight.whatToWatch, Icons.visibility_outlined),
+            _bulletSection(theme, l10n.aiWhatToWatch, insight.whatToWatch, Icons.visibility_outlined),
             const SizedBox(height: 10),
-            _bulletSection(theme, 'Risks', insight.risks, Icons.warning_amber_rounded),
+            _bulletSection(theme, l10n.aiRisks, insight.risks, Icons.warning_amber_rounded),
             const SizedBox(height: 12),
             Text(
-              Disclaimer.short,
+              l10n.aiDisclaimerShort,
               style: theme.textTheme.labelSmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 fontStyle: FontStyle.italic,

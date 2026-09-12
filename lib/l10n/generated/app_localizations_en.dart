@@ -403,4 +403,148 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get financialDisclaimer =>
       'MKR provides market information and analytical content for informational and educational purposes only. It does not constitute investment, financial, trading, or other professional advice. Market data may be delayed or inaccurate. Users should conduct their own research and consider their own risk tolerance before making financial decisions.';
+
+  @override
+  String get settingsAccountGuest => 'Guest';
+
+  @override
+  String get purchasesRestoredMessage => 'Purchases restored';
+
+  @override
+  String get homeNothingScheduled => 'Nothing major scheduled today';
+
+  @override
+  String get marketsNoMarketsAvailable => 'No markets available';
+
+  @override
+  String get marketsNoSymbolsMatch => 'No symbols match your search';
+
+  @override
+  String get marketDetailSymbolNotFound => 'Symbol not found';
+
+  @override
+  String get goldRadarUnavailable => 'Gold data unavailable';
+
+  @override
+  String get goldSpotSubtitle => 'Gold Spot';
+
+  @override
+  String get goldAiInsightTitle => 'What is driving Gold?';
+
+  @override
+  String get trendBullish => 'Bullish';
+
+  @override
+  String get trendNeutral => 'Neutral';
+
+  @override
+  String get trendBearish => 'Bearish';
+
+  @override
+  String get momentumStrong => 'Strong';
+
+  @override
+  String get momentumModerate => 'Moderate';
+
+  @override
+  String get momentumWeak => 'Weak';
+
+  @override
+  String get volatilityElevated => 'Elevated';
+
+  @override
+  String get volatilityNormal => 'Normal';
+
+  @override
+  String get volatilityLow => 'Low';
+
+  @override
+  String get radarTransitionNeutralBullish => 'Neutral → Bullish';
+
+  @override
+  String get radarTransitionNeutralBearish => 'Neutral → Bearish';
+
+  @override
+  String get radarTransitionBullishNeutral => 'Bullish → Neutral';
+
+  @override
+  String get radarTransitionBearishNeutral => 'Bearish → Neutral';
+
+  @override
+  String get priceDirectionAbove => 'Above';
+
+  @override
+  String get priceDirectionBelow => 'Below';
+
+  @override
+  String get targetPriceLabel => 'Target price';
+
+  @override
+  String get percentageThresholdLabel => 'Percentage threshold (±%)';
+
+  @override
+  String get eventKeywordLabel =>
+      'Event keyword (e.g. CPI, FOMC, NFP, Fed Speech)';
+
+  @override
+  String get radarTransitionFieldLabel => 'Radar transition';
+
+  @override
+  String get portfolioEmptyHint => 'Add your first holding';
+
+  @override
+  String get portfolioHoldingsSectionTitle => 'Holdings';
+
+  @override
+  String get watchlistAddSymbolTooltip => 'Add symbol';
+
+  @override
+  String get newsEmpty => 'No news yet';
+
+  @override
+  String get premiumChooseYourPlan => 'Choose your plan';
+
+  @override
+  String get premiumFreeFeatures =>
+      'Basic market data · Basic news · Basic calendar\nLimited watchlist & alerts · Basic AI brief · Ads';
+
+  @override
+  String get premiumSimulatePurchaseDialogTitle => 'Simulate purchase';
+
+  @override
+  String premiumMockPurchaseConfirm(String title, String price) {
+    return 'This is a Phase 1 mock purchase for $title ($price). No real payment will be made. Continue?';
+  }
+
+  @override
+  String get confirmLabel => 'Confirm';
+
+  @override
+  String premiumActivatedMessage(String title) {
+    return '$title activated (mock)';
+  }
+
+  @override
+  String premiumGateFeatureLocked(String feature) {
+    return '$feature is a premium feature';
+  }
+
+  @override
+  String get authHaveAccountLogin => 'Have an account? Log in';
+
+  @override
+  String get authNewHereRegister => 'New here? Register';
+
+  @override
+  String get calendarNoEventsYet => 'No events yet';
+
+  @override
+  String get calendarNoEventsMatchFilter => 'No events match this filter';
+
+  @override
+  String get aiDisclaimerShort =>
+      'Informational only — not financial advice. Data may be delayed.';
+
+  @override
+  String get onboardingNext => 'Next';
 }

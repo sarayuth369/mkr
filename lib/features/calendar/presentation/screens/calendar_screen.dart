@@ -8,6 +8,7 @@ import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/mock_data_banner.dart';
 import '../../../../domain/impact_level.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../application/calendar_controller.dart';
 import '../../domain/economic_event.dart';
 
@@ -16,10 +17,11 @@ class CalendarScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final controller = context.watch<CalendarController>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Economic Calendar')),
+      appBar: AppBar(title: Text(l10n.calendarTitle)),
       body: RefreshIndicator(
         onRefresh: controller.refresh,
         child: CustomScrollView(
@@ -31,23 +33,24 @@ class CalendarScreen extends StatelessWidget {
                   children: [
                     const MockDataBanner(),
                     const SizedBox(height: 12),
-                    _FilterRow(
-                      label: 'Impact',
-                      selected: controller.impactFilter?.label ?? 'All',
-                      options: const ['All', 'High', 'Medium', 'Low'],
-                      onSelected: (value) => controller.setImpactFilter(
-                        value == 'All'
-                            ? null
-                            : ImpactLevel.values.firstWhere((l) => l.label == value.toUpperCase()),
-                      ),
+                    _FilterRow<ImpactLevel?>(
+                      selected: controller.impactFilter,
+                      options: [
+                        MapEntry(l10n.filterAll, null),
+                        MapEntry(l10n.filterHigh, ImpactLevel.high),
+                        MapEntry(l10n.filterMedium, ImpactLevel.medium),
+                        MapEntry(l10n.filterLow, ImpactLevel.low),
+                      ],
+                      onSelected: controller.setImpactFilter,
                     ),
                     const SizedBox(height: 8),
-                    _FilterRow(
-                      label: 'Country',
-                      selected: controller.countryFilter ?? 'All',
-                      options: ['All', ...CalendarController.countries],
-                      onSelected: (value) =>
-                          controller.setCountryFilter(value == 'All' ? null : value),
+                    _FilterRow<String?>(
+                      selected: controller.countryFilter,
+                      options: [
+                        MapEntry(l10n.filterAll, null),
+                        for (final country in CalendarController.countries) MapEntry(country, country),
+                      ],
+                      onSelected: controller.setCountryFilter,
                     ),
                   ],
                 ),
@@ -61,8 +64,8 @@ class CalendarScreen extends StatelessWidget {
               error: (message) => SliverFillRemaining(
                 child: ErrorState(message: message, onRetry: controller.refresh),
               ),
-              empty: () => const SliverFillRemaining(
-                child: EmptyState(message: 'No events yet', icon: Icons.event_busy_outlined),
+              empty: () => SliverFillRemaining(
+                child: EmptyState(message: l10n.calendarNoEventsYet, icon: Icons.event_busy_outlined),
               ),
               success: (_, __, ___) => _EventList(controller: controller),
             ),
@@ -80,10 +83,11 @@ class _EventList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final events = controller.visibleEvents();
     if (events.isEmpty) {
-      return const SliverFillRemaining(
-        child: EmptyState(message: 'No events match this filter', icon: Icons.filter_alt_off_outlined),
+      return SliverFillRemaining(
+        child: EmptyState(message: l10n.calendarNoEventsMatchFilter, icon: Icons.filter_alt_off_outlined),
       );
     }
 
@@ -114,18 +118,16 @@ class _EventList extends StatelessWidget {
   }
 }
 
-class _FilterRow extends StatelessWidget {
+class _FilterRow<T> extends StatelessWidget {
   const _FilterRow({
-    required this.label,
     required this.selected,
     required this.options,
     required this.onSelected,
   });
 
-  final String label;
-  final String selected;
-  final List<String> options;
-  final ValueChanged<String> onSelected;
+  final T selected;
+  final List<MapEntry<String, T>> options;
+  final ValueChanged<T> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -137,11 +139,11 @@ class _FilterRow extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 6),
         itemBuilder: (context, index) {
           final option = options[index];
-          final isSelected = option == selected;
+          final isSelected = option.value == selected;
           return ChoiceChip(
-            label: Text(option),
+            label: Text(option.key),
             selected: isSelected,
-            onSelected: (_) => onSelected(option),
+            onSelected: (_) => onSelected(option.value),
           );
         },
       ),

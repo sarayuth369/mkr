@@ -403,4 +403,148 @@ class AppLocalizationsTh extends AppLocalizations {
   @override
   String get financialDisclaimer =>
       'MKR ให้ข้อมูลตลาดและเนื้อหาวิเคราะห์เพื่อวัตถุประสงค์ในการให้ข้อมูลและการศึกษาเท่านั้น ไม่ถือเป็นคำแนะนำด้านการลงทุน การเงิน การเทรด หรือคำแนะนำทางวิชาชีพอื่นใด ข้อมูลตลาดอาจล่าช้าหรือคลาดเคลื่อน ผู้ใช้ควรศึกษาข้อมูลด้วยตนเองและพิจารณาความเสี่ยงที่ยอมรับได้ก่อนตัดสินใจทางการเงิน';
+
+  @override
+  String get settingsAccountGuest => 'ผู้เยี่ยมชม';
+
+  @override
+  String get purchasesRestoredMessage => 'กู้คืนการซื้อเรียบร้อยแล้ว';
+
+  @override
+  String get homeNothingScheduled => 'วันนี้ยังไม่มีเหตุการณ์สำคัญ';
+
+  @override
+  String get marketsNoMarketsAvailable => 'ไม่มีข้อมูลตลาด';
+
+  @override
+  String get marketsNoSymbolsMatch => 'ไม่พบสัญลักษณ์ที่ตรงกับการค้นหา';
+
+  @override
+  String get marketDetailSymbolNotFound => 'ไม่พบสัญลักษณ์นี้';
+
+  @override
+  String get goldRadarUnavailable => 'ไม่มีข้อมูลทองคำ';
+
+  @override
+  String get goldSpotSubtitle => 'ทองคำสปอต';
+
+  @override
+  String get goldAiInsightTitle => 'อะไรคือปัจจัยขับเคลื่อนราคาทองคำ';
+
+  @override
+  String get trendBullish => 'ขาขึ้น';
+
+  @override
+  String get trendNeutral => 'เป็นกลาง';
+
+  @override
+  String get trendBearish => 'ขาลง';
+
+  @override
+  String get momentumStrong => 'แรง';
+
+  @override
+  String get momentumModerate => 'ปานกลาง';
+
+  @override
+  String get momentumWeak => 'อ่อน';
+
+  @override
+  String get volatilityElevated => 'สูง';
+
+  @override
+  String get volatilityNormal => 'ปกติ';
+
+  @override
+  String get volatilityLow => 'ต่ำ';
+
+  @override
+  String get radarTransitionNeutralBullish => 'เป็นกลาง → ขาขึ้น';
+
+  @override
+  String get radarTransitionNeutralBearish => 'เป็นกลาง → ขาลง';
+
+  @override
+  String get radarTransitionBullishNeutral => 'ขาขึ้น → เป็นกลาง';
+
+  @override
+  String get radarTransitionBearishNeutral => 'ขาลง → เป็นกลาง';
+
+  @override
+  String get priceDirectionAbove => 'สูงกว่า';
+
+  @override
+  String get priceDirectionBelow => 'ต่ำกว่า';
+
+  @override
+  String get targetPriceLabel => 'ราคาเป้าหมาย';
+
+  @override
+  String get percentageThresholdLabel => 'เกณฑ์เปอร์เซ็นต์ (±%)';
+
+  @override
+  String get eventKeywordLabel =>
+      'คำค้นเหตุการณ์ (เช่น CPI, FOMC, NFP, Fed Speech)';
+
+  @override
+  String get radarTransitionFieldLabel => 'การเปลี่ยนแปลงเรดาร์';
+
+  @override
+  String get portfolioEmptyHint => 'เพิ่มการถือครองแรกของคุณ';
+
+  @override
+  String get portfolioHoldingsSectionTitle => 'การถือครอง';
+
+  @override
+  String get watchlistAddSymbolTooltip => 'เพิ่มสัญลักษณ์';
+
+  @override
+  String get newsEmpty => 'ยังไม่มีข่าว';
+
+  @override
+  String get premiumChooseYourPlan => 'เลือกแผนของคุณ';
+
+  @override
+  String get premiumFreeFeatures =>
+      'ข้อมูลตลาดพื้นฐาน · ข่าวพื้นฐาน · ปฏิทินพื้นฐาน\nรายการติดตามและแจ้งเตือนแบบจำกัด · สรุป AI พื้นฐาน · มีโฆษณา';
+
+  @override
+  String get premiumSimulatePurchaseDialogTitle => 'จำลองการซื้อ';
+
+  @override
+  String premiumMockPurchaseConfirm(String title, String price) {
+    return 'นี่คือการจำลองการซื้อสำหรับ Phase 1 สำหรับ $title ($price) จะไม่มีการชำระเงินจริงเกิดขึ้น ดำเนินการต่อหรือไม่';
+  }
+
+  @override
+  String get confirmLabel => 'ยืนยัน';
+
+  @override
+  String premiumActivatedMessage(String title) {
+    return 'เปิดใช้งาน $title แล้ว (จำลอง)';
+  }
+
+  @override
+  String premiumGateFeatureLocked(String feature) {
+    return '$feature เป็นฟีเจอร์พรีเมียม';
+  }
+
+  @override
+  String get authHaveAccountLogin => 'มีบัญชีอยู่แล้ว? เข้าสู่ระบบ';
+
+  @override
+  String get authNewHereRegister => 'ยังไม่มีบัญชี? สมัครสมาชิก';
+
+  @override
+  String get calendarNoEventsYet => 'ยังไม่มีเหตุการณ์';
+
+  @override
+  String get calendarNoEventsMatchFilter => 'ไม่พบเหตุการณ์ที่ตรงกับตัวกรองนี้';
+
+  @override
+  String get aiDisclaimerShort =>
+      'เพื่อข้อมูลเท่านั้น ไม่ใช่คำแนะนำทางการเงิน ข้อมูลอาจล่าช้า';
+
+  @override
+  String get onboardingNext => 'ถัดไป';
 }
