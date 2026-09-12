@@ -24,6 +24,8 @@ class MarketDataStatusChip extends StatelessWidget {
       MarketDataMode.live => (colors.live, l10n.dataModeLive),
       MarketDataMode.demo => (colors.demo, l10n.dataModeDemo),
       MarketDataMode.stale => (colors.stale, l10n.dataModeStale),
+      MarketDataMode.connecting => (colors.stale, l10n.dataModeConnecting),
+      MarketDataMode.providerError => (colors.offline, l10n.dataModeProviderError),
       MarketDataMode.offline => (colors.offline, l10n.dataModeOffline),
     };
 

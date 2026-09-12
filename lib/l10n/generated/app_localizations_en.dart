@@ -555,6 +555,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get dataModeStale => 'STALE';
 
   @override
+  String get dataModeConnecting => 'CONNECTING';
+
+  @override
+  String get dataModeProviderError => 'PROVIDER UNAVAILABLE';
+
+  @override
   String get dataModeOffline => 'OFFLINE';
 
   @override

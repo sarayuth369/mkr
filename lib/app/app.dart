@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
@@ -28,7 +30,12 @@ import '../features/calendar/domain/economic_calendar_service.dart';
 import '../features/gold/application/gold_radar_controller.dart';
 import '../features/home/application/home_controller.dart';
 import '../features/markets/application/markets_controller.dart';
+import '../features/markets/data/market_data_config.dart';
+import '../features/markets/data/market_provider_manager.dart';
 import '../features/markets/data/mock_market_service.dart';
+import '../features/markets/data/provider_backed_market_service.dart';
+import '../features/markets/data/providers/alpaca_provider.dart';
+import '../features/markets/data/providers/twelve_data_provider.dart';
 import '../features/markets/domain/market_service.dart';
 import '../features/news/application/news_controller.dart';
 import '../features/news/data/mock_news_service.dart';
@@ -42,6 +49,26 @@ import '../features/watchlist/data/mock_watchlist_repository.dart';
 import '../features/watchlist/domain/watchlist_repository.dart';
 import '../l10n/generated/app_localizations.dart';
 import 'app_shell.dart';
+
+/// Picks the real [ProviderBackedMarketService] (Twelve Data primary,
+/// Alpaca standby) when built with `--dart-define=MARKET_DATA_MODE=real`,
+/// otherwise the existing [MockMarketService] demo path — the default.
+/// Real mode currently has no live backend proxy to call (see the
+/// architecture plan's "Explicitly deferred" section): every screen will
+/// honestly show offline/provider-error rather than fabricate data until
+/// `auc-backend` grows the `/api/mkr/*` routes this expects.
+MarketService _buildMarketService() {
+  final config = MarketDataConfig.fromEnvironment();
+  if (config.mode == MarketDataRunMode.demo) return MockMarketService();
+
+  final manager = MarketProviderManager(
+    primary: TwelveDataProvider(backendBaseUrl: config.backendBaseUrl),
+    secondary: AlpacaProvider(backendBaseUrl: config.backendBaseUrl, activated: config.secondaryEnabled),
+    secondaryEnabled: config.secondaryEnabled,
+  );
+  unawaited(manager.connect());
+  return ProviderBackedMarketService(manager);
+}
 
 class MkrApp extends StatelessWidget {
   const MkrApp({super.key, required this.store});
@@ -58,7 +85,7 @@ class MkrApp extends StatelessWidget {
 
         // Backend-abstraction seams — swap Mock* for real implementations
         // behind these same interfaces in Phase 2.
-        Provider<MarketService>(create: (_) => MockMarketService()),
+        Provider<MarketService>(create: (_) => _buildMarketService()),
         Provider<MarketAIService>(create: (_) => MockMarketAIService()),
         Provider<NewsService>(create: (_) => MockNewsService()),
         Provider<EconomicCalendarService>(create: (_) => MockEconomicCalendarService()),

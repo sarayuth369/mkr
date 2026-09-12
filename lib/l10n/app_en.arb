@@ -199,6 +199,8 @@
   "dataModeLive": "LIVE",
   "dataModeDemo": "DEMO DATA",
   "dataModeStale": "STALE",
+  "dataModeConnecting": "CONNECTING",
+  "dataModeProviderError": "PROVIDER UNAVAILABLE",
   "dataModeOffline": "OFFLINE",
   "updatedRelative": "Updated {time}",
   "@updatedRelative": {

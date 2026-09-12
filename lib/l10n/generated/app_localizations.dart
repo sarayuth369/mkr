@@ -1166,6 +1166,18 @@ abstract class AppLocalizations {
   /// **'STALE'**
   String get dataModeStale;
 
+  /// No description provided for @dataModeConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'CONNECTING'**
+  String get dataModeConnecting;
+
+  /// No description provided for @dataModeProviderError.
+  ///
+  /// In en, this message translates to:
+  /// **'PROVIDER UNAVAILABLE'**
+  String get dataModeProviderError;
+
   /// No description provided for @dataModeOffline.
   ///
   /// In en, this message translates to:

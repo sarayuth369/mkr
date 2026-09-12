@@ -199,6 +199,8 @@
   "dataModeLive": "สด",
   "dataModeDemo": "ข้อมูลตัวอย่าง",
   "dataModeStale": "ข้อมูลเก่า",
+  "dataModeConnecting": "กำลังเชื่อมต่อ",
+  "dataModeProviderError": "ผู้ให้บริการขัดข้อง",
   "dataModeOffline": "ออฟไลน์",
   "updatedRelative": "อัปเดต {time}",
   "@updatedRelative": {

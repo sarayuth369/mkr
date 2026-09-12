@@ -555,6 +555,12 @@ class AppLocalizationsTh extends AppLocalizations {
   String get dataModeStale => 'ข้อมูลเก่า';
 
   @override
+  String get dataModeConnecting => 'กำลังเชื่อมต่อ';
+
+  @override
+  String get dataModeProviderError => 'ผู้ให้บริการขัดข้อง';
+
+  @override
   String get dataModeOffline => 'ออฟไลน์';
 
   @override
