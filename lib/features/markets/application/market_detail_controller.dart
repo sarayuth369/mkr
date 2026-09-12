@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_state.dart';
 import '../../../core/widgets/price_chart.dart';
+import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
 import '../../ai/domain/ai_insight.dart';
 import '../../ai/domain/market_ai_service.dart';
@@ -30,6 +31,9 @@ class MarketDetailController extends ChangeNotifier {
   final MarketAIService _aiService;
   final NewsService _newsService;
   final EconomicCalendarService _calendarService;
+
+  MarketDataMode get mode => _marketService.mode;
+  DateTime? get lastUpdated => _marketService.lastUpdated;
 
   ApiState<MarketQuote> _quoteState = const ApiState.loading();
   ApiState<MarketQuote> get quoteState => _quoteState;

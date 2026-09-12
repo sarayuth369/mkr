@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_state.dart';
 import '../../../domain/impact_level.dart';
+import '../../../domain/market_data_mode.dart';
 import '../../ai/domain/ai_insight.dart';
 import '../../ai/domain/market_ai_service.dart';
 import '../../calendar/domain/economic_calendar_service.dart';
@@ -23,6 +24,9 @@ class GoldRadarController extends ChangeNotifier {
   final MarketService _marketService;
   final MarketAIService _aiService;
   final EconomicCalendarService _calendarService;
+
+  MarketDataMode get mode => _marketService.mode;
+  DateTime? get lastUpdated => _marketService.lastUpdated;
 
   ApiState<GoldRadarData> _state = const ApiState.loading();
   ApiState<GoldRadarData> get state => _state;

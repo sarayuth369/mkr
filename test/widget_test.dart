@@ -24,4 +24,24 @@ void main() {
     // disposed before the test framework checks for pending timers.
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('Settings subscription card opens the Premium paywall', (tester) async {
+    SharedPreferences.setMockInitialValues({'onboarding_complete': true});
+    final store = await AppLocalStore.create();
+
+    await tester.pumpWidget(MkrApp(store: store));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+
+    // Free-tier default: the subscription card reads "Unlock MKR Pro".
+    expect(find.text('Unlock MKR Pro'), findsOneWidget);
+    await tester.tap(find.text('Unlock MKR Pro'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Unlock the full MKR experience'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }

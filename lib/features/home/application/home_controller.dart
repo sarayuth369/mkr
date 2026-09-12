@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_state.dart';
 import '../../../domain/impact_level.dart';
+import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
 import '../../../domain/radar_item.dart';
 import '../../ai/domain/ai_insight.dart';
@@ -24,18 +27,20 @@ class HomeController extends ChangeNotifier {
   final MarketAIService _aiService;
   final EconomicCalendarService _calendarService;
 
-  static const statusSymbols = ['SPX', 'XAU/USD', 'BTC', 'NDX', 'SET'];
-  static const usMarketSymbols = ['SPX', 'NDX', 'DJI', 'VIX'];
-  static const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'XRP'];
+  /// Market Pulse — the 3 featured hero cards.
+  static const pulseSymbols = ['SPX', 'XAU/USD', 'BTC'];
 
-  ApiState<List<MarketQuote>> _statusState = const ApiState.loading();
-  ApiState<List<MarketQuote>> get statusState => _statusState;
+  /// Market Snapshot — compact list of the major markets at a glance.
+  static const snapshotSymbols = ['SPX', 'NDX', 'DJI', 'BTC', 'XAU/USD', 'SET'];
 
-  ApiState<List<MarketQuote>> _usMarketState = const ApiState.loading();
-  ApiState<List<MarketQuote>> get usMarketState => _usMarketState;
+  MarketDataMode get mode => _marketService.mode;
+  DateTime? get lastUpdated => _marketService.lastUpdated;
 
-  ApiState<List<MarketQuote>> _cryptoState = const ApiState.loading();
-  ApiState<List<MarketQuote>> get cryptoState => _cryptoState;
+  ApiState<List<MarketQuote>> _pulseState = const ApiState.loading();
+  ApiState<List<MarketQuote>> get pulseState => _pulseState;
+
+  ApiState<List<MarketQuote>> _snapshotState = const ApiState.loading();
+  ApiState<List<MarketQuote>> get snapshotState => _snapshotState;
 
   MarketQuote? _gold;
   MarketQuote? get gold => _gold;
@@ -46,10 +51,51 @@ class HomeController extends ChangeNotifier {
   ApiState<AIInsight> _briefState = const ApiState.loading();
   ApiState<AIInsight> get briefState => _briefState;
 
+  StreamSubscription<List<MarketQuote>>? _liveSubscription;
+
+  /// Subscribes Home's visible symbols to [MarketService.watchQuotes] so the
+  /// Market Pulse / Market Snapshot rows visibly tick during a session —
+  /// always sourced from a service whose [MarketDataMode] is surfaced via
+  /// the status chip, so this never implies real-time data that isn't there.
+  void _watchLiveQuotes() {
+    final symbols = {...pulseSymbols, ...snapshotSymbols}.toList();
+    _liveSubscription?.cancel();
+    _liveSubscription = _marketService.watchQuotes(symbols).listen((updates) {
+      final bySymbol = {for (final q in updates) q.symbol: q};
+
+      final pulse = _pulseState.dataOrNull;
+      if (pulse != null) {
+        _pulseState = ApiState.success(
+          [for (final q in pulse) bySymbol[q.symbol] ?? q],
+          lastUpdated: _marketService.lastUpdated,
+        );
+      }
+
+      final snapshot = _snapshotState.dataOrNull;
+      if (snapshot != null) {
+        _snapshotState = ApiState.success(
+          [for (final q in snapshot) bySymbol[q.symbol] ?? q],
+          lastUpdated: _marketService.lastUpdated,
+        );
+      }
+
+      if (_gold != null && bySymbol.containsKey(_gold!.symbol)) {
+        _gold = bySymbol[_gold!.symbol];
+      }
+
+      notifyListeners();
+    });
+  }
+
+  @override
+  void dispose() {
+    _liveSubscription?.cancel();
+    super.dispose();
+  }
+
   Future<void> refresh() async {
-    _statusState = const ApiState.loading();
-    _usMarketState = const ApiState.loading();
-    _cryptoState = const ApiState.loading();
+    _pulseState = const ApiState.loading();
+    _snapshotState = const ApiState.loading();
     _radarState = const ApiState.loading();
     _briefState = const ApiState.loading();
     notifyListeners();
@@ -57,20 +103,17 @@ class HomeController extends ChangeNotifier {
     try {
       final all = await _marketService.getAllQuotes();
       final bySymbol = {for (final q in all) q.symbol: q};
-      _statusState = ApiState.success(
-        [for (final s in statusSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
+      _pulseState = ApiState.success(
+        [for (final s in pulseSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
       );
-      _usMarketState = ApiState.success(
-        [for (final s in usMarketSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
-      );
-      _cryptoState = ApiState.success(
-        [for (final s in cryptoSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
+      _snapshotState = ApiState.success(
+        [for (final s in snapshotSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
       );
       _gold = bySymbol['XAU/USD'];
+      _watchLiveQuotes();
     } catch (e) {
-      _statusState = ApiState.error(e.toString());
-      _usMarketState = ApiState.error(e.toString());
-      _cryptoState = ApiState.error(e.toString());
+      _pulseState = ApiState.error(e.toString());
+      _snapshotState = ApiState.error(e.toString());
     }
     notifyListeners();
 

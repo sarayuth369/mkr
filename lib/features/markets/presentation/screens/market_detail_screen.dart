@@ -6,6 +6,7 @@ import '../../../../core/widgets/ai_insight_card.dart';
 import '../../../../core/widgets/economic_event_card.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
+import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../core/widgets/news_card.dart';
 import '../../../../core/widgets/price_chart.dart';
 import '../../../../core/utils/formatters.dart';
@@ -82,7 +83,9 @@ class _MarketDetailBody extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               children: [
                 Text(quote.name, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
+                MarketDataStatusChip(mode: controller.mode, lastUpdated: controller.lastUpdated),
+                const SizedBox(height: 10),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [

@@ -52,31 +52,42 @@ class WatchlistScreen extends StatelessWidget {
               ),
             ],
           ),
-          success: (quotes, isStale, lastUpdated) => ReorderableListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: quotes.length,
-            // ignore: deprecated_member_use
-            onReorder: controller.reorder,
-            itemBuilder: (context, index) {
-              final quote = quotes[index];
-              return Dismissible(
-                key: ValueKey(quote.symbol),
-                direction: DismissDirection.endToStart,
-                onDismissed: (_) => controller.remove(quote.symbol),
-                background: Container(
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  color: Theme.of(context).colorScheme.errorContainer,
-                  child: const Icon(Icons.delete_outline),
+          success: (quotes, isStale, lastUpdated) => Column(
+            children: [
+              if (!entitlement.hasUnlimitedWatchlist && quotes.length >= Entitlement.freeWatchlistLimit)
+                _LimitBanner(
+                  message: l10n.watchlistLimitReached(quotes.length, Entitlement.freeWatchlistLimit),
+                  onUpgrade: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
                 ),
-                child: AssetRow(
-                  quote: quote,
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
-                  ),
+              Expanded(
+                child: ReorderableListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: quotes.length,
+                  // ignore: deprecated_member_use
+                  onReorder: controller.reorder,
+                  itemBuilder: (context, index) {
+                    final quote = quotes[index];
+                    return Dismissible(
+                      key: ValueKey(quote.symbol),
+                      direction: DismissDirection.endToStart,
+                      onDismissed: (_) => controller.remove(quote.symbol),
+                      background: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        color: Theme.of(context).colorScheme.errorContainer,
+                        child: const Icon(Icons.delete_outline),
+                      ),
+                      child: AssetRow(
+                        quote: quote,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+            ],
           ),
         ),
       ),
@@ -98,6 +109,42 @@ class WatchlistScreen extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       builder: (context) => _AddSymbolSheet(controller: controller),
+    );
+  }
+}
+
+class _LimitBanner extends StatelessWidget {
+  const _LimitBanner({required this.message, required this.onUpgrade});
+
+  final String message;
+  final VoidCallback onUpgrade;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.workspace_premium_outlined, size: 16, color: theme.colorScheme.onPrimaryContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onPrimaryContainer),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          TextButton(onPressed: onUpgrade, child: Text(l10n.premiumUpgrade)),
+        ],
+      ),
     );
   }
 }

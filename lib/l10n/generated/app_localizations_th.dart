@@ -311,9 +311,6 @@ class AppLocalizationsTh extends AppLocalizations {
   String get premiumCurrentPlan => 'แผนปัจจุบัน';
 
   @override
-  String get premiumSimulatePurchase => 'จำลองการซื้อ (โหมดทดสอบ Phase 1)';
-
-  @override
   String get premiumRestorePurchases => 'กู้คืนการซื้อ';
 
   @override
@@ -509,11 +506,11 @@ class AppLocalizationsTh extends AppLocalizations {
       'ข้อมูลตลาดพื้นฐาน · ข่าวพื้นฐาน · ปฏิทินพื้นฐาน\nรายการติดตามและแจ้งเตือนแบบจำกัด · สรุป AI พื้นฐาน · มีโฆษณา';
 
   @override
-  String get premiumSimulatePurchaseDialogTitle => 'จำลองการซื้อ';
+  String get premiumConfirmDialogTitle => 'ยืนยันแผนของคุณ';
 
   @override
-  String premiumMockPurchaseConfirm(String title, String price) {
-    return 'นี่คือการจำลองการซื้อสำหรับ Phase 1 สำหรับ $title ($price) จะไม่มีการชำระเงินจริงเกิดขึ้น ดำเนินการต่อหรือไม่';
+  String premiumConfirmDialogBody(String title, String price) {
+    return 'คุณกำลังจะเปิดใช้งาน $title ($price) เวอร์ชันนี้ยังไม่มีการเรียกเก็บเงินจริง แผนของคุณจะถูกปลดล็อกบนอุปกรณ์นี้ ดำเนินการต่อหรือไม่';
   }
 
   @override
@@ -521,7 +518,7 @@ class AppLocalizationsTh extends AppLocalizations {
 
   @override
   String premiumActivatedMessage(String title) {
-    return 'เปิดใช้งาน $title แล้ว (จำลอง)';
+    return 'ปลดล็อก $title แล้ว';
   }
 
   @override
@@ -547,4 +544,145 @@ class AppLocalizationsTh extends AppLocalizations {
 
   @override
   String get onboardingNext => 'ถัดไป';
+
+  @override
+  String get dataModeLive => 'สด';
+
+  @override
+  String get dataModeDemo => 'ข้อมูลตัวอย่าง';
+
+  @override
+  String get dataModeStale => 'ข้อมูลเก่า';
+
+  @override
+  String get dataModeOffline => 'ออฟไลน์';
+
+  @override
+  String updatedRelative(String time) {
+    return 'อัปเดต $time';
+  }
+
+  @override
+  String get homeMarketPulse => 'ชีพจรตลาด';
+
+  @override
+  String get homeMarketSnapshot => 'ภาพรวมตลาด';
+
+  @override
+  String get aiReadMore => 'อ่านเพิ่มเติม';
+
+  @override
+  String get aiShowLess => 'ย่อ';
+
+  @override
+  String get alertStatusActive => 'เปิดใช้งาน';
+
+  @override
+  String get alertStatusInactive => 'ปิดใช้งาน';
+
+  @override
+  String watchlistLimitReached(int count, int limit) {
+    return '$count/$limit · อัปเกรดเพื่อรายการติดตามไม่จำกัด';
+  }
+
+  @override
+  String get premiumHeroTitle => 'ปลดล็อกประสบการณ์ MKR แบบเต็มรูปแบบ';
+
+  @override
+  String get premiumHeroSubtitle =>
+      'นำหน้าตลาดด้วยข้อมูลเชิงลึกที่มากขึ้น การแจ้งเตือนไม่จำกัด และประสบการณ์ที่ไม่มีโฆษณา';
+
+  @override
+  String get badgeMostPopular => 'ยอดนิยม';
+
+  @override
+  String get badgeBestValue => 'คุ้มค่าที่สุด';
+
+  @override
+  String get premiumCtaUpgradeToPro => 'อัปเกรดเป็น Pro';
+
+  @override
+  String get premiumCtaUpgradeToAiPro => 'อัปเกรดเป็น AI Pro';
+
+  @override
+  String get premiumCtaGetLifetime => 'รับแบบตลอดชีพ';
+
+  @override
+  String get settingsSectionAccount => 'บัญชี';
+
+  @override
+  String get settingsSectionSubscription => 'การสมัครสมาชิก';
+
+  @override
+  String get settingsSectionPreferences => 'การตั้งค่าทั่วไป';
+
+  @override
+  String get settingsSectionNotifications => 'การแจ้งเตือน';
+
+  @override
+  String get settingsSectionMarket => 'ตลาด';
+
+  @override
+  String get settingsSectionLegal => 'กฎหมาย';
+
+  @override
+  String get settingsSectionAbout => 'เกี่ยวกับ';
+
+  @override
+  String get settingsUnlockPro => 'ปลดล็อก MKR Pro';
+
+  @override
+  String get settingsUnlockProSubtitle =>
+      'ไม่มีโฆษณา • แจ้งเตือนไม่จำกัด • เครื่องมือตลาดขั้นสูง';
+
+  @override
+  String get settingsViewPlans => 'ดูแผนทั้งหมด';
+
+  @override
+  String get settingsActive => 'เปิดใช้งานอยู่';
+
+  @override
+  String get settingsManagePlan => 'จัดการแผน';
+
+  @override
+  String get versionLabel => 'เวอร์ชัน';
+
+  @override
+  String get aboutParagraph1 =>
+      'MKR — Market Radar เป็นแอปข้อมูลเชิงลึกด้านตลาด ออกแบบมาเพื่อช่วยให้คุณเข้าใจสิ่งสำคัญในตลาดการเงินได้เพียงแวบเดียว';
+
+  @override
+  String get aboutParagraph2 =>
+      'ติดตามทองคำ หุ้น คริปโต ฟอเร็กซ์ และดัชนีตลาดหลัก ติดตามเหตุการณ์เศรษฐกิจที่มีผลกระทบสูง ค้นพบข่าวที่ขับเคลื่อนตลาด และรับข้อมูลเชิงลึกจาก AI แบบกระชับในที่เดียว';
+
+  @override
+  String get aboutParagraph3 =>
+      'MKR สร้างขึ้นสำหรับนักลงทุนและผู้ติดตามตลาดที่ต้องการมุมมองตลาดที่ชัดเจนโดยไม่ซับซ้อนเกินความจำเป็น';
+
+  @override
+  String get aboutDisclaimerTitle => 'ข้อจำกัดความรับผิดชอบ';
+
+  @override
+  String get aboutFooterBrand => 'MKR — Market Radar';
+
+  @override
+  String get privacyPolicyBody =>
+      'ประกาศความเป็นส่วนตัวของ MKR\n\nMKR จัดเก็บการตั้งค่าของคุณ — ธีม ภาษา รายการติดตาม การแจ้งเตือน และรายการพอร์ตโฟลิโอ — ไว้ในเครื่องของคุณเท่านั้น ไม่จำเป็นต้องมีบัญชีเพื่อใช้ฟีเจอร์หลักของแอป\n\nเมื่อมีการเปิดใช้งานการซิงค์บัญชีและบริการคลาวด์ ข้อมูลจะถูกประมวลผลผ่านระบบหลังบ้านที่ปลอดภัย และประกาศนี้จะได้รับการปรับปรุงก่อนเปิดใช้งานฟีเจอร์ดังกล่าว';
+
+  @override
+  String get termsOfServiceBody =>
+      'ข้อกำหนดการใช้งานของ MKR\n\nMKR จัดทำขึ้นเพื่อวัตถุประสงค์ในการให้ข้อมูลและการศึกษาเท่านั้น การใช้งานแอปถือว่าคุณรับทราบว่าข้อมูลตลาดอาจล่าช้าหรือคลาดเคลื่อน และเนื้อหาที่สร้างโดย AI เป็นการวิเคราะห์เชิงพรรณนา ไม่ใช่คำแนะนำทางการเงิน\n\nการซื้อการสมัครสมาชิกจะดำเนินการผ่านระบบการเรียกเก็บเงินมาตรฐานของแอปสโตร์เมื่อพร้อมใช้งาน ในกรณีที่ยังไม่ได้ตั้งค่าระบบเรียกเก็บเงิน จะไม่มีการเรียกเก็บเงินใดๆ และฟีเจอร์พรีเมียมจะให้ใช้งานเพื่อการพรีวิวเท่านั้น';
+
+  @override
+  String get adBannerPlaceholder => 'โฆษณาทดสอบ · ตัวยึดตำแหน่ง';
+
+  @override
+  String get adTestAdTitle => 'โฆษณาทดสอบ';
+
+  @override
+  String get adInterstitialPlaceholder =>
+      'นี่คือพื้นที่โฆษณาตัวอย่าง ไม่มีเนื้อหาโฆษณาจริงถูกโหลด';
+
+  @override
+  String get close => 'ปิด';
 }

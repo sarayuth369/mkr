@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_state.dart';
 import '../../../domain/asset_class.dart';
+import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
 import '../domain/market_service.dart';
 
@@ -11,6 +12,9 @@ class MarketsController extends ChangeNotifier {
   }
 
   final MarketService _service;
+
+  MarketDataMode get mode => _service.mode;
+  DateTime? get lastUpdated => _service.lastUpdated;
 
   ApiState<List<MarketQuote>> _state = const ApiState.loading();
   ApiState<List<MarketQuote>> get state => _state;

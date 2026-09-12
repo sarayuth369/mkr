@@ -3,10 +3,13 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/network/api_state.dart';
 import '../../../../core/widgets/ai_insight_card.dart';
+import '../../../../core/widgets/asset_row.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/market_card.dart';
+import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../core/widgets/radar_card.dart';
+import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../ads/presentation/widgets/ad_banner_slot.dart';
@@ -45,11 +48,13 @@ class HomeScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(l10n.homeMarketStatus, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            MarketDataStatusChip(mode: controller.mode, lastUpdated: controller.lastUpdated),
+            const SizedBox(height: 16),
+            Text(l10n.homeMarketPulse, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 10),
-            _StatusRow(controller: controller),
+            _PulseRow(controller: controller),
             const SizedBox(height: 24),
-            Text(l10n.homeTodaysRadar, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            Text(l10n.homeTodaysRadar, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
             _RadarSection(controller: controller),
             const SizedBox(height: 24),
@@ -65,19 +70,16 @@ class HomeScreen extends StatelessWidget {
               MarketCard(
                 quote: controller.gold!,
                 label: 'XAU/USD',
+                sparkline: MockMarketCatalog.syntheticSeries('XAU/USD', points: 14),
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const MarketDetailScreen(symbol: 'XAU/USD')),
                 ),
               ),
             const SizedBox(height: 24),
-            Text(l10n.homeUsMarket, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 10),
-            _QuoteRow(state: controller.usMarketState),
-            const SizedBox(height: 24),
-            Text(l10n.homeCrypto, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 10),
-            _QuoteRow(state: controller.cryptoState),
-            const SizedBox(height: 24),
+            Text(l10n.homeMarketSnapshot, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            _SnapshotList(controller: controller),
+            const SizedBox(height: 16),
             const AdBannerSlot(),
           ],
         ),
@@ -98,28 +100,28 @@ class _SectionHeader extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        Text(title, style: Theme.of(context).textTheme.titleMedium),
         TextButton(onPressed: onSeeAll, child: Text(seeAllLabel)),
       ],
     );
   }
 }
 
-class _StatusRow extends StatelessWidget {
-  const _StatusRow({required this.controller});
+class _PulseRow extends StatelessWidget {
+  const _PulseRow({required this.controller});
 
   final HomeController controller;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 98,
-      child: controller.statusState.when(
+      height: 128,
+      child: controller.pulseState.when(
         loading: () => ListView.separated(
           scrollDirection: Axis.horizontal,
-          itemCount: 5,
+          itemCount: 3,
           separatorBuilder: (_, __) => const SizedBox(width: 10),
-          itemBuilder: (_, __) => const LoadingSkeleton(width: 132, height: 90, borderRadius: 16),
+          itemBuilder: (_, __) => const LoadingSkeleton(width: 156, height: 120, borderRadius: 16),
         ),
         error: (message) => ErrorState(message: message, onRetry: controller.refresh),
         empty: () => const SizedBox.shrink(),
@@ -131,6 +133,8 @@ class _StatusRow extends StatelessWidget {
             final quote = quotes[index];
             return MarketCard(
               quote: quote,
+              featured: true,
+              sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 14),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
               ),
@@ -142,38 +146,28 @@ class _StatusRow extends StatelessWidget {
   }
 }
 
-class _QuoteRow extends StatelessWidget {
-  const _QuoteRow({required this.state});
+class _SnapshotList extends StatelessWidget {
+  const _SnapshotList({required this.controller});
 
-  final ApiState<List<MarketQuote>> state;
+  final HomeController controller;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 98,
-      child: state.when(
-        loading: () => ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: 4,
-          separatorBuilder: (_, __) => const SizedBox(width: 10),
-          itemBuilder: (_, __) => const LoadingSkeleton(width: 132, height: 90, borderRadius: 16),
-        ),
-        error: (message) => ErrorState(message: message),
-        empty: () => const SizedBox.shrink(),
-        success: (quotes, isStale, lastUpdated) => ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: quotes.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 10),
-          itemBuilder: (context, index) {
-            final quote = quotes[index];
-            return MarketCard(
+    final ApiState<List<MarketQuote>> state = controller.snapshotState;
+    return state.when(
+      loading: () => const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: LoadingSkeletonList(rows: 3, rowHeight: 48)),
+      error: (message) => ErrorState(message: message, onRetry: controller.refresh),
+      empty: () => const SizedBox.shrink(),
+      success: (quotes, isStale, lastUpdated) => Column(
+        children: [
+          for (final quote in quotes)
+            AssetRow(
               quote: quote,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
               ),
-            );
-          },
-        ),
+            ),
+        ],
       ),
     );
   }

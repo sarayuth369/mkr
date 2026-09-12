@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../../core/constants/disclaimer.dart';
-import '../../../../core/constants/legal_text.dart';
 import '../../../../core/localization/locale_controller.dart';
 import '../../../../core/persistence/app_local_store.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../../../../core/theme/theme_controller.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../auth/application/auth_controller.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../billing/application/entitlement_controller.dart';
+import '../../../billing/domain/entitlement.dart';
 import '../../../billing/presentation/premium_tier_label.dart';
 import '../../../billing/presentation/screens/paywall_screen.dart';
+import 'about_screen.dart';
 import 'static_text_screen.dart';
-
-const String appVersion = '1.0.0 (Phase 1)';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -32,6 +31,7 @@ class SettingsScreen extends StatelessWidget {
       appBar: AppBar(title: Text(l10n.settingsTitle)),
       body: ListView(
         children: [
+          _SectionHeader(l10n.settingsSectionAccount),
           ListTile(
             leading: const Icon(Icons.account_circle_outlined),
             title: Text(l10n.settingsAccount),
@@ -48,13 +48,8 @@ class SettingsScreen extends StatelessWidget {
                     child: Text(l10n.authLogout),
                   ),
           ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.workspace_premium_outlined),
-            title: Text(l10n.settingsSubscription),
-            subtitle: Text('${l10n.premiumCurrentPlan}: ${premiumTierLabel(l10n, entitlement.tier)}'),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
-          ),
+          _SectionHeader(l10n.settingsSectionSubscription),
+          _SubscriptionCard(entitlement: entitlement),
           ListTile(
             leading: const Icon(Icons.restore_outlined),
             title: Text(l10n.settingsRestorePurchases),
@@ -66,7 +61,7 @@ class SettingsScreen extends StatelessWidget {
               }
             },
           ),
-          const Divider(height: 1),
+          _SectionHeader(l10n.settingsSectionPreferences),
           ListTile(
             leading: const Icon(Icons.brightness_6_outlined),
             title: Text(l10n.settingsAppearance),
@@ -110,46 +105,142 @@ class SettingsScreen extends StatelessWidget {
               onChanged: (value) => value == null ? null : store.setCurrency(value),
             ),
           ),
+          _SectionHeader(l10n.settingsSectionNotifications),
           ListTile(
             leading: const Icon(Icons.notifications_outlined),
             title: Text(l10n.settingsNotifications),
             onTap: () {},
           ),
+          _SectionHeader(l10n.settingsSectionMarket),
           ListTile(
             leading: const Icon(Icons.tune_outlined),
             title: Text(l10n.settingsMarketPreferences),
             onTap: () {},
           ),
-          const Divider(height: 1),
+          _SectionHeader(l10n.settingsSectionLegal),
           ListTile(
             leading: const Icon(Icons.privacy_tip_outlined),
             title: Text(l10n.settingsPrivacyPolicy),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => StaticTextScreen(title: l10n.settingsPrivacyPolicy, body: LegalText.privacyPolicy),
+              builder: (_) => StaticTextScreen(title: l10n.settingsPrivacyPolicy, body: l10n.privacyPolicyBody),
             )),
           ),
           ListTile(
             leading: const Icon(Icons.description_outlined),
             title: Text(l10n.settingsTerms),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => StaticTextScreen(title: l10n.settingsTerms, body: LegalText.termsOfService),
+              builder: (_) => StaticTextScreen(title: l10n.settingsTerms, body: l10n.termsOfServiceBody),
             )),
           ),
+          _SectionHeader(l10n.settingsSectionAbout),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: Text(l10n.settingsAbout),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => StaticTextScreen(
-                title: l10n.settingsAbout,
-                body: '${LegalText.aboutMkr}\n\n${Disclaimer.full}\n\n${l10n.settingsAppVersion}: $appVersion',
-              ),
-            )),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AboutScreen())),
           ),
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Text('${l10n.settingsAppVersion}: $appVersion', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            child: Text(
+              '${l10n.versionLabel} ${AboutScreen.appVersion}',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
+      child: Text(
+        label,
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.6,
+        ),
+      ),
+    );
+  }
+}
+
+/// The strongest conversion point in Settings — a prominent card rather
+/// than a passive row, wording driven entirely by current entitlement.
+class _SubscriptionCard extends StatelessWidget {
+  const _SubscriptionCard({required this.entitlement});
+
+  final Entitlement entitlement;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final isFree = entitlement.tier == PremiumTier.free;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Card(
+        color: isFree ? theme.colorScheme.primaryContainer : theme.colorScheme.surfaceContainerHigh,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.workspace_premium,
+                  color: isFree ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isFree ? l10n.settingsUnlockPro : premiumTierLabel(l10n, entitlement.tier),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: isFree ? theme.colorScheme.onPrimaryContainer : null,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        isFree ? l10n.settingsUnlockProSubtitle : l10n.settingsActive,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: isFree ? theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.85) : context.marketColors.gain,
+                          fontWeight: isFree ? null : FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  isFree ? l10n.settingsViewPlans : l10n.settingsManagePlan,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: isFree ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.primary,
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: isFree ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.primary),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -698,12 +698,6 @@ abstract class AppLocalizations {
   /// **'Current Plan'**
   String get premiumCurrentPlan;
 
-  /// No description provided for @premiumSimulatePurchase.
-  ///
-  /// In en, this message translates to:
-  /// **'Simulate purchase (Phase 1 mock)'**
-  String get premiumSimulatePurchase;
-
   /// No description provided for @premiumRestorePurchases.
   ///
   /// In en, this message translates to:
@@ -1088,17 +1082,17 @@ abstract class AppLocalizations {
   /// **'Basic market data · Basic news · Basic calendar\nLimited watchlist & alerts · Basic AI brief · Ads'**
   String get premiumFreeFeatures;
 
-  /// No description provided for @premiumSimulatePurchaseDialogTitle.
+  /// No description provided for @premiumConfirmDialogTitle.
   ///
   /// In en, this message translates to:
-  /// **'Simulate purchase'**
-  String get premiumSimulatePurchaseDialogTitle;
+  /// **'Confirm your plan'**
+  String get premiumConfirmDialogTitle;
 
-  /// No description provided for @premiumMockPurchaseConfirm.
+  /// No description provided for @premiumConfirmDialogBody.
   ///
   /// In en, this message translates to:
-  /// **'This is a Phase 1 mock purchase for {title} ({price}). No real payment will be made. Continue?'**
-  String premiumMockPurchaseConfirm(String title, String price);
+  /// **'You\'re about to activate {title} ({price}). No payment is processed in this build — your plan will be unlocked on this device. Continue?'**
+  String premiumConfirmDialogBody(String title, String price);
 
   /// No description provided for @confirmLabel.
   ///
@@ -1109,7 +1103,7 @@ abstract class AppLocalizations {
   /// No description provided for @premiumActivatedMessage.
   ///
   /// In en, this message translates to:
-  /// **'{title} activated (mock)'**
+  /// **'{title} unlocked'**
   String premiumActivatedMessage(String title);
 
   /// No description provided for @premiumGateFeatureLocked.
@@ -1153,6 +1147,264 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Next'**
   String get onboardingNext;
+
+  /// No description provided for @dataModeLive.
+  ///
+  /// In en, this message translates to:
+  /// **'LIVE'**
+  String get dataModeLive;
+
+  /// No description provided for @dataModeDemo.
+  ///
+  /// In en, this message translates to:
+  /// **'DEMO DATA'**
+  String get dataModeDemo;
+
+  /// No description provided for @dataModeStale.
+  ///
+  /// In en, this message translates to:
+  /// **'STALE'**
+  String get dataModeStale;
+
+  /// No description provided for @dataModeOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'OFFLINE'**
+  String get dataModeOffline;
+
+  /// No description provided for @updatedRelative.
+  ///
+  /// In en, this message translates to:
+  /// **'Updated {time}'**
+  String updatedRelative(String time);
+
+  /// No description provided for @homeMarketPulse.
+  ///
+  /// In en, this message translates to:
+  /// **'Market Pulse'**
+  String get homeMarketPulse;
+
+  /// No description provided for @homeMarketSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Market Snapshot'**
+  String get homeMarketSnapshot;
+
+  /// No description provided for @aiReadMore.
+  ///
+  /// In en, this message translates to:
+  /// **'Read more'**
+  String get aiReadMore;
+
+  /// No description provided for @aiShowLess.
+  ///
+  /// In en, this message translates to:
+  /// **'Show less'**
+  String get aiShowLess;
+
+  /// No description provided for @alertStatusActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get alertStatusActive;
+
+  /// No description provided for @alertStatusInactive.
+  ///
+  /// In en, this message translates to:
+  /// **'Inactive'**
+  String get alertStatusInactive;
+
+  /// No description provided for @watchlistLimitReached.
+  ///
+  /// In en, this message translates to:
+  /// **'{count}/{limit} · Upgrade for unlimited watchlist'**
+  String watchlistLimitReached(int count, int limit);
+
+  /// No description provided for @premiumHeroTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock the full MKR experience'**
+  String get premiumHeroTitle;
+
+  /// No description provided for @premiumHeroSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Stay ahead of the market with deeper insights, unlimited alerts and an ad-free experience.'**
+  String get premiumHeroSubtitle;
+
+  /// No description provided for @badgeMostPopular.
+  ///
+  /// In en, this message translates to:
+  /// **'MOST POPULAR'**
+  String get badgeMostPopular;
+
+  /// No description provided for @badgeBestValue.
+  ///
+  /// In en, this message translates to:
+  /// **'BEST VALUE'**
+  String get badgeBestValue;
+
+  /// No description provided for @premiumCtaUpgradeToPro.
+  ///
+  /// In en, this message translates to:
+  /// **'Upgrade to Pro'**
+  String get premiumCtaUpgradeToPro;
+
+  /// No description provided for @premiumCtaUpgradeToAiPro.
+  ///
+  /// In en, this message translates to:
+  /// **'Upgrade to AI Pro'**
+  String get premiumCtaUpgradeToAiPro;
+
+  /// No description provided for @premiumCtaGetLifetime.
+  ///
+  /// In en, this message translates to:
+  /// **'Get Lifetime'**
+  String get premiumCtaGetLifetime;
+
+  /// No description provided for @settingsSectionAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'ACCOUNT'**
+  String get settingsSectionAccount;
+
+  /// No description provided for @settingsSectionSubscription.
+  ///
+  /// In en, this message translates to:
+  /// **'SUBSCRIPTION'**
+  String get settingsSectionSubscription;
+
+  /// No description provided for @settingsSectionPreferences.
+  ///
+  /// In en, this message translates to:
+  /// **'PREFERENCES'**
+  String get settingsSectionPreferences;
+
+  /// No description provided for @settingsSectionNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'NOTIFICATIONS'**
+  String get settingsSectionNotifications;
+
+  /// No description provided for @settingsSectionMarket.
+  ///
+  /// In en, this message translates to:
+  /// **'MARKET'**
+  String get settingsSectionMarket;
+
+  /// No description provided for @settingsSectionLegal.
+  ///
+  /// In en, this message translates to:
+  /// **'LEGAL'**
+  String get settingsSectionLegal;
+
+  /// No description provided for @settingsSectionAbout.
+  ///
+  /// In en, this message translates to:
+  /// **'ABOUT'**
+  String get settingsSectionAbout;
+
+  /// No description provided for @settingsUnlockPro.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock MKR Pro'**
+  String get settingsUnlockPro;
+
+  /// No description provided for @settingsUnlockProSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No ads • Unlimited alerts • Advanced market tools'**
+  String get settingsUnlockProSubtitle;
+
+  /// No description provided for @settingsViewPlans.
+  ///
+  /// In en, this message translates to:
+  /// **'View Plans'**
+  String get settingsViewPlans;
+
+  /// No description provided for @settingsActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get settingsActive;
+
+  /// No description provided for @settingsManagePlan.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage Plan'**
+  String get settingsManagePlan;
+
+  /// No description provided for @versionLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Version'**
+  String get versionLabel;
+
+  /// No description provided for @aboutParagraph1.
+  ///
+  /// In en, this message translates to:
+  /// **'MKR — Market Radar is a market intelligence app designed to help you understand what matters in financial markets at a glance.'**
+  String get aboutParagraph1;
+
+  /// No description provided for @aboutParagraph2.
+  ///
+  /// In en, this message translates to:
+  /// **'Track Gold, equities, crypto, forex and major market indices, follow high-impact economic events, discover market-moving news, and receive concise AI-powered insights in one place.'**
+  String get aboutParagraph2;
+
+  /// No description provided for @aboutParagraph3.
+  ///
+  /// In en, this message translates to:
+  /// **'MKR is built for investors and market watchers who want a clear view of the market without unnecessary complexity.'**
+  String get aboutParagraph3;
+
+  /// No description provided for @aboutDisclaimerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Disclaimer'**
+  String get aboutDisclaimerTitle;
+
+  /// No description provided for @aboutFooterBrand.
+  ///
+  /// In en, this message translates to:
+  /// **'MKR — Market Radar'**
+  String get aboutFooterBrand;
+
+  /// No description provided for @privacyPolicyBody.
+  ///
+  /// In en, this message translates to:
+  /// **'MKR Privacy Notice\n\nMKR stores your preferences — theme, language, watchlist, alerts and portfolio entries — locally on your device. No account is required to use the app\'s core features.\n\nWhen account sync and cloud services are introduced, data will be processed through a secure backend, and this notice will be updated accordingly before that feature is enabled.'**
+  String get privacyPolicyBody;
+
+  /// No description provided for @termsOfServiceBody.
+  ///
+  /// In en, this message translates to:
+  /// **'MKR Terms of Service\n\nMKR is provided for informational and educational purposes only. By using the app, you acknowledge that market data may be delayed or inaccurate, and that AI-generated content is descriptive analysis, not financial advice.\n\nSubscription purchases are processed through the app store\'s standard billing system where available. Where billing is not yet configured, no payment is charged and premium features are provided for preview purposes only.'**
+  String get termsOfServiceBody;
+
+  /// No description provided for @adBannerPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Test ad · Placeholder'**
+  String get adBannerPlaceholder;
+
+  /// No description provided for @adTestAdTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Test Ad'**
+  String get adTestAdTitle;
+
+  /// No description provided for @adInterstitialPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a placeholder ad slot. No real ad content is loaded.'**
+  String get adInterstitialPlaceholder;
+
+  /// No description provided for @close.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get close;
 }
 
 class _AppLocalizationsDelegate

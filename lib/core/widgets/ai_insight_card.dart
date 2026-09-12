@@ -3,16 +3,29 @@ import 'package:flutter/material.dart';
 import '../../features/ai/domain/ai_insight.dart';
 import '../../l10n/generated/app_localizations.dart';
 
-class AIInsightCard extends StatelessWidget {
+/// AI-generated brief shown on Home / Market Detail / Gold Radar. Summary
+/// and "why it matters" are always visible; the bulleted "what to watch"
+/// and "risks" sections are behind a Read more toggle so the card stays
+/// compact by default without hiding the analysis entirely.
+class AIInsightCard extends StatefulWidget {
   const AIInsightCard({super.key, required this.insight, required this.title});
 
   final AIInsight insight;
   final String title;
 
   @override
+  State<AIInsightCard> createState() => _AIInsightCardState();
+}
+
+class _AIInsightCardState extends State<AIInsightCard> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
+    final insight = widget.insight;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -23,23 +36,48 @@ class AIInsightCard extends StatelessWidget {
               children: [
                 Icon(Icons.auto_awesome, size: 18, color: theme.colorScheme.primary),
                 const SizedBox(width: 8),
-                Text(title, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 10),
             Text(insight.summary, style: theme.textTheme.bodyMedium),
             const SizedBox(height: 12),
             _section(theme, l10n.aiWhyItMatters, insight.whyItMatters),
-            const SizedBox(height: 10),
-            _bulletSection(theme, l10n.aiWhatToWatch, insight.whatToWatch, Icons.visibility_outlined),
-            const SizedBox(height: 10),
-            _bulletSection(theme, l10n.aiRisks, insight.risks, Icons.warning_amber_rounded),
-            const SizedBox(height: 12),
-            Text(
-              l10n.aiDisclaimerShort,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                fontStyle: FontStyle.italic,
+            AnimatedCrossFade(
+              duration: const Duration(milliseconds: 200),
+              crossFadeState: _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+              firstChild: const SizedBox.shrink(),
+              secondChild: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 10),
+                  _bulletSection(theme, l10n.aiWhatToWatch, insight.whatToWatch, Icons.visibility_outlined),
+                  const SizedBox(height: 10),
+                  _bulletSection(theme, l10n.aiRisks, insight.risks, Icons.warning_amber_rounded),
+                  const SizedBox(height: 12),
+                  Text(
+                    l10n.aiDisclaimerShort,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 32)),
+                onPressed: () => setState(() => _expanded = !_expanded),
+                child: Text(_expanded ? l10n.aiShowLess : l10n.aiReadMore),
               ),
             ),
           ],

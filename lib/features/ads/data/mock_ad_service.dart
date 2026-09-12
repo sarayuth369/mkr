@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../../../l10n/generated/app_localizations.dart';
 import '../domain/ad_service.dart';
 
 /// Renders clearly-labeled placeholders instead of loading a real ad SDK —
-/// keeps Phase 1 free of native Gradle dependencies while still exercising
-/// the full call pattern the real AdMob integration will use later.
-/// Uses Google's published test ad unit IDs as a placeholder reference only
-/// (no network call is actually made in Phase 1).
+/// avoids a native Gradle dependency while still exercising the full call
+/// pattern the real AdMob integration will use later. Uses Google's
+/// published test ad unit IDs as a placeholder reference only (no network
+/// call is actually made by this implementation).
 class MockAdService implements AdService {
   static const testBannerUnitId = 'ca-app-pub-3940256099942544/6300978111';
   static const testInterstitialUnitId = 'ca-app-pub-3940256099942544/1033173712';
@@ -17,6 +18,7 @@ class MockAdService implements AdService {
   @override
   Widget buildBanner(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     return Container(
       width: double.infinity,
       height: 50,
@@ -26,7 +28,7 @@ class MockAdService implements AdService {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        'TEST AD · Banner placeholder',
+        l10n.adBannerPlaceholder,
         style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
       ),
     );
@@ -38,14 +40,15 @@ class MockAdService implements AdService {
     _triggerCounts[trigger] = count;
     if (count % _interstitialEveryNTriggers != 0) return;
     if (!context.mounted) return;
+    final l10n = AppLocalizations.of(context);
 
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('TEST AD'),
-        content: const Text('Interstitial ad placeholder (Phase 1 mock — no real SDK loaded).'),
+        title: Text(l10n.adTestAdTitle),
+        content: Text(l10n.adInterstitialPlaceholder),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.close)),
         ],
       ),
     );

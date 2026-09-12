@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../features/alerts/domain/alert.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../theme/app_theme.dart';
 
 String alertTypeLabel(AppLocalizations l10n, AlertType type) => switch (type) {
       AlertType.price => l10n.alertTypePrice,
@@ -49,19 +50,49 @@ class AlertCard extends StatelessWidget {
         AlertType.radar => Icons.radar,
       };
 
+  Color _accentColor(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final colors = context.marketColors;
+    return switch (alert.type) {
+      AlertType.price => scheme.primary,
+      AlertType.percentage => scheme.tertiary,
+      AlertType.event => colors.impactMedium,
+      AlertType.radar => scheme.secondary,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
+    final accent = _accentColor(context);
+
     return Card(
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         leading: CircleAvatar(
-          backgroundColor: theme.colorScheme.primaryContainer,
-          child: Icon(_icon, color: theme.colorScheme.onPrimaryContainer, size: 20),
+          backgroundColor: accent.withValues(alpha: 0.15),
+          child: Icon(_icon, color: accent, size: 20),
         ),
-        title: Text(localizedAlertSummary(l10n, alert), style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(alertTypeLabel(l10n, alert.type).toUpperCase(), style: theme.textTheme.labelSmall),
+        title: Text(
+          localizedAlertSummary(l10n, alert),
+          style: const TextStyle(fontWeight: FontWeight.w600),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Row(
+          children: [
+            Text(alertTypeLabel(l10n, alert.type).toUpperCase(), style: theme.textTheme.labelSmall),
+            const Text('  ·  ', style: TextStyle(fontSize: 10)),
+            Text(
+              alert.isEnabled ? l10n.alertStatusActive : l10n.alertStatusInactive,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: alert.isEnabled ? context.marketColors.gain : theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

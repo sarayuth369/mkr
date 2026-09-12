@@ -311,9 +311,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get premiumCurrentPlan => 'Current Plan';
 
   @override
-  String get premiumSimulatePurchase => 'Simulate purchase (Phase 1 mock)';
-
-  @override
   String get premiumRestorePurchases => 'Restore Purchases';
 
   @override
@@ -509,11 +506,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Basic market data · Basic news · Basic calendar\nLimited watchlist & alerts · Basic AI brief · Ads';
 
   @override
-  String get premiumSimulatePurchaseDialogTitle => 'Simulate purchase';
+  String get premiumConfirmDialogTitle => 'Confirm your plan';
 
   @override
-  String premiumMockPurchaseConfirm(String title, String price) {
-    return 'This is a Phase 1 mock purchase for $title ($price). No real payment will be made. Continue?';
+  String premiumConfirmDialogBody(String title, String price) {
+    return 'You\'re about to activate $title ($price). No payment is processed in this build — your plan will be unlocked on this device. Continue?';
   }
 
   @override
@@ -521,7 +518,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String premiumActivatedMessage(String title) {
-    return '$title activated (mock)';
+    return '$title unlocked';
   }
 
   @override
@@ -547,4 +544,145 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get onboardingNext => 'Next';
+
+  @override
+  String get dataModeLive => 'LIVE';
+
+  @override
+  String get dataModeDemo => 'DEMO DATA';
+
+  @override
+  String get dataModeStale => 'STALE';
+
+  @override
+  String get dataModeOffline => 'OFFLINE';
+
+  @override
+  String updatedRelative(String time) {
+    return 'Updated $time';
+  }
+
+  @override
+  String get homeMarketPulse => 'Market Pulse';
+
+  @override
+  String get homeMarketSnapshot => 'Market Snapshot';
+
+  @override
+  String get aiReadMore => 'Read more';
+
+  @override
+  String get aiShowLess => 'Show less';
+
+  @override
+  String get alertStatusActive => 'Active';
+
+  @override
+  String get alertStatusInactive => 'Inactive';
+
+  @override
+  String watchlistLimitReached(int count, int limit) {
+    return '$count/$limit · Upgrade for unlimited watchlist';
+  }
+
+  @override
+  String get premiumHeroTitle => 'Unlock the full MKR experience';
+
+  @override
+  String get premiumHeroSubtitle =>
+      'Stay ahead of the market with deeper insights, unlimited alerts and an ad-free experience.';
+
+  @override
+  String get badgeMostPopular => 'MOST POPULAR';
+
+  @override
+  String get badgeBestValue => 'BEST VALUE';
+
+  @override
+  String get premiumCtaUpgradeToPro => 'Upgrade to Pro';
+
+  @override
+  String get premiumCtaUpgradeToAiPro => 'Upgrade to AI Pro';
+
+  @override
+  String get premiumCtaGetLifetime => 'Get Lifetime';
+
+  @override
+  String get settingsSectionAccount => 'ACCOUNT';
+
+  @override
+  String get settingsSectionSubscription => 'SUBSCRIPTION';
+
+  @override
+  String get settingsSectionPreferences => 'PREFERENCES';
+
+  @override
+  String get settingsSectionNotifications => 'NOTIFICATIONS';
+
+  @override
+  String get settingsSectionMarket => 'MARKET';
+
+  @override
+  String get settingsSectionLegal => 'LEGAL';
+
+  @override
+  String get settingsSectionAbout => 'ABOUT';
+
+  @override
+  String get settingsUnlockPro => 'Unlock MKR Pro';
+
+  @override
+  String get settingsUnlockProSubtitle =>
+      'No ads • Unlimited alerts • Advanced market tools';
+
+  @override
+  String get settingsViewPlans => 'View Plans';
+
+  @override
+  String get settingsActive => 'Active';
+
+  @override
+  String get settingsManagePlan => 'Manage Plan';
+
+  @override
+  String get versionLabel => 'Version';
+
+  @override
+  String get aboutParagraph1 =>
+      'MKR — Market Radar is a market intelligence app designed to help you understand what matters in financial markets at a glance.';
+
+  @override
+  String get aboutParagraph2 =>
+      'Track Gold, equities, crypto, forex and major market indices, follow high-impact economic events, discover market-moving news, and receive concise AI-powered insights in one place.';
+
+  @override
+  String get aboutParagraph3 =>
+      'MKR is built for investors and market watchers who want a clear view of the market without unnecessary complexity.';
+
+  @override
+  String get aboutDisclaimerTitle => 'Disclaimer';
+
+  @override
+  String get aboutFooterBrand => 'MKR — Market Radar';
+
+  @override
+  String get privacyPolicyBody =>
+      'MKR Privacy Notice\n\nMKR stores your preferences — theme, language, watchlist, alerts and portfolio entries — locally on your device. No account is required to use the app\'s core features.\n\nWhen account sync and cloud services are introduced, data will be processed through a secure backend, and this notice will be updated accordingly before that feature is enabled.';
+
+  @override
+  String get termsOfServiceBody =>
+      'MKR Terms of Service\n\nMKR is provided for informational and educational purposes only. By using the app, you acknowledge that market data may be delayed or inaccurate, and that AI-generated content is descriptive analysis, not financial advice.\n\nSubscription purchases are processed through the app store\'s standard billing system where available. Where billing is not yet configured, no payment is charged and premium features are provided for preview purposes only.';
+
+  @override
+  String get adBannerPlaceholder => 'Test ad · Placeholder';
+
+  @override
+  String get adTestAdTitle => 'Test Ad';
+
+  @override
+  String get adInterstitialPlaceholder =>
+      'This is a placeholder ad slot. No real ad content is loaded.';
+
+  @override
+  String get close => 'Close';
 }

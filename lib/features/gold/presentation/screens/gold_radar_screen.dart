@@ -7,6 +7,7 @@ import '../../../../core/widgets/ai_insight_card.dart';
 import '../../../../core/widgets/economic_event_card.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
+import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../core/widgets/price_chart.dart';
 import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_quote.dart';
@@ -52,6 +53,8 @@ class GoldRadarScreen extends StatelessWidget {
           success: (data, isStale, lastUpdated) => ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              MarketDataStatusChip(mode: controller.mode, lastUpdated: controller.lastUpdated),
+              const SizedBox(height: 12),
               _PriceHeader(data: data),
               const SizedBox(height: 16),
               PriceChart(series: MockMarketCatalog.syntheticSeries('XAU/USD'), isUp: data.gold.isUp),
@@ -143,8 +146,8 @@ class _MetricsGrid extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(m.$1, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                Text(m.$2, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                Text(m.$1, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant), maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(m.$2, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
@@ -177,14 +180,21 @@ class _RelatedMarkets extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(quote.symbol, style: theme.textTheme.labelSmall),
-                Text(Formatters.price(quote.price), style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text(quote.symbol, style: theme.textTheme.labelSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(
+                  Formatters.price(quote.price),
+                  style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 Text(
                   Formatters.changePct(quote.changePct),
                   style: TextStyle(
                     color: quote.isUp ? context.marketColors.gain : context.marketColors.loss,
                     fontSize: 12,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),

@@ -105,7 +105,6 @@
   "premiumOneTime": "ครั้งเดียว",
   "premiumUpgrade": "อัปเกรด",
   "premiumCurrentPlan": "แผนปัจจุบัน",
-  "premiumSimulatePurchase": "จำลองการซื้อ (โหมดทดสอบ Phase 1)",
   "premiumRestorePurchases": "กู้คืนการซื้อ",
   "settingsTitle": "ตั้งค่า",
   "settingsAccount": "บัญชี",
@@ -170,16 +169,16 @@
   "newsEmpty": "ยังไม่มีข่าว",
   "premiumChooseYourPlan": "เลือกแผนของคุณ",
   "premiumFreeFeatures": "ข้อมูลตลาดพื้นฐาน · ข่าวพื้นฐาน · ปฏิทินพื้นฐาน\nรายการติดตามและแจ้งเตือนแบบจำกัด · สรุป AI พื้นฐาน · มีโฆษณา",
-  "premiumSimulatePurchaseDialogTitle": "จำลองการซื้อ",
-  "premiumMockPurchaseConfirm": "นี่คือการจำลองการซื้อสำหรับ Phase 1 สำหรับ {title} ({price}) จะไม่มีการชำระเงินจริงเกิดขึ้น ดำเนินการต่อหรือไม่",
-  "@premiumMockPurchaseConfirm": {
+  "premiumConfirmDialogTitle": "ยืนยันแผนของคุณ",
+  "premiumConfirmDialogBody": "คุณกำลังจะเปิดใช้งาน {title} ({price}) เวอร์ชันนี้ยังไม่มีการเรียกเก็บเงินจริง แผนของคุณจะถูกปลดล็อกบนอุปกรณ์นี้ ดำเนินการต่อหรือไม่",
+  "@premiumConfirmDialogBody": {
     "placeholders": {
       "title": {"type": "String"},
       "price": {"type": "String"}
     }
   },
   "confirmLabel": "ยืนยัน",
-  "premiumActivatedMessage": "เปิดใช้งาน {title} แล้ว (จำลอง)",
+  "premiumActivatedMessage": "ปลดล็อก {title} แล้ว",
   "@premiumActivatedMessage": {
     "placeholders": {
       "title": {"type": "String"}
@@ -196,5 +195,59 @@
   "calendarNoEventsYet": "ยังไม่มีเหตุการณ์",
   "calendarNoEventsMatchFilter": "ไม่พบเหตุการณ์ที่ตรงกับตัวกรองนี้",
   "aiDisclaimerShort": "เพื่อข้อมูลเท่านั้น ไม่ใช่คำแนะนำทางการเงิน ข้อมูลอาจล่าช้า",
-  "onboardingNext": "ถัดไป"
+  "onboardingNext": "ถัดไป",
+  "dataModeLive": "สด",
+  "dataModeDemo": "ข้อมูลตัวอย่าง",
+  "dataModeStale": "ข้อมูลเก่า",
+  "dataModeOffline": "ออฟไลน์",
+  "updatedRelative": "อัปเดต {time}",
+  "@updatedRelative": {
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
+  "homeMarketPulse": "ชีพจรตลาด",
+  "homeMarketSnapshot": "ภาพรวมตลาด",
+  "aiReadMore": "อ่านเพิ่มเติม",
+  "aiShowLess": "ย่อ",
+  "alertStatusActive": "เปิดใช้งาน",
+  "alertStatusInactive": "ปิดใช้งาน",
+  "watchlistLimitReached": "{count}/{limit} · อัปเกรดเพื่อรายการติดตามไม่จำกัด",
+  "@watchlistLimitReached": {
+    "placeholders": {
+      "count": {"type": "int"},
+      "limit": {"type": "int"}
+    }
+  },
+  "premiumHeroTitle": "ปลดล็อกประสบการณ์ MKR แบบเต็มรูปแบบ",
+  "premiumHeroSubtitle": "นำหน้าตลาดด้วยข้อมูลเชิงลึกที่มากขึ้น การแจ้งเตือนไม่จำกัด และประสบการณ์ที่ไม่มีโฆษณา",
+  "badgeMostPopular": "ยอดนิยม",
+  "badgeBestValue": "คุ้มค่าที่สุด",
+  "premiumCtaUpgradeToPro": "อัปเกรดเป็น Pro",
+  "premiumCtaUpgradeToAiPro": "อัปเกรดเป็น AI Pro",
+  "premiumCtaGetLifetime": "รับแบบตลอดชีพ",
+  "settingsSectionAccount": "บัญชี",
+  "settingsSectionSubscription": "การสมัครสมาชิก",
+  "settingsSectionPreferences": "การตั้งค่าทั่วไป",
+  "settingsSectionNotifications": "การแจ้งเตือน",
+  "settingsSectionMarket": "ตลาด",
+  "settingsSectionLegal": "กฎหมาย",
+  "settingsSectionAbout": "เกี่ยวกับ",
+  "settingsUnlockPro": "ปลดล็อก MKR Pro",
+  "settingsUnlockProSubtitle": "ไม่มีโฆษณา • แจ้งเตือนไม่จำกัด • เครื่องมือตลาดขั้นสูง",
+  "settingsViewPlans": "ดูแผนทั้งหมด",
+  "settingsActive": "เปิดใช้งานอยู่",
+  "settingsManagePlan": "จัดการแผน",
+  "versionLabel": "เวอร์ชัน",
+  "aboutParagraph1": "MKR — Market Radar เป็นแอปข้อมูลเชิงลึกด้านตลาด ออกแบบมาเพื่อช่วยให้คุณเข้าใจสิ่งสำคัญในตลาดการเงินได้เพียงแวบเดียว",
+  "aboutParagraph2": "ติดตามทองคำ หุ้น คริปโต ฟอเร็กซ์ และดัชนีตลาดหลัก ติดตามเหตุการณ์เศรษฐกิจที่มีผลกระทบสูง ค้นพบข่าวที่ขับเคลื่อนตลาด และรับข้อมูลเชิงลึกจาก AI แบบกระชับในที่เดียว",
+  "aboutParagraph3": "MKR สร้างขึ้นสำหรับนักลงทุนและผู้ติดตามตลาดที่ต้องการมุมมองตลาดที่ชัดเจนโดยไม่ซับซ้อนเกินความจำเป็น",
+  "aboutDisclaimerTitle": "ข้อจำกัดความรับผิดชอบ",
+  "aboutFooterBrand": "MKR — Market Radar",
+  "privacyPolicyBody": "ประกาศความเป็นส่วนตัวของ MKR\n\nMKR จัดเก็บการตั้งค่าของคุณ — ธีม ภาษา รายการติดตาม การแจ้งเตือน และรายการพอร์ตโฟลิโอ — ไว้ในเครื่องของคุณเท่านั้น ไม่จำเป็นต้องมีบัญชีเพื่อใช้ฟีเจอร์หลักของแอป\n\nเมื่อมีการเปิดใช้งานการซิงค์บัญชีและบริการคลาวด์ ข้อมูลจะถูกประมวลผลผ่านระบบหลังบ้านที่ปลอดภัย และประกาศนี้จะได้รับการปรับปรุงก่อนเปิดใช้งานฟีเจอร์ดังกล่าว",
+  "termsOfServiceBody": "ข้อกำหนดการใช้งานของ MKR\n\nMKR จัดทำขึ้นเพื่อวัตถุประสงค์ในการให้ข้อมูลและการศึกษาเท่านั้น การใช้งานแอปถือว่าคุณรับทราบว่าข้อมูลตลาดอาจล่าช้าหรือคลาดเคลื่อน และเนื้อหาที่สร้างโดย AI เป็นการวิเคราะห์เชิงพรรณนา ไม่ใช่คำแนะนำทางการเงิน\n\nการซื้อการสมัครสมาชิกจะดำเนินการผ่านระบบการเรียกเก็บเงินมาตรฐานของแอปสโตร์เมื่อพร้อมใช้งาน ในกรณีที่ยังไม่ได้ตั้งค่าระบบเรียกเก็บเงิน จะไม่มีการเรียกเก็บเงินใดๆ และฟีเจอร์พรีเมียมจะให้ใช้งานเพื่อการพรีวิวเท่านั้น",
+  "adBannerPlaceholder": "โฆษณาทดสอบ · ตัวยึดตำแหน่ง",
+  "adTestAdTitle": "โฆษณาทดสอบ",
+  "adInterstitialPlaceholder": "นี่คือพื้นที่โฆษณาตัวอย่าง ไม่มีเนื้อหาโฆษณาจริงถูกโหลด",
+  "close": "ปิด"
 }

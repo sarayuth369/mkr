@@ -5,6 +5,7 @@ import '../../../../core/widgets/asset_row.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
+import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../domain/asset_class.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../application/markets_controller.dart';
@@ -46,7 +47,11 @@ class _MarketsScreenState extends State<MarketsScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: MarketDataStatusChip(mode: controller.mode, lastUpdated: controller.lastUpdated),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(

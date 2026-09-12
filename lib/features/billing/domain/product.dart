@@ -7,7 +7,7 @@ class Product {
     required this.id,
     required this.tier,
     required this.title,
-    required this.priceThb,
+    required this.price,
     required this.period,
     required this.features,
   });
@@ -15,15 +15,15 @@ class Product {
   final String id;
   final PremiumTier tier;
   final String title;
-  final num priceThb;
+
+  /// USD major units — MKR is a global product, all pricing shown to users
+  /// is USD regardless of the app's display-currency setting (that setting
+  /// only affects market data, never subscription pricing). Real pricing
+  /// will ultimately come from configured Google Play product IDs matching
+  /// [id]; this is the local fallback/display value until that's wired up.
+  final num price;
   final BillingPeriod period;
   final List<String> features;
-
-  String get priceLabel => switch (period) {
-        BillingPeriod.monthly => '฿$priceThb/month',
-        BillingPeriod.yearly => '฿$priceThb/year',
-        BillingPeriod.lifetime => '฿$priceThb one-time',
-      };
 }
 
 /// The four commercial tiers exactly as specified. Kept as static data —
@@ -47,6 +47,12 @@ const _aiProFeatures = [
   'Smart Radar Alerts',
 ];
 
+const _lifetimeFeatures = [
+  'Pro features, permanently',
+  'No recurring Pro subscription',
+  'AI remains usage/subscription based',
+];
+
 class ProductCatalog {
   ProductCatalog._();
 
@@ -54,7 +60,7 @@ class ProductCatalog {
     id: 'pro_monthly',
     tier: PremiumTier.pro,
     title: 'Pro',
-    priceThb: 79,
+    price: 2.99,
     period: BillingPeriod.monthly,
     features: _proFeatures,
   );
@@ -63,7 +69,7 @@ class ProductCatalog {
     id: 'pro_yearly',
     tier: PremiumTier.pro,
     title: 'Pro',
-    priceThb: 790,
+    price: 29.99,
     period: BillingPeriod.yearly,
     features: _proFeatures,
   );
@@ -72,7 +78,7 @@ class ProductCatalog {
     id: 'ai_pro_monthly',
     tier: PremiumTier.aiPro,
     title: 'AI Pro',
-    priceThb: 149,
+    price: 5.99,
     period: BillingPeriod.monthly,
     features: _aiProFeatures,
   );
@@ -81,7 +87,7 @@ class ProductCatalog {
     id: 'ai_pro_yearly',
     tier: PremiumTier.aiPro,
     title: 'AI Pro',
-    priceThb: 1490,
+    price: 59.99,
     period: BillingPeriod.yearly,
     features: _aiProFeatures,
   );
@@ -90,13 +96,9 @@ class ProductCatalog {
     id: 'pro_lifetime',
     tier: PremiumTier.lifetime,
     title: 'Pro Lifetime',
-    priceThb: 1990,
+    price: 79.99,
     period: BillingPeriod.lifetime,
-    features: [
-      'Everything in Pro, forever',
-      'One-time payment',
-      'Does not include unlimited AI',
-    ],
+    features: _lifetimeFeatures,
   );
 
   static const all = [proMonthly, proYearly, aiProMonthly, aiProYearly, proLifetime];
