@@ -21,6 +21,7 @@ dependencies:
   http: ^1.2.2
   web_socket_channel: ^3.0.1
   supabase_flutter: ^2.8.0
+  win32_registry: ^3.0.3
 
 dev_dependencies:
   flutter_test:

@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
+import '../../../core/deeplink/auth_callback.dart';
 import '../../../core/persistence/app_local_store.dart';
 import '../domain/auth_service.dart';
 import '../domain/email_confirmation_required_exception.dart';
@@ -66,7 +67,13 @@ class SupabaseAuthService implements AuthService {
   @override
   Future<UserProfile> register({required String email, required String password}) async {
     try {
-      final response = await _auth.signUp(email: email, password: password);
+      // Without emailRedirectTo, Supabase falls back to the project's Site
+      // URL for the confirmation link — which is http://localhost:3000 on a
+      // fresh project and is exactly what produced the otp_expired/
+      // access_denied redirect this fixes. mkrAuthCallbackUrl must also be
+      // added to Supabase Dashboard → Authentication → URL Configuration →
+      // Redirect URLs, or Supabase rejects it and falls back the same way.
+      final response = await _auth.signUp(email: email, password: password, emailRedirectTo: mkrAuthCallbackUrl);
       final profile = _fromSupabaseUser(response.user);
       if (profile == null) throw StateError('Supabase registration did not return a user');
       await _store.setAuthSessionJson(null);
