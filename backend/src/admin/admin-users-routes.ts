@@ -123,13 +123,26 @@ export async function handleAdminUsersGet(request: Request, env: Env): Promise<R
     allFetchedForTotals = filtered;
   }
 
+  // A fresh/early-stage project can genuinely have zero users on a given
+  // page - `id`/`user_id` are `uuid` columns, and PostgREST rejects an
+  // `in.()` filter with no values (or the placeholder string "null") with
+  // a 400, which supabaseSelect then throws as an uncaught Error. Skip
+  // these three lookups entirely rather than sending a malformed filter
+  // (confirmed live: this was the exact cause of the production
+  // "Unexpected server error." on GET /api/mkr/admin/users).
   const ids = pageUsers.map((u) => u.id);
-  const idFilter = ids.length > 0 ? `id=in.(${ids.join(',')})` : 'id=eq.00000000-0000-0000-0000-000000000000';
-  const [profiles, alerts, devices] = await Promise.all([
-    supabaseSelect<{ id: string; plan: string }>(config, 'profiles', `?select=id,plan&${idFilter}`),
-    supabaseSelect<{ user_id: string }>(config, 'alerts', `?select=user_id&enabled=eq.true&user_id=in.(${ids.join(',') || 'null'})`),
-    supabaseSelect<{ user_id: string }>(config, 'devices', `?select=user_id&active=eq.true&user_id=in.(${ids.join(',') || 'null'})`),
-  ]);
+  let profiles: { id: string; plan: string }[] = [];
+  let alerts: { user_id: string }[] = [];
+  let devices: { user_id: string }[] = [];
+  if (ids.length > 0) {
+    const idFilter = `id=in.(${ids.join(',')})`;
+    const userIdFilter = `user_id=in.(${ids.join(',')})`;
+    [profiles, alerts, devices] = await Promise.all([
+      supabaseSelect<{ id: string; plan: string }>(config, 'profiles', `?select=id,plan&${idFilter}`),
+      supabaseSelect<{ user_id: string }>(config, 'alerts', `?select=user_id&enabled=eq.true&${userIdFilter}`),
+      supabaseSelect<{ user_id: string }>(config, 'devices', `?select=user_id&active=eq.true&${userIdFilter}`),
+    ]);
+  }
 
   const planById = new Map(profiles.map((p) => [p.id, p.plan]));
   const alertCounts = countByUserId(alerts);
