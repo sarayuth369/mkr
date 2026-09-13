@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/app_info.dart' as app_info;
 import '../../../../core/constants/disclaimer.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/app_logo_mark.dart';
@@ -13,7 +14,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
-  static const appVersion = '1.0.0';
+  static const appVersion = app_info.appVersion;
 
   @override
   Widget build(BuildContext context) {

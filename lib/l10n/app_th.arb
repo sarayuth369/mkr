@@ -297,5 +297,10 @@
   "aboutFeaturePremiumTools": "เครื่องมือพรีเมียม",
   "chartModeLine": "เส้น",
   "chartModeCandle": "แท่งเทียน",
-  "chartCandleCaption": "แท่งเทียนสาธิตแบบสด — แท่งใหม่เกิดขึ้นทุกประมาณ 20 วินาที"
+  "chartCandleCaption": "บีบนิ้วเพื่อซูม ลากเพื่อเลื่อน แตะแท่งเทียนเพื่อดู OHLC",
+  "chartCandleEmpty": "ไม่มีข้อมูลแท่งเทียนสำหรับกรอบเวลานี้",
+  "notificationHistoryTitle": "การแจ้งเตือน",
+  "notificationHistoryEmpty": "ยังไม่มีการแจ้งเตือน",
+  "notificationHistorySignInRequired": "เข้าสู่ระบบเพื่อดูประวัติการแจ้งเตือน",
+  "notificationHistoryUnavailable": "การแจ้งเตือนแบบพุชยังไม่พร้อมใช้งานในเวอร์ชันนี้"
 }

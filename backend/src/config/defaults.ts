@@ -9,6 +9,16 @@ export interface FeatureFlags {
   aiBriefEnabled: boolean;
   adsEnabled: boolean;
   maintenanceMode: boolean;
+  /** Phase 2.2+ flags. Each one gates its feature independently of whether
+   * the underlying external credential (Supabase/FCM) is actually
+   * configured - a route must fail safely (return a clean "not configured"
+   * or "disabled" state, never an error or fabricated success) whenever
+   * either the flag is off OR the credential is missing. */
+  userAuthEnabled: boolean;
+  watchlistSyncEnabled: boolean;
+  alertsEnabled: boolean;
+  pushNotificationsEnabled: boolean;
+  subscriptionEnabled: boolean;
 }
 
 export interface CacheTtls {
@@ -64,6 +74,15 @@ export function defaultConfig(env: Env): RuntimeConfig {
       aiBriefEnabled: false,
       adsEnabled: true,
       maintenanceMode: false,
+      // Default OFF: these gate brand-new Phase 2.2/2.3 surfaces that need
+      // real Supabase/FCM credentials to do anything - an admin opts in
+      // once those are actually configured, rather than the flag silently
+      // flipping on for a fresh deploy with nothing behind it yet.
+      userAuthEnabled: false,
+      watchlistSyncEnabled: false,
+      alertsEnabled: false,
+      pushNotificationsEnabled: false,
+      subscriptionEnabled: false,
     },
   };
 }

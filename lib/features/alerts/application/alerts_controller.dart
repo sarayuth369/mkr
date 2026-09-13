@@ -7,6 +7,7 @@ import '../../../data/mock_market_catalog.dart';
 import '../../../domain/market_quote.dart';
 import '../../calendar/domain/economic_calendar_service.dart';
 import '../domain/alert.dart';
+import '../domain/alert_cloud_sync.dart';
 import '../domain/alert_evaluator.dart';
 import '../domain/alert_repository.dart';
 import '../domain/notification_service.dart';
@@ -16,9 +17,11 @@ class AlertsController extends ChangeNotifier {
     required AlertRepository repository,
     required NotificationService notificationService,
     required EconomicCalendarService calendarService,
+    AlertCloudSync cloudSync = const NoopAlertCloudSync(),
   })  : _repository = repository,
         _notificationService = notificationService,
-        _calendarService = calendarService {
+        _calendarService = calendarService,
+        _cloudSync = cloudSync {
     _load();
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => _evaluate());
   }
@@ -26,6 +29,7 @@ class AlertsController extends ChangeNotifier {
   final AlertRepository _repository;
   final NotificationService _notificationService;
   final EconomicCalendarService _calendarService;
+  final AlertCloudSync _cloudSync;
   Timer? _timer;
 
   ApiState<List<Alert>> _state = const ApiState.loading();
@@ -66,6 +70,9 @@ class AlertsController extends ChangeNotifier {
     await _repository.saveAlerts(alerts);
     _state = alerts.isEmpty ? const ApiState.empty() : ApiState.success(alerts);
     notifyListeners();
+    // Best-effort, never awaited by the UI — a sync failure must not block
+    // the local alert list, which is already saved and displayed above.
+    unawaited(_cloudSync.syncPriceAlerts(alerts));
   }
 
   Future<void> _evaluate() async {

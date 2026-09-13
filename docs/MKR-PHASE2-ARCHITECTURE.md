@@ -163,6 +163,119 @@ a regression test:
    symbols per upstream call - see `backend/README.md`'s "Known limitation"
    for why 8, not a bigger number).
 
+## Phase 2.1 – 2.4: User data, alerts, push, admin expansion
+
+Market data stays entirely on the Cloudflare path described above.
+Everything user-owned (auth, profile, watchlist, alerts, devices,
+notification history, subscription state) is a **separate** system —
+Supabase — never mixed with market-price streaming:
+
+```
+Flutter
+   │
+   ├── Market Data ──────────────► MKR Cloudflare Worker ──► Twelve Data
+   │                                       │
+   │                                       ├─ MarketStreamRoom (DO) ─► every tick
+   │                                       │        │
+   │                                       │        ▼
+   │                                       │   Alert Engine (evaluateTick)
+   │                                       │        │  reads KV-cached index only
+   │                                       │        ▼
+   │                                       │   PushProvider (FcmPushProvider /
+   │                                       │                 DisabledPushProvider)
+   │                                       │        │
+   │                                       │        ▼
+   │                                       │   Android device (FCM)
+   │                                       │
+   └── User Data ───────────────► Supabase (Auth, profiles, watchlists,
+                                            alerts, devices, notification_logs,
+                                            preferences, subscriptions)
+                                       ▲
+                                       │ service-role reads (backend only)
+                                       │
+                              MKR Worker: Cron Trigger (1/min) refreshes the
+                              alert index; Admin routes (Users/Alerts/Push/
+                              Notification Logs/Subscriptions)
+```
+
+### Alert Engine: the "cached/indexed boundary"
+
+Evaluating every market tick against Supabase directly would mean one
+Supabase query per tick per symbol - potentially every second, for every
+active symbol. Instead:
+
+1. A **Cron Trigger** (`[triggers] crons = ["*/1 * * * *"]` in
+   `wrangler.toml`, `scheduled()` in `index.ts`) calls `refreshAlertIndex()`
+   once a minute, which reads all `enabled = true` rows from Supabase's
+   `alerts` table and writes them into ONE KV document
+   (`alerts:index`, 180s TTL) grouped by symbol.
+2. `MarketStreamRoom.handleUpstreamMessage` (the single place every tick
+   from the one shared upstream connection arrives, independent of whether
+   any Flutter client is open) calls `evaluateTick(env, symbol, price)`
+   fire-and-forget after fanning the tick out to clients.
+3. `evaluateTick` reads **only** the KV-cached index - never Supabase - so
+   tick evaluation cost is O(1) KV reads regardless of tick rate.
+4. On a genuine trigger (condition met + cooldown elapsed + not already
+   in-flight in this isolate), it calls the configured `PushProvider`, logs
+   the attempt to `notification_logs`, and best-effort persists
+   `last_triggered_at` back to Supabase.
+
+**Scalability path (documented, not built - avoids overengineering an
+early-stage product):** once alert volume outgrows one KV value, shard the
+index by symbol (`alerts:index:<SYMBOL>`) so a tick only reads its own
+symbol's key, or replace the poll with a Durable-Object-held index
+invalidated by a Supabase webhook instead of a fixed 1-minute cron.
+
+### Push: FCM is transport only
+
+`PushProvider` is an interface (`backend/src/push/push-provider.ts`) with
+two implementations: `FcmPushProvider` (real FCM HTTP v1, hand-signs its own
+OAuth2 JWT via WebCrypto - no SDK dependency) and `DisabledPushProvider`
+(always returns `{success:false, error:'push_not_configured'}`, never a
+fake success). `getPushProvider(env)` picks based on whether
+`FCM_PROJECT_ID`/`FCM_CLIENT_EMAIL`/`FCM_PRIVATE_KEY` are all present.
+Firebase Cloud Messaging is never confused with a user database - Supabase
+remains the only source of truth for who a device belongs to.
+
+On the Flutter side, `PushNotificationService`/`DeviceRepository` are pure
+Dart interfaces with `Noop*` defaults - **no `firebase_messaging` package
+dependency has been added**, since doing so requires
+`android/app/google-services.json` and native Gradle changes that could
+break the build without a real Firebase project. `AuthController` calls
+`registerDevice()`/`deactivateDevice()` around login/logout; today this is
+an end-to-end no-op (Noop push service never returns a token), and becomes
+real the moment a `firebase_messaging`-backed `PushNotificationService`
+replaces the Noop one - see `docs/MKR-EXTERNAL-INTEGRATIONS.md`.
+
+### Admin expansion fails safe, not open
+
+Every Phase 2.4 admin route (Users, Alerts, Push, Notification Logs,
+Subscriptions) checks `supabaseConfigFrom(env)` first and returns
+`{ configured: false }` cleanly when Supabase isn't set up, rather than
+throwing a 500 or - worse - silently returning empty data that looks the
+same as "no data yet." The five new feature flags
+(`userAuthEnabled`/`watchlistSyncEnabled`/`alertsEnabled`/
+`pushNotificationsEnabled`/`subscriptionEnabled`) default to `false` on a
+fresh deploy and gate their surfaces independently of whether the
+underlying credential exists - both must be true for a feature to actually
+run. Every admin mutation here (alert enable/disable, push sends) is
+audit-logged the same way Phase 2's provider/config changes already were;
+a mass push additionally requires `{ "confirm": true }` in the request body.
+
+### Guest-first, sync-on-login
+
+"Guest" is a purely client-side concept - `UserProfile.isGuest` - and never
+touches Supabase Auth at all. `WatchlistController`/`AlertsController` work
+identically whether Supabase is configured or not (`Mock*`/`Supabase*`
+implementations behind the same `WatchlistRepository`/`AlertRepository`
+interfaces designed in Phase 1). On login, the local watchlist merges into
+the user's cloud watchlist exactly once (tracked via
+`AppLocalStore.watchlistMergedForUser`, not on every login) to avoid
+resurrecting since-deleted symbols. Alert cloud sync is deliberately scoped
+to `AlertType.price` only (the one type the backend Alert Engine can
+evaluate) - percentage/event/radar alerts stay local-only, a documented
+scope-narrowing decision rather than a larger alert-model redesign.
+
 ## Known limitation carried into Phase 3
 
 Flutter's client-side `AlpacaProvider` still targets a standalone

@@ -1,3 +1,4 @@
+import { evaluateTick } from '../alerts/alert-engine';
 import { catalogFor } from '../symbols/symbol-catalog';
 import { mapSymbolFromRows } from '../symbols/symbol-mapper';
 import type { Env } from '../types';
@@ -232,6 +233,12 @@ export class MarketStreamRoom {
         this.removeClient(socket);
       }
     }
+
+    // Fire-and-forget, independent of whether any client is subscribed
+    // above - alert evaluation must work even with every Flutter app
+    // closed. Never awaited: a slow/failed Supabase call must not delay
+    // fan-out to connected clients.
+    void evaluateTick(this.env, mkrSymbol, frame.price);
   }
 
   private mkrSymbolForProviderSymbol(providerSymbol: string): string | null {

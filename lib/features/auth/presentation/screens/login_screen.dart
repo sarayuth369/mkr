@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../watchlist/application/watchlist_controller.dart';
 import '../../application/auth_controller.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -75,6 +76,11 @@ class _LoginScreenState extends State<LoginScreen> {
     } else {
       await controller.login(_emailController.text, _passwordController.text);
     }
+    // Pulls the just-logged-in user's cloud watchlist (merging in whatever
+    // was saved locally as a guest) — a no-op when Supabase isn't
+    // configured, since WatchlistController still just re-reads local
+    // storage in that case.
+    if (mounted) await context.read<WatchlistController>().refresh();
     if (mounted) Navigator.of(context).pop();
   }
 }

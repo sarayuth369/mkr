@@ -12,6 +12,7 @@ import '../../../billing/application/entitlement_controller.dart';
 import '../../../billing/domain/entitlement.dart';
 import '../../../billing/presentation/premium_tier_label.dart';
 import '../../../billing/presentation/screens/paywall_screen.dart';
+import '../../../push/presentation/screens/notification_history_screen.dart';
 import 'about_screen.dart';
 import 'static_text_screen.dart';
 
@@ -109,7 +110,7 @@ class SettingsScreen extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.notifications_outlined),
             title: Text(l10n.settingsNotifications),
-            onTap: () {},
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationHistoryScreen())),
           ),
           _SectionHeader(l10n.settingsSectionMarket),
           ListTile(

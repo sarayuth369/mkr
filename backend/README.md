@@ -89,6 +89,53 @@ returns `PROVIDER_UNAVAILABLE` rather than fabricating data — this is by
 design (see Phase 1's data-honesty rule) and is exactly the state the
 automated test suite runs in (mocked HTTP responses, no real key needed).
 
+### Phase 2.2+ secrets (optional — everything they unlock fails safely without them)
+
+| Secret | Required for | Notes |
+|---|---|---|
+| `SUPABASE_URL` | Alert index refresh, admin Users/Alerts/Push/Notification-Logs/Subscriptions | Same value as Flutter's `SUPABASE_URL` `--dart-define` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Same as above | **Never the anon key.** Bypasses Row Level Security — backend-only, never in Flutter |
+| `FCM_PROJECT_ID` | Push notifications | Firebase project id |
+| `FCM_CLIENT_EMAIL` | Push notifications | Service-account `client_email` |
+| `FCM_PRIVATE_KEY` | Push notifications | Service-account `private_key` (PEM) — all three `FCM_*` required together |
+
+Copy `.dev.vars.example` to `.dev.vars` (gitignored) to exercise these
+locally; leaving any of them out is exactly the "not configured" path the
+test suite (`test/alert-engine.test.ts`, `test/push-provider-factory.test.ts`,
+`test/supabase-client.test.ts`) already covers. See
+`../docs/MKR-EXTERNAL-INTEGRATIONS.md` for exactly how to obtain each value.
+
+## User data, alerts, push (Phase 2.2 – 2.3)
+
+Market data (above) is entirely separate from user data. Supabase owns
+auth/profiles/watchlists/alerts/devices/notification history/subscriptions;
+this Worker only ever reads it with the service-role key for:
+
+- **Alert Engine** (`src/alerts/`) — a Cron Trigger (`[triggers] crons` in
+  `wrangler.toml`, once a minute) refreshes a KV-cached index of active
+  alerts (`alerts:index`); `MarketStreamRoom` calls `evaluateTick()` on
+  every upstream tick — independent of whether any Flutter client is
+  connected — which reads *only* that KV index, never Supabase per tick.
+  PRICE_ABOVE/PRICE_BELOW evaluation + per-alert cooldown + a per-isolate
+  duplicate-concurrent-trigger guard live in `alert-engine.ts` as pure,
+  directly-unit-tested functions (`conditionMet`/`isCooledDown`).
+- **Push** (`src/push/`) — `PushProvider` interface, `FcmPushProvider` (FCM
+  HTTP v1, hand-rolled OAuth2 JWT signing via WebCrypto, no SDK dependency)
+  and `DisabledPushProvider` (always fails cleanly). `getPushProvider(env)`
+  picks based on whether all three `FCM_*` secrets are present — never a
+  fake successful send.
+- **Supabase client** (`src/supabase/supabase-client.ts`) — a minimal
+  hand-rolled PostgREST/Auth-Admin wrapper, matching the same
+  hand-rolled-HTTP-provider style already used for Twelve Data/Alpaca
+  rather than adding `@supabase/supabase-js` for a handful of calls.
+
+To manually fire the Cron Trigger locally (Wrangler doesn't auto-trigger
+scheduled Workers in `wrangler dev`):
+
+```bash
+curl "http://127.0.0.1:8787/cdn-cgi/local/scheduled"
+```
+
 ## Local development
 
 ```bash
@@ -195,8 +242,32 @@ upstream unsubscribes/disconnects once nobody needs a symbol.
 `POST /login {password}` → `{token, expiresAt}` (rate-limited to 5/min/IP).
 Every other admin route requires `Authorization: Bearer <token>` and is
 rate-limited separately from the public API. See `src/admin/admin-routes.ts`
-for the full list (`dashboard`, `providers`, `symbols`, `cache`,
+for the Phase 2 list (`dashboard`, `providers`, `symbols`, `cache`,
 `rate-limits`, `features`, `health`, `logs`, `settings`).
+
+**Phase 2.4 additions** (`src/admin/admin-users-routes.ts`,
+`admin-alerts-routes.ts`, `admin-push-routes.ts`) — every one of these
+returns `{"configured": false}` cleanly instead of erroring when Supabase
+isn't set up:
+
+- `GET /users` — totals (total/active-30d/new-30d/pro) + user list. "Guest"
+  never appears here — it's a client-side-only concept, never a fabricated
+  Supabase Auth account.
+- `GET /users/:id` — profile, watchlist item count, active alerts, devices,
+  subscription. No secrets/passwords ever included.
+- `GET /alerts?status=active|triggered|disabled&symbol=...` — user-created
+  price alerts (not to be confused with Phase 2's provider config).
+- `POST /alerts/toggle {alertId, enabled}` — admin enable/disable; always
+  audit-logged (`alert.enabled.changed`).
+- `POST /push/test {deviceId, title?, body?}` — one real send to one device;
+  returns `{configured:false}` if `pushNotificationsEnabled` is off or FCM
+  isn't configured, never a fake success.
+- `POST /push/announcement {audience: "all"|"registered"|"pro", title, body, confirm:true}`
+  — mass push; refuses without `confirm:true`. Every send audit-logged
+  (`push.announcement_sent`/`push.test_sent`).
+- `GET /notification-logs?limit=100` — sent/failed history, never provider credentials.
+- `GET /subscriptions` — plan/status counts (provider-agnostic; Google Play
+  Billing itself is not implemented).
 
 ## Provider failover
 

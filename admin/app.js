@@ -15,6 +15,11 @@ const PAGES = [
   { path: 'cache', label: 'Cache', render: renderCache },
   { path: 'rate-limits', label: 'Rate Limits', render: renderRateLimits },
   { path: 'features', label: 'Feature Flags', render: renderFeatures },
+  { path: 'users', label: 'Users', render: renderUsers },
+  { path: 'alerts', label: 'Alerts', render: renderAlerts },
+  { path: 'push', label: 'Push', render: renderPush },
+  { path: 'notification-logs', label: 'Notification Logs', render: renderNotificationLogs },
+  { path: 'subscriptions', label: 'Subscriptions', render: renderSubscriptions },
   { path: 'health', label: 'System Health', render: renderHealth },
   { path: 'logs', label: 'Audit Logs', render: renderLogs },
   { path: 'settings', label: 'Settings', render: renderSettings },
@@ -24,6 +29,24 @@ function currentPath() {
   return (location.hash.replace('#/', '') || 'dashboard').split('?')[0];
 }
 
+function currentQuery() {
+  const [, qs] = location.hash.split('?');
+  return new URLSearchParams(qs || '');
+}
+
+/** Consistent "external service not wired up yet" card - Supabase-backed
+ * pages all render this instead of an empty/broken table when the backend
+ * reports `{ configured: false }`. */
+function notConfiguredCard(title, service = 'Supabase') {
+  return `
+    <h2>${title}</h2>
+    <div class="card">
+      <p class="warn-text">${service} is not configured on this deployment yet.</p>
+      <p class="muted">See docs/MKR-EXTERNAL-INTEGRATIONS.md for what the product owner needs to supply to enable this page.</p>
+    </div>
+  `;
+}
+
 function renderNav() {
   const active = currentPath();
   nav.innerHTML = PAGES.map((p) => `<a href="#/${p.path}" class="${p.path === active ? 'active' : ''}">${p.label}</a>`).join('');
@@ -31,10 +54,13 @@ function renderNav() {
 
 async function renderRoute() {
   renderNav();
-  const page = PAGES.find((p) => p.path === currentPath()) || PAGES[0];
+  const path = currentPath();
+  const userDetailId = path === 'users' ? currentQuery().get('id') : null;
+  const page = PAGES.find((p) => p.path === path) || PAGES[0];
   content.innerHTML = '<p class="muted">Loading…</p>';
   try {
-    await page.render();
+    if (userDetailId) await renderUserDetail(userDetailId);
+    else await page.render();
   } catch (err) {
     content.innerHTML = `<div class="card"><p class="error">${escapeHtml(err.message)}</p></div>`;
   }
@@ -243,6 +269,278 @@ async function renderFeatures() {
   });
 }
 
+// ---- Users ------------------------------------------------------------
+async function renderUsers() {
+  const data = await api.usersGet();
+  if (!data.configured) return void (content.innerHTML = notConfiguredCard('Users'));
+
+  content.innerHTML = `
+    <h2>Users</h2>
+    <div class="grid">
+      <div class="card"><div class="stat-label">Total</div><div class="stat-value">${data.totals.total}</div></div>
+      <div class="card"><div class="stat-label">Active (30d)</div><div class="stat-value">${data.totals.active}</div></div>
+      <div class="card"><div class="stat-label">New (30d)</div><div class="stat-value">${data.totals.newLast30Days}</div></div>
+      <div class="card"><div class="stat-label">Pro</div><div class="stat-value">${data.totals.pro}</div></div>
+    </div>
+    <p class="muted">"Guest" browsing is a client-side concept only - every row below is a real registered account.</p>
+    <div class="card">
+      <table>
+        <thead><tr><th>Email</th><th>Plan</th><th>Created</th><th>Last active</th><th>Alerts</th><th>Devices</th></tr></thead>
+        <tbody>
+          ${data.users
+            .map(
+              (u) => `<tr class="row-link" data-id="${escapeHtml(u.id)}">
+                <td>${escapeHtml(u.email ?? '—')}</td>
+                <td>${escapeHtml(u.plan)}</td>
+                <td>${new Date(u.createdAt).toLocaleDateString()}</td>
+                <td>${u.lastActiveAt ? new Date(u.lastActiveAt).toLocaleString() : 'never'}</td>
+                <td>${u.alertCount}</td>
+                <td>${u.deviceCount}</td>
+              </tr>`,
+            )
+            .join('')}
+        </tbody>
+      </table>
+      ${data.users.length === 0 ? '<p class="muted">No registered users yet.</p>' : ''}
+    </div>
+  `;
+  for (const row of content.querySelectorAll('.row-link')) {
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', () => (location.hash = `#/users?id=${encodeURIComponent(row.dataset.id)}`));
+  }
+}
+
+async function renderUserDetail(id) {
+  const data = await api.userDetail(id);
+  if (!data.configured) return void (content.innerHTML = notConfiguredCard('User Detail'));
+  if (!data.found) return void (content.innerHTML = '<h2>User Detail</h2><div class="card"><p class="error">User not found.</p></div>');
+
+  const { profile, watchlistItemCount, activeAlerts, devices, subscription } = data;
+  content.innerHTML = `
+    <h2>User Detail</h2>
+    <p><a href="#/users">&larr; Back to Users</a></p>
+    <div class="grid">
+      <div class="card"><div class="stat-label">Plan</div><div class="stat-value">${escapeHtml(profile.plan)}</div></div>
+      <div class="card"><div class="stat-label">Watchlist items</div><div class="stat-value">${watchlistItemCount}</div></div>
+      <div class="card"><div class="stat-label">Active alerts</div><div class="stat-value">${activeAlerts.length}</div></div>
+      <div class="card"><div class="stat-label">Devices</div><div class="stat-value">${devices.length}</div></div>
+    </div>
+    <div class="card">
+      <h3>Profile</h3>
+      <p>ID: <code>${escapeHtml(profile.id)}</code></p>
+      <p>Display name: ${escapeHtml(profile.display_name ?? '—')}</p>
+      <p>Member since: ${new Date(profile.created_at).toLocaleDateString()}</p>
+    </div>
+    <div class="card">
+      <h3>Active alerts</h3>
+      ${
+        activeAlerts.length === 0
+          ? '<p class="muted">None.</p>'
+          : `<table><thead><tr><th>Symbol</th><th>Condition</th><th>Target</th></tr></thead><tbody>${activeAlerts
+              .map((a) => `<tr><td>${escapeHtml(a.symbol)}</td><td>${escapeHtml(a.condition_type)}</td><td>${a.target_value}</td></tr>`)
+              .join('')}</tbody></table>`
+      }
+    </div>
+    <div class="card">
+      <h3>Devices</h3>
+      ${
+        devices.length === 0
+          ? '<p class="muted">None.</p>'
+          : `<table><thead><tr><th>Platform</th><th>Active</th><th>Updated</th></tr></thead><tbody>${devices
+              .map((d) => `<tr><td>${escapeHtml(d.platform)}</td><td>${statusBadge(d.active ? 'healthy' : 'disabled')}</td><td>${new Date(d.updated_at).toLocaleString()}</td></tr>`)
+              .join('')}</tbody></table>`
+      }
+    </div>
+    <div class="card">
+      <h3>Subscription</h3>
+      <p class="muted">No billing/auth secrets are ever shown here.</p>
+      ${subscription ? `<p>${escapeHtml(subscription.plan)} - ${statusBadge(subscription.status === 'active' ? 'healthy' : 'disabled')} ${subscription.expires_at ? `(expires ${new Date(subscription.expires_at).toLocaleDateString()})` : ''}</p>` : '<p class="muted">No subscription record.</p>'}
+    </div>
+  `;
+}
+
+// ---- Alerts (Phase 2.4 - user-created price alerts, not admin config) --
+async function renderAlerts() {
+  const query = currentQuery();
+  const status = query.get('status') || '';
+  const symbol = query.get('symbol') || '';
+  const data = await api.alertsGet({ ...(status ? { status } : {}), ...(symbol ? { symbol } : {}) });
+  if (!data.configured) return void (content.innerHTML = notConfiguredCard('Alerts'));
+
+  content.innerHTML = `
+    <h2>Alerts</h2>
+    <div class="card">
+      <div class="form-row">
+        <label>Filter by status</label>
+        <select id="alert-status-filter">
+          <option value="" ${status === '' ? 'selected' : ''}>All</option>
+          <option value="active" ${status === 'active' ? 'selected' : ''}>Active</option>
+          <option value="triggered" ${status === 'triggered' ? 'selected' : ''}>Triggered at least once</option>
+          <option value="disabled" ${status === 'disabled' ? 'selected' : ''}>Disabled</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Filter by symbol</label>
+        <input id="alert-symbol-filter" type="text" value="${escapeHtml(symbol)}" placeholder="e.g. XAU/USD" />
+      </div>
+      <div class="actions"><button class="secondary" id="apply-alert-filters">Apply</button></div>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Symbol</th><th>Condition</th><th>Target</th><th>Enabled</th><th>Last triggered</th><th></th></tr></thead>
+        <tbody>
+          ${data.alerts
+            .map(
+              (a) => `<tr data-id="${escapeHtml(a.id)}">
+                <td>${escapeHtml(a.symbol)}</td>
+                <td>${escapeHtml(a.condition_type)}</td>
+                <td>${a.target_value}</td>
+                <td><input type="checkbox" class="alert-enabled" ${a.enabled ? 'checked' : ''} /></td>
+                <td>${a.last_triggered_at ? new Date(a.last_triggered_at).toLocaleString() : 'never'}</td>
+                <td><button class="secondary alert-save" data-id="${escapeHtml(a.id)}">Save</button></td>
+              </tr>`,
+            )
+            .join('')}
+        </tbody>
+      </table>
+      ${data.alerts.length === 0 ? '<p class="muted">No alerts match this filter.</p>' : ''}
+      <span id="alerts-msg" class="save-msg" hidden>Saved.</span>
+    </div>
+  `;
+  document.getElementById('apply-alert-filters').addEventListener('click', () => {
+    const s = document.getElementById('alert-status-filter').value;
+    const sym = document.getElementById('alert-symbol-filter').value.trim();
+    location.hash = `#/alerts?${new URLSearchParams({ ...(s ? { status: s } : {}), ...(sym ? { symbol: sym } : {}) }).toString()}`;
+  });
+  for (const btn of content.querySelectorAll('.alert-save')) {
+    btn.addEventListener('click', async () => {
+      const row = content.querySelector(`tr[data-id="${btn.dataset.id}"]`);
+      const enabled = row.querySelector('.alert-enabled').checked;
+      await api.alertToggle(btn.dataset.id, enabled);
+      flash('alerts-msg');
+    });
+  }
+}
+
+// ---- Push ------------------------------------------------------------
+async function renderPush() {
+  content.innerHTML = `
+    <h2>Push Notifications</h2>
+    <div class="card">
+      <h3>Send test notification</h3>
+      <div class="form-row"><label>Device ID</label><input id="push-device-id" type="text" placeholder="device row id" /></div>
+      <div class="form-row"><label>Title</label><input id="push-test-title" type="text" placeholder="MKR test notification" /></div>
+      <div class="form-row"><label>Body</label><input id="push-test-body" type="text" placeholder="This is a test." /></div>
+      <div class="actions"><button class="primary" id="send-test-push">Send test push</button><span id="push-test-msg" class="save-msg" hidden></span></div>
+    </div>
+    <div class="card">
+      <h3>Send announcement</h3>
+      <p class="warn-text">This sends a real push to every matching device. This cannot be undone.</p>
+      <div class="form-row">
+        <label>Audience</label>
+        <select id="push-audience">
+          <option value="all">All registered users</option>
+          <option value="pro">Pro users only</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Title</label><input id="push-title" type="text" /></div>
+      <div class="form-row"><label>Body</label><input id="push-body" type="text" /></div>
+      <div class="toggle-row"><span>I understand this sends a real push to real users right now</span><input type="checkbox" id="push-confirm" /></div>
+      <div class="actions"><button class="primary" id="send-announcement">Send announcement</button><span id="push-announce-msg" class="save-msg" hidden></span></div>
+    </div>
+  `;
+  document.getElementById('send-test-push').addEventListener('click', async () => {
+    const msg = document.getElementById('push-test-msg');
+    try {
+      const result = await api.pushTest({
+        deviceId: document.getElementById('push-device-id').value.trim(),
+        title: document.getElementById('push-test-title').value.trim() || undefined,
+        body: document.getElementById('push-test-body').value.trim() || undefined,
+      });
+      msg.textContent = result.configured === false ? 'Push is not configured on this deployment.' : result.success ? 'Sent.' : `Failed: ${result.error}`;
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+    msg.hidden = false;
+  });
+  document.getElementById('send-announcement').addEventListener('click', async () => {
+    const msg = document.getElementById('push-announce-msg');
+    if (!document.getElementById('push-confirm').checked) {
+      msg.textContent = 'Check the confirmation box first.';
+      msg.hidden = false;
+      return;
+    }
+    try {
+      const result = await api.pushAnnouncement({
+        audience: document.getElementById('push-audience').value,
+        title: document.getElementById('push-title').value.trim(),
+        body: document.getElementById('push-body').value.trim(),
+        confirm: true,
+      });
+      msg.textContent =
+        result.configured === false ? 'Push is not configured on this deployment.' : `Sent to ${result.sentCount} / ${result.targetCount} devices.`;
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+    msg.hidden = false;
+  });
+}
+
+// ---- Notification logs ------------------------------------------------------------
+async function renderNotificationLogs() {
+  const data = await api.notificationLogs(100);
+  if (!data.configured) return void (content.innerHTML = notConfiguredCard('Notification Logs'));
+
+  content.innerHTML = `
+    <h2>Notification Logs</h2>
+    <div class="card">
+      <table>
+        <thead><tr><th>Time</th><th>Title</th><th>Body</th><th>Status</th><th>Provider</th></tr></thead>
+        <tbody>
+          ${data.logs
+            .map(
+              (l) => `<tr>
+                <td>${new Date(l.sent_at).toLocaleString()}</td>
+                <td>${escapeHtml(l.title)}</td>
+                <td>${escapeHtml(l.body)}</td>
+                <td>${statusBadge(l.status === 'sent' ? 'healthy' : 'unhealthy')}</td>
+                <td>${escapeHtml(l.provider)}</td>
+              </tr>`,
+            )
+            .join('')}
+        </tbody>
+      </table>
+      ${data.logs.length === 0 ? '<p class="muted">No notifications sent yet.</p>' : ''}
+    </div>
+  `;
+}
+
+// ---- Subscriptions ------------------------------------------------------------
+async function renderSubscriptions() {
+  const data = await api.subscriptionsGet();
+  if (!data.configured) return void (content.innerHTML = notConfiguredCard('Subscriptions'));
+
+  content.innerHTML = `
+    <h2>Subscriptions</h2>
+    <p class="muted">Provider-agnostic subscription state (Free/Pro). Google Play Billing is not wired up yet - this reflects whatever subscription rows exist.</p>
+    <div class="card">
+      <div class="stat-label">Total subscription records</div>
+      <div class="stat-value">${data.total}</div>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Plan / Status</th><th>Count</th></tr></thead>
+        <tbody>
+          ${Object.entries(data.counts)
+            .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${v}</td></tr>`)
+            .join('')}
+        </tbody>
+      </table>
+      ${Object.keys(data.counts).length === 0 ? '<p class="muted">No subscription records yet.</p>' : ''}
+    </div>
+  `;
+}
+
 // ---- Health ------------------------------------------------------------
 async function renderHealth() {
   const data = await api.health();
@@ -295,6 +593,8 @@ async function renderSettings() {
           <tr><td>Alpaca credentials</td><td>${statusBadge(data.secrets.alpacaCredentials === 'configured' ? 'healthy' : 'disabled')}</td></tr>
           <tr><td>Admin password</td><td>${statusBadge(data.secrets.adminPassword === 'configured' ? 'healthy' : 'unhealthy')}</td></tr>
           <tr><td>Admin session secret</td><td>${statusBadge(data.secrets.adminSessionSecret === 'configured' ? 'healthy' : 'unhealthy')}</td></tr>
+          <tr><td>Supabase (Users/Alerts/Push/Subscriptions)</td><td>${statusBadge(data.secrets.supabase === 'configured' ? 'healthy' : 'disabled')}</td></tr>
+          <tr><td>Firebase Cloud Messaging</td><td>${statusBadge(data.secrets.fcm === 'configured' ? 'healthy' : 'disabled')}</td></tr>
         </tbody>
       </table>
     </div>

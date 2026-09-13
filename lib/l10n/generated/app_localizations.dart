@@ -1661,8 +1661,38 @@ abstract class AppLocalizations {
   /// No description provided for @chartCandleCaption.
   ///
   /// In en, this message translates to:
-  /// **'Live demo candles — a new candle forms every ~20 seconds'**
+  /// **'Pinch to zoom, drag to pan, tap a candle to inspect OHLC'**
   String get chartCandleCaption;
+
+  /// No description provided for @chartCandleEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No candle data available for this timeframe'**
+  String get chartCandleEmpty;
+
+  /// No description provided for @notificationHistoryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get notificationHistoryTitle;
+
+  /// No description provided for @notificationHistoryEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No notifications yet'**
+  String get notificationHistoryEmpty;
+
+  /// No description provided for @notificationHistorySignInRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to see your notification history'**
+  String get notificationHistorySignInRequired;
+
+  /// No description provided for @notificationHistoryUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Push notifications aren\'t available in this build yet'**
+  String get notificationHistoryUnavailable;
 }
 
 class _AppLocalizationsDelegate

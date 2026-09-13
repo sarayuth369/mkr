@@ -47,6 +47,7 @@ app.*.map.json
 # Secrets / local machine config — never commit
 .env
 .env.*
+!.env.example
 *.keystore
 *.jks
 key.properties
@@ -62,3 +63,6 @@ admin/dist/
 admin/.wrangler/
 *.sqlite
 *.sqlite-journal
+# Wrangler's real local secrets file - .dev.vars.example below stays tracked.
+.dev.vars
+!.dev.vars.example

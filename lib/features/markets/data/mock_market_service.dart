@@ -8,6 +8,7 @@ import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
 import '../domain/market_service.dart';
+import '../domain/timeframe.dart';
 import 'demo_market_simulator.dart';
 
 /// Ticks every catalog symbol on one shared timer via [DemoMarketSimulator],
@@ -123,7 +124,10 @@ class MockMarketService implements MarketService {
   }
 
   @override
-  Stream<List<MarketCandle>> watchCandles(String symbol) {
+  Stream<List<MarketCandle>> watchCandles(String symbol, Timeframe timeframe) {
+    // DemoMarketSimulator ticks at one fixed effective interval; timeframe
+    // selection in demo mode only changes what the UI displays, never
+    // fabricates a different underlying candle shape.
     return _tickController.stream.map((_) => _simulator.currentCandles(symbol));
   }
 

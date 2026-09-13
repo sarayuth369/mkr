@@ -26,8 +26,6 @@ class ProviderBackedMarketService implements MarketService {
 
   final MarketProviderManager _manager;
 
-  static const _defaultDetailTimeframe = Timeframe.h1;
-
   @override
   MarketDataMode get mode => _manager.mode;
 
@@ -80,22 +78,46 @@ class ProviderBackedMarketService implements MarketService {
     return controller.stream;
   }
 
+  /// Buckets raw per-tick candles (each provider emits one degenerate
+  /// O=H=L=C=price "candle" per tick — see [MarketDataProvider.watchCandles])
+  /// into [timeframe]-sized intervals: a tick landing in the same bucket as
+  /// the last candle updates that candle's high/low/close in place; a tick
+  /// in a new bucket starts a fresh candle. Without this, every single tick
+  /// would append as its own permanent 1-price-point candle, growing the
+  /// list unboundedly and never actually aggregating into real OHLC bars.
   @override
-  Stream<List<MarketCandle>> watchCandles(String symbol) {
+  Stream<List<MarketCandle>> watchCandles(String symbol, Timeframe timeframe) {
     late StreamController<List<MarketCandle>> controller;
     var history = <MarketCandle>[];
     StreamSubscription<MarketCandle>? subscription;
     controller = StreamController<List<MarketCandle>>.broadcast(
       onListen: () async {
-        history = await _manager.getHistoricalCandles(symbol, _defaultDetailTimeframe);
+        history = await _manager.getHistoricalCandles(symbol, timeframe);
         if (!controller.isClosed) controller.add(history);
-        subscription = _manager.watchCandles(symbol, _defaultDetailTimeframe).listen((candle) {
-          if (!controller.isClosed) controller.add([...history, candle]);
+        subscription = _manager.watchCandles(symbol, timeframe).listen((tick) {
+          history = _mergeTick(history, tick, timeframe);
+          if (!controller.isClosed) controller.add(history);
         });
       },
       onCancel: () => subscription?.cancel(),
     );
     return controller.stream;
+  }
+
+  List<MarketCandle> _mergeTick(List<MarketCandle> history, MarketCandle tick, Timeframe timeframe) {
+    if (history.isEmpty) return [tick];
+    final last = history.last;
+    final bucketMs = timeframe.approxBucketDuration.inMilliseconds;
+    final sameBucket = (tick.time.millisecondsSinceEpoch ~/ bucketMs) == (last.time.millisecondsSinceEpoch ~/ bucketMs);
+    if (sameBucket) {
+      final merged = last.copyWith(
+        high: tick.close > last.high ? tick.close : last.high,
+        low: tick.close < last.low ? tick.close : last.low,
+        close: tick.close,
+      );
+      return [...history.sublist(0, history.length - 1), merged];
+    }
+    return [...history, tick];
   }
 
   @override

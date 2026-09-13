@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
+import '../core/config/supabase_config.dart';
 import '../core/localization/locale_controller.dart';
 import '../core/persistence/app_local_store.dart';
 import '../core/theme/app_theme.dart';
@@ -20,10 +21,13 @@ import '../features/ai_ask/application/ai_ask_controller.dart';
 import '../features/alerts/application/alerts_controller.dart';
 import '../features/alerts/data/mock_alert_repository.dart';
 import '../features/alerts/data/mock_notification_service.dart';
+import '../features/alerts/data/supabase_alert_cloud_sync.dart';
+import '../features/alerts/domain/alert_cloud_sync.dart';
 import '../features/alerts/domain/alert_repository.dart';
 import '../features/alerts/domain/notification_service.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/data/mock_auth_service.dart';
+import '../features/auth/data/supabase_auth_service.dart';
 import '../features/auth/domain/auth_service.dart';
 import '../features/billing/application/entitlement_controller.dart';
 import '../features/billing/data/mock_billing_repository.dart';
@@ -48,8 +52,15 @@ import '../features/onboarding/presentation/screens/onboarding_screen.dart';
 import '../features/portfolio/application/portfolio_controller.dart';
 import '../features/portfolio/data/mock_portfolio_repository.dart';
 import '../features/portfolio/domain/portfolio_repository.dart';
+import '../features/push/data/noop_push_notification_service.dart';
+import '../features/push/data/supabase_device_repository.dart';
+import '../features/push/data/supabase_notification_history_service.dart';
+import '../features/push/domain/device_repository.dart';
+import '../features/push/domain/notification_history.dart';
+import '../features/push/domain/push_notification_service.dart';
 import '../features/watchlist/application/watchlist_controller.dart';
 import '../features/watchlist/data/mock_watchlist_repository.dart';
+import '../features/watchlist/data/supabase_watchlist_repository.dart';
 import '../features/watchlist/domain/watchlist_repository.dart';
 import '../l10n/generated/app_localizations.dart';
 import 'app_shell.dart';
@@ -93,17 +104,37 @@ class MkrApp extends StatelessWidget {
         Provider<MarketAIService>(create: (_) => MockMarketAIService()),
         Provider<NewsService>(create: (_) => MockNewsService()),
         Provider<EconomicCalendarService>(create: (_) => MockEconomicCalendarService()),
-        Provider<WatchlistRepository>(create: (_) => MockWatchlistRepository(store)),
-        Provider<AlertRepository>(create: (_) => MockAlertRepository(store)),
         Provider<NotificationService>(create: (_) => MockNotificationService()),
         Provider<PortfolioRepository>(create: (_) => MockPortfolioRepository(store)),
         Provider<BillingRepository>(create: (_) => MockBillingRepository(store)),
         Provider<AdAnalytics>(create: (_) => const NoopAdAnalytics()),
         Provider<AdConfig>(create: (_) => AdConfig.fromEnvironment()),
         Provider<AdService>(create: (ctx) => MockAdService(analytics: ctx.read<AdAnalytics>())),
-        Provider<AuthService>(create: (_) => MockAuthService(store)),
+        Provider<PushNotificationService>(create: (_) => const NoopPushNotificationService()),
 
-        ChangeNotifierProvider(create: (ctx) => AuthController(ctx.read<AuthService>())),
+        // User-data seam (Phase 2.2): Supabase-backed when configured (see
+        // SupabaseConfig/main.dart), MockAuthService/MockWatchlistRepository
+        // otherwise — the app never depends on Supabase being provisioned.
+        Provider<AuthService>(create: (_) => SupabaseConfig.instance.isConfigured ? SupabaseAuthService(store) : MockAuthService(store)),
+        ChangeNotifierProvider(
+          create: (ctx) => AuthController(
+            ctx.read<AuthService>(),
+            pushService: ctx.read<PushNotificationService>(),
+            deviceRepository: SupabaseConfig.instance.isConfigured ? const SupabaseDeviceRepository() : const NoopDeviceRepository(),
+          ),
+        ),
+        Provider<WatchlistRepository>(
+          create: (ctx) => SupabaseConfig.instance.isConfigured
+              ? SupabaseWatchlistRepository(store, ctx.read<AuthController>())
+              : MockWatchlistRepository(store),
+        ),
+        Provider<NotificationHistoryService>(
+          create: (ctx) => SupabaseConfig.instance.isConfigured
+              ? SupabaseNotificationHistoryService(ctx.read<AuthController>())
+              : const NoopNotificationHistoryService(),
+        ),
+        Provider<AlertRepository>(create: (_) => MockAlertRepository(store)),
+
         ChangeNotifierProvider(create: (ctx) => EntitlementController(ctx.read<BillingRepository>())),
         ChangeNotifierProvider(create: (ctx) => WatchlistController(ctx.read<WatchlistRepository>())),
         ChangeNotifierProvider(
@@ -111,6 +142,7 @@ class MkrApp extends StatelessWidget {
             repository: ctx.read<AlertRepository>(),
             notificationService: ctx.read<NotificationService>(),
             calendarService: ctx.read<EconomicCalendarService>(),
+            cloudSync: SupabaseConfig.instance.isConfigured ? SupabaseAlertCloudSync(ctx.read<AuthController>()) : const NoopAlertCloudSync(),
           ),
         ),
         ChangeNotifierProvider(create: (ctx) => PortfolioController(ctx.read<PortfolioRepository>())),

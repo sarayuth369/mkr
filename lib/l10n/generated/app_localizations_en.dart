@@ -818,5 +818,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chartCandleCaption =>
-      'Live demo candles — a new candle forms every ~20 seconds';
+      'Pinch to zoom, drag to pan, tap a candle to inspect OHLC';
+
+  @override
+  String get chartCandleEmpty => 'No candle data available for this timeframe';
+
+  @override
+  String get notificationHistoryTitle => 'Notifications';
+
+  @override
+  String get notificationHistoryEmpty => 'No notifications yet';
+
+  @override
+  String get notificationHistorySignInRequired =>
+      'Sign in to see your notification history';
+
+  @override
+  String get notificationHistoryUnavailable =>
+      'Push notifications aren\'t available in this build yet';
 }

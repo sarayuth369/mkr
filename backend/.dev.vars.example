@@ -1,0 +1,33 @@
+# MKR backend — local development secrets (Wrangler reads .dev.vars, never
+# committed — see .gitignore). Copy this file to .dev.vars and fill in only
+# what you have; anything left blank/omitted exercises the honest "not
+# configured" path (see docs/MKR-EXTERNAL-INTEGRATIONS.md), never a crash.
+#
+#   cp .dev.vars.example .dev.vars
+
+# ── Phase 2 (required for real market data / Admin Web) ──
+TWELVE_DATA_API_KEY=
+ADMIN_PASSWORD=
+ADMIN_SESSION_SECRET=
+
+# Optional — only if/when Alpaca is activated (kept disabled by default).
+ALPACA_API_KEY_ID=
+ALPACA_API_SECRET_KEY=
+
+# Admin Web's local origin if testing the static admin/ site locally
+# (e.g. `python -m http.server 5500` -> http://localhost:5500). Leave unset
+# to use wrangler.toml's [vars] default (the deployed Admin Web origin).
+ADMIN_WEB_ORIGIN=
+
+# ── Phase 2.2 — Supabase (user data: auth/profiles/watchlists/alerts/devices) ──
+# SUPABASE_URL is the same value Flutter's SUPABASE_URL --dart-define uses.
+# SUPABASE_SERVICE_ROLE_KEY is NEVER the anon/publishable key - it bypasses
+# Row Level Security and must never reach Flutter or any client response.
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+
+# ── Phase 2.3 — Firebase Cloud Messaging (push transport only) ──
+# All three required together, or push stays disabled (DisabledPushProvider).
+FCM_PROJECT_ID=
+FCM_CLIENT_EMAIL=
+FCM_PRIVATE_KEY=

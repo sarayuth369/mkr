@@ -35,5 +35,13 @@ backend - admin API CORS only ever allows that one configured origin, never
 ## Pages
 
 Dashboard · Providers · Symbols · Cache · Rate Limits · Feature Flags ·
-System Health · Audit Logs · Settings - each a thin wrapper over one
-`/api/mkr/admin/*` endpoint (see `api.js`).
+Users · Alerts · Push · Notification Logs · Subscriptions · System Health ·
+Audit Logs · Settings - each a thin wrapper over one `/api/mkr/admin/*`
+endpoint (see `api.js`).
+
+The Phase 2.4 pages (Users, Alerts, Push, Notification Logs, Subscriptions)
+all read/write Supabase-backed data through the backend's service-role
+calls. If `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` aren't set on the
+backend yet, each page shows a plain "Supabase is not configured" card
+instead of an empty table or an error - see
+`../docs/MKR-EXTERNAL-INTEGRATIONS.md`.

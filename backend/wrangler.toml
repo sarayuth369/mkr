@@ -36,6 +36,13 @@ ADMIN_WEB_ORIGIN = "https://mkr-admin.pages.dev"
 [observability]
 enabled = true
 
+# ── Cron Trigger: Alert Engine index refresh ────────────────────────────
+# Refreshes the KV-cached active-alert index every minute (see
+# src/alerts/alert-index.ts) - a no-op until SUPABASE_URL/
+# SUPABASE_SERVICE_ROLE_KEY are configured below.
+[triggers]
+crons = ["*/1 * * * *"]
+
 # ── KV: fast runtime config + response caching ──────────────────────────
 # Create with:
 #   wrangler kv:namespace create MKR_CONFIG
@@ -81,3 +88,19 @@ new_sqlite_classes = ["MarketStreamRoom"]
 # ADMIN_SESSION_SECRET           (required - random 32+ byte string used to
 #                                  sign admin session tokens, e.g.
 #                                  `openssl rand -base64 32`)
+#
+# ── Phase 2.2+ secrets (all optional - every feature they unlock fails
+#    safely to a "not configured"/disabled state without them) ──────────
+# SUPABASE_URL                    (Phase 2.2 - the Supabase project URL used
+#                                   for service-role reads: alert index
+#                                   refresh, admin Users/Alerts/Push/
+#                                   Notification-Logs/Subscriptions)
+# SUPABASE_SERVICE_ROLE_KEY       (Phase 2.2 - NEVER the anon key; bypasses
+#                                   Row Level Security, backend-only)
+# FCM_PROJECT_ID                  (Phase 2.3 - Firebase project id)
+# FCM_CLIENT_EMAIL                (Phase 2.3 - service-account client_email)
+# FCM_PRIVATE_KEY                 (Phase 2.3 - service-account private_key,
+#                                   PEM format; all three FCM_* required
+#                                   together or push stays disabled)
+# See docs/MKR-EXTERNAL-INTEGRATIONS.md for exactly how to obtain each of
+# these and what to run once they're supplied.

@@ -25,6 +25,22 @@ export interface Env {
   ALPACA_API_SECRET_KEY?: string;
   ADMIN_PASSWORD?: string;
   ADMIN_SESSION_SECRET?: string;
+
+  // Supabase (Phase 2.2+ user data - profiles/watchlists/alerts/devices).
+  // SUPABASE_URL is not itself sensitive (it's also the client's own
+  // `--dart-define`), but it is only wired up backend-side here for the
+  // service-role calls below; SUPABASE_SERVICE_ROLE_KEY MUST NEVER reach
+  // Flutter - it bypasses Row Level Security and is backend-only.
+  SUPABASE_URL?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
+
+  // Firebase Cloud Messaging service-account credentials (Phase 2.3 push
+  // transport only - see src/push/). All three required together; if any
+  // is missing, getPushProvider() returns DisabledPushProvider and no push
+  // is ever attempted.
+  FCM_PROJECT_ID?: string;
+  FCM_CLIENT_EMAIL?: string;
+  FCM_PRIVATE_KEY?: string;
 }
 
 /** Which upstream actually produced a quote/candle. */

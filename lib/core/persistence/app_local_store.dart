@@ -25,6 +25,7 @@ class AppLocalStore {
   static const _kPortfolioHoldings = 'portfolio_holdings_json';
   static const _kEntitlementTier = 'entitlement_tier';
   static const _kAuthSession = 'auth_session_json';
+  static const _kWatchlistMergedForUser = 'watchlist_merged_for_user';
 
   String? get themeMode => _prefs.getString(_kThemeMode);
   Future<void> setThemeMode(String value) => _prefs.setString(_kThemeMode, value);
@@ -80,4 +81,12 @@ class AppLocalStore {
     if (session == null) return _prefs.remove(_kAuthSession);
     return _prefs.setString(_kAuthSession, jsonEncode(session));
   }
+
+  /// Tracks which user id has already had their local (guest) watchlist
+  /// merged into their cloud watchlist on this device, so
+  /// [SupabaseWatchlistRepository] only ever merges once per user per
+  /// device rather than re-merging (and resurrecting deleted symbols) on
+  /// every login.
+  String? get watchlistMergedForUser => _prefs.getString(_kWatchlistMergedForUser);
+  Future<void> setWatchlistMergedForUser(String userId) => _prefs.setString(_kWatchlistMergedForUser, userId);
 }

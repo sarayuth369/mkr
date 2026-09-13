@@ -72,4 +72,17 @@ export const api = {
   health: () => request('/api/mkr/admin/health'),
   logs: (limit = 100) => request(`/api/mkr/admin/logs?limit=${limit}`),
   settings: () => request('/api/mkr/admin/settings'),
+
+  // Phase 2.4 - all return { configured: false } cleanly if Supabase isn't set up.
+  usersGet: () => request('/api/mkr/admin/users'),
+  userDetail: (id) => request(`/api/mkr/admin/users/${encodeURIComponent(id)}`),
+  alertsGet: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/api/mkr/admin/alerts${qs ? `?${qs}` : ''}`);
+  },
+  alertToggle: (alertId, enabled) => request('/api/mkr/admin/alerts/toggle', { method: 'POST', body: JSON.stringify({ alertId, enabled }) }),
+  pushTest: (patch) => request('/api/mkr/admin/push/test', { method: 'POST', body: JSON.stringify(patch) }),
+  pushAnnouncement: (patch) => request('/api/mkr/admin/push/announcement', { method: 'POST', body: JSON.stringify(patch) }),
+  notificationLogs: (limit = 100) => request(`/api/mkr/admin/notification-logs?limit=${limit}`),
+  subscriptionsGet: () => request('/api/mkr/admin/subscriptions'),
 };

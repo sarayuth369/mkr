@@ -3,6 +3,7 @@ import '../../../domain/asset_class.dart';
 import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import 'timeframe.dart';
 
 /// Production path: Flutter → Cloudflare Worker → Twelve Data (or similar)
 /// for live quotes — the client never holds a market-data API key.
@@ -35,10 +36,11 @@ abstract class MarketService {
   Stream<List<MarketQuote>> watchQuotes(List<String> symbols);
 
   /// Subscribe to the OHLC candle history (oldest first, current forming
-  /// candle last) for a single symbol, updating as ticks arrive. Backs the
-  /// candlestick chart the same way [watchQuotes] backs price lists — same
-  /// underlying tick source, so price/sparkline/candle stay consistent.
-  Stream<List<MarketCandle>> watchCandles(String symbol);
+  /// candle last) for a single symbol at the given [timeframe], updating as
+  /// ticks arrive. Backs the candlestick chart the same way [watchQuotes]
+  /// backs price lists — same underlying tick source, so price/sparkline/
+  /// candle stay consistent.
+  Stream<List<MarketCandle>> watchCandles(String symbol, Timeframe timeframe);
 
   /// Re-establish the data connection (no-op for the mock beyond resetting
   /// [lastUpdated]).

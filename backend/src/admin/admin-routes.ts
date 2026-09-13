@@ -229,6 +229,8 @@ export async function handleAdminSettings(_request: Request, env: Env): Promise<
       alpacaCredentials: env.ALPACA_API_KEY_ID && env.ALPACA_API_SECRET_KEY ? 'configured' : 'not_configured',
       adminPassword: env.ADMIN_PASSWORD ? 'configured' : 'not_configured',
       adminSessionSecret: env.ADMIN_SESSION_SECRET ? 'configured' : 'not_configured',
+      supabase: env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'not_configured',
+      fcm: env.FCM_PROJECT_ID && env.FCM_CLIENT_EMAIL && env.FCM_PRIVATE_KEY ? 'configured' : 'not_configured',
     },
   });
 }

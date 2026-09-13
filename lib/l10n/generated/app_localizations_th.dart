@@ -817,5 +817,22 @@ class AppLocalizationsTh extends AppLocalizations {
 
   @override
   String get chartCandleCaption =>
-      'แท่งเทียนสาธิตแบบสด — แท่งใหม่เกิดขึ้นทุกประมาณ 20 วินาที';
+      'บีบนิ้วเพื่อซูม ลากเพื่อเลื่อน แตะแท่งเทียนเพื่อดู OHLC';
+
+  @override
+  String get chartCandleEmpty => 'ไม่มีข้อมูลแท่งเทียนสำหรับกรอบเวลานี้';
+
+  @override
+  String get notificationHistoryTitle => 'การแจ้งเตือน';
+
+  @override
+  String get notificationHistoryEmpty => 'ยังไม่มีการแจ้งเตือน';
+
+  @override
+  String get notificationHistorySignInRequired =>
+      'เข้าสู่ระบบเพื่อดูประวัติการแจ้งเตือน';
+
+  @override
+  String get notificationHistoryUnavailable =>
+      'การแจ้งเตือนแบบพุชยังไม่พร้อมใช้งานในเวอร์ชันนี้';
 }

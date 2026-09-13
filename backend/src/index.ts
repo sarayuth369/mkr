@@ -1,3 +1,4 @@
+import { refreshAlertIndex } from './alerts/alert-index';
 import {
   handleAdminCacheGet,
   handleAdminCacheUpdate,
@@ -15,7 +16,10 @@ import {
   handleAdminSymbolsGet,
   handleAdminSymbolsUpdate,
 } from './admin/admin-routes';
+import { handleAdminAlertsGet, handleAdminAlertToggle, handleAdminNotificationLogs, handleAdminSubscriptionsGet } from './admin/admin-alerts-routes';
 import { requireAdmin } from './admin/auth';
+import { handleAdminPushAnnouncement, handleAdminPushTest } from './admin/admin-push-routes';
+import { handleAdminUserDetail, handleAdminUsersGet } from './admin/admin-users-routes';
 import { adminCorsHeaders, publicCorsHeaders } from './cors';
 import { ApiError, errorResponse } from './errors';
 import { handleHealth, handleVersion } from './health';
@@ -65,6 +69,19 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
   if (path === '/api/mkr/admin/logs' && request.method === 'GET') return handleAdminLogs(request, env);
   if (path === '/api/mkr/admin/settings' && request.method === 'GET') return handleAdminSettings(request, env);
 
+  // Phase 2.4 admin expansion - every route below fails safely with
+  // { configured: false } when Supabase isn't set up, rather than erroring.
+  if (path === '/api/mkr/admin/users' && request.method === 'GET') return handleAdminUsersGet(request, env);
+  if (path.startsWith('/api/mkr/admin/users/') && request.method === 'GET') {
+    return handleAdminUserDetail(request, env, decodeURIComponent(path.slice('/api/mkr/admin/users/'.length)));
+  }
+  if (path === '/api/mkr/admin/alerts' && request.method === 'GET') return handleAdminAlertsGet(request, env);
+  if (path === '/api/mkr/admin/alerts/toggle' && request.method === 'POST') return handleAdminAlertToggle(request, env, actor);
+  if (path === '/api/mkr/admin/push/test' && request.method === 'POST') return handleAdminPushTest(request, env, actor);
+  if (path === '/api/mkr/admin/push/announcement' && request.method === 'POST') return handleAdminPushAnnouncement(request, env, actor);
+  if (path === '/api/mkr/admin/notification-logs' && request.method === 'GET') return handleAdminNotificationLogs(request, env);
+  if (path === '/api/mkr/admin/subscriptions' && request.method === 'GET') return handleAdminSubscriptionsGet(request, env);
+
   throw new ApiError('NOT_FOUND', `No admin route for ${request.method} ${path}`);
 }
 
@@ -85,6 +102,14 @@ async function routeMarket(request: Request, env: Env, path: string, id: string)
 }
 
 export default {
+  /** Refreshes the Alert Engine's KV-cached alert index (see alerts/alert-index.ts)
+   * every minute (see wrangler.toml [triggers]) - a no-op when Supabase isn't
+   * configured. This keeps tick evaluation in market-stream-do.ts reading
+   * only KV, never querying Supabase per tick. */
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(refreshAlertIndex(env).then(() => undefined));
+  },
+
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const id = requestId();
     const url = new URL(request.url);

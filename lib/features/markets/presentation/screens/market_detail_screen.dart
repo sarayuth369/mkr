@@ -6,6 +6,7 @@ import '../../../../core/widgets/ai_insight_card.dart';
 import '../../../../core/widgets/candlestick_chart.dart';
 import '../../../../core/widgets/day_range_bar.dart';
 import '../../../../domain/market_candle.dart';
+import '../../../../domain/market_data_mode.dart';
 import '../../../../core/widgets/economic_event_card.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
@@ -24,6 +25,7 @@ import '../../../news/domain/news_service.dart';
 import '../../../watchlist/application/watchlist_controller.dart';
 import '../../application/market_detail_controller.dart';
 import '../../domain/market_service.dart';
+import '../../domain/timeframe.dart';
 
 class MarketDetailScreen extends StatelessWidget {
   const MarketDetailScreen({super.key, required this.symbol});
@@ -180,6 +182,25 @@ class _ChartSection extends StatefulWidget {
 
 class _ChartSectionState extends State<_ChartSection> {
   _ChartMode _mode = _ChartMode.line;
+  Timeframe _candleTimeframe = Timeframe.h1;
+  Stream<List<MarketCandle>>? _candleStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeCandles();
+  }
+
+  void _subscribeCandles() {
+    _candleStream = context.read<MarketService>().watchCandles(widget.symbol, _candleTimeframe);
+  }
+
+  void _changeCandleTimeframe(Timeframe timeframe) {
+    setState(() {
+      _candleTimeframe = timeframe;
+      _subscribeCandles();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -208,14 +229,38 @@ class _ChartSectionState extends State<_ChartSection> {
             onTimeframeChanged: widget.controller.loadSeries,
           )
         else ...[
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final tf in Timeframe.values)
+                _CandleTimeframeChip(
+                  label: tf.label,
+                  selected: tf == _candleTimeframe,
+                  onTap: () => _changeCandleTimeframe(tf),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
           StreamBuilder<List<MarketCandle>>(
-            stream: context.read<MarketService>().watchCandles(widget.symbol),
+            stream: _candleStream,
             builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const LoadingSkeleton(height: 220, width: double.infinity, borderRadius: 12);
+              }
               final candles = snapshot.data ?? const <MarketCandle>[];
               if (candles.length < 2) {
-                return const LoadingSkeleton(height: 180, width: double.infinity, borderRadius: 12);
+                return SizedBox(
+                  height: 220,
+                  child: Center(
+                    child: Text(l10n.chartCandleEmpty, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                  ),
+                );
               }
-              return CandlestickChart(candles: candles);
+              return CandlestickChart(
+                candles: candles,
+                isStale: widget.controller.mode == MarketDataMode.stale,
+              );
             },
           ),
           const SizedBox(height: 6),
@@ -225,6 +270,38 @@ class _ChartSectionState extends State<_ChartSection> {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _CandleTimeframeChip extends StatelessWidget {
+  const _CandleTimeframeChip({required this.label, required this.selected, required this.onTap});
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected ? theme.colorScheme.primaryContainer : Colors.transparent,
+          border: Border.all(color: selected ? Colors.transparent : theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: selected ? theme.colorScheme.onPrimaryContainer : theme.colorScheme.onSurfaceVariant,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      ),
     );
   }
 }

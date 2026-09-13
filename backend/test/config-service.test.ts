@@ -48,7 +48,23 @@ describe('updateConfig', () => {
   it('shallow-merges nested objects like cacheTtls instead of replacing the whole object', async () => {
     const env = makeEnv();
     await updateConfig(env, { cacheTtls: { quoteSeconds: 90, candleIntradaySeconds: 60, candleDailySeconds: 600, statusSeconds: 60, staleThresholdSeconds: 90 } });
-    await updateConfig(env, { featureFlags: { marketDataLive: true, demoMode: true, websocketEnabled: true, newsEnabled: false, economicCalendarEnabled: false, aiBriefEnabled: false, adsEnabled: true, maintenanceMode: false } });
+    await updateConfig(env, {
+      featureFlags: {
+        marketDataLive: true,
+        demoMode: true,
+        websocketEnabled: true,
+        newsEnabled: false,
+        economicCalendarEnabled: false,
+        aiBriefEnabled: false,
+        adsEnabled: true,
+        maintenanceMode: false,
+        userAuthEnabled: false,
+        watchlistSyncEnabled: false,
+        alertsEnabled: false,
+        pushNotificationsEnabled: false,
+        subscriptionEnabled: false,
+      },
+    });
     const config = await getConfig(env);
     expect(config.cacheTtls.quoteSeconds).toBe(90);
     expect(config.featureFlags.demoMode).toBe(true);
