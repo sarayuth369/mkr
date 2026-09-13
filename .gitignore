@@ -66,3 +66,8 @@ admin/.wrangler/
 # Wrangler's real local secrets file - .dev.vars.example below stays tracked.
 .dev.vars
 !.dev.vars.example
+
+# Supabase CLI local link/cache state (project ref, pooler URL, version
+# pins) - machine-local, never committed, mirrors backend/.wrangler/ above.
+supabase/.temp/
+supabase/.branches/
