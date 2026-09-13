@@ -1,0 +1,20 @@
+<!--
+  Supabase Dashboard -> Authentication -> Email Templates -> Confirm signup
+  Subject: Confirm your Market Radar (MKR) email
+
+  {{ .ConfirmationURL }} is Supabase's own dynamically-generated link -
+  never hard-code a URL here. It already carries emailRedirectTo
+  (mkr://auth-callback, set in lib/features/auth/data/supabase_auth_service.dart)
+  as long as mkr://auth-callback is also in Authentication -> URL
+  Configuration -> Redirect URLs.
+-->
+<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#1a1a1a;">
+  <p style="font-size:13px;font-weight:700;letter-spacing:0.08em;color:#1857A4;text-transform:uppercase;margin:0 0 24px;">Market Radar (MKR)</p>
+  <h1 style="font-size:20px;margin:0 0 16px;">Confirm your email address</h1>
+  <p style="font-size:15px;line-height:1.6;margin:0 0 24px;">Welcome to Market Radar (MKR)! Please confirm your email address to activate your Market Radar account.</p>
+  <p style="margin:0 0 24px;">
+    <a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#1857A4;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:12px 28px;border-radius:8px;">Confirm email address</a>
+  </p>
+  <p style="font-size:13px;line-height:1.6;color:#666666;margin:0;">If you didn't create a Market Radar account, you can safely ignore this email.</p>
+  <p style="font-size:13px;color:#666666;margin:24px 0 0;">— Market Radar Team</p>
+</div>
