@@ -19,7 +19,14 @@ import {
 import { handleAdminAlertsGet, handleAdminAlertToggle, handleAdminNotificationLogs, handleAdminSubscriptionsGet } from './admin/admin-alerts-routes';
 import { requireAdmin } from './admin/auth';
 import { handleAdminPushAnnouncement, handleAdminPushTest } from './admin/admin-push-routes';
-import { handleAdminUserDetail, handleAdminUsersGet } from './admin/admin-users-routes';
+import {
+  handleAdminUserDelete,
+  handleAdminUserDetail,
+  handleAdminUsersGet,
+  handleAdminUserSuspend,
+  handleAdminUserUnsuspend,
+  handleAdminUserUpdate,
+} from './admin/admin-users-routes';
 import { adminCorsHeaders, publicCorsHeaders } from './cors';
 import { ApiError, errorResponse } from './errors';
 import { handleHealth, handleVersion } from './health';
@@ -72,8 +79,14 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
   // Phase 2.4 admin expansion - every route below fails safely with
   // { configured: false } when Supabase isn't set up, rather than erroring.
   if (path === '/api/mkr/admin/users' && request.method === 'GET') return handleAdminUsersGet(request, env);
-  if (path.startsWith('/api/mkr/admin/users/') && request.method === 'GET') {
-    return handleAdminUserDetail(request, env, decodeURIComponent(path.slice('/api/mkr/admin/users/'.length)));
+  if (path.startsWith('/api/mkr/admin/users/')) {
+    const rest = decodeURIComponent(path.slice('/api/mkr/admin/users/'.length));
+    const [userId, action] = rest.split('/');
+    if (userId && !action && request.method === 'GET') return handleAdminUserDetail(request, env, userId);
+    if (userId && !action && request.method === 'PATCH') return handleAdminUserUpdate(request, env, userId, actor);
+    if (userId && !action && request.method === 'DELETE') return handleAdminUserDelete(request, env, userId, actor);
+    if (userId && action === 'suspend' && request.method === 'POST') return handleAdminUserSuspend(request, env, userId, actor);
+    if (userId && action === 'unsuspend' && request.method === 'POST') return handleAdminUserUnsuspend(request, env, userId, actor);
   }
   if (path === '/api/mkr/admin/alerts' && request.method === 'GET') return handleAdminAlertsGet(request, env);
   if (path === '/api/mkr/admin/alerts/toggle' && request.method === 'POST') return handleAdminAlertToggle(request, env, actor);

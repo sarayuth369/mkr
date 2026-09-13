@@ -39,6 +39,12 @@ Users · Alerts · Push · Notification Logs · Subscriptions · System Health �
 Audit Logs · Settings - each a thin wrapper over one `/api/mkr/admin/*`
 endpoint (see `api.js`).
 
+Users now includes full account management: search/filter/sort/paginate,
+view detail, edit email/display name, suspend/unsuspend (a real Supabase
+Auth ban, not a UI-only flag), and permanently delete (requires typing the
+user's exact email first, re-verified server-side). Every mutation is
+audit-logged.
+
 The Phase 2.4 pages (Users, Alerts, Push, Notification Logs, Subscriptions)
 all read/write Supabase-backed data through the backend's service-role
 calls. If `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` aren't set on the

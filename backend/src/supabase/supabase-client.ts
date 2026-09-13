@@ -57,11 +57,57 @@ export async function supabaseUpdate<T>(config: SupabaseServiceConfig, table: st
   return (await response.json()) as T[];
 }
 
-/** Auth Admin API (`/auth/v1/admin/...`) - separate base path from PostgREST, still service-role-only. */
+/**
+ * Auth Admin API (`/auth/v1/admin/...`) - separate base path from
+ * PostgREST, still service-role-only. GoTrue's raw admin API only accepts
+ * `page`/`per_page` here - there is no server-side email search/filter or
+ * sort parameter (confirmed against the auth-js SDK source, which is a
+ * thin wrapper over this same endpoint). Callers needing search/sort scan
+ * a bounded number of pages themselves - see admin-users-routes.ts.
+ */
 export async function supabaseAuthAdminListUsers(config: SupabaseServiceConfig, page = 1, perPage = 200): Promise<{ users: SupabaseAuthUser[] }> {
   const response = await fetch(`${config.url}/auth/v1/admin/users?page=${page}&per_page=${perPage}`, { headers: headers(config) });
   if (!response.ok) throw new Error(`Supabase auth admin list users failed: ${response.status}`);
   return (await response.json()) as { users: SupabaseAuthUser[] };
+}
+
+export async function supabaseAuthAdminGetUser(config: SupabaseServiceConfig, userId: string): Promise<SupabaseAuthUser | null> {
+  const response = await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, { headers: headers(config) });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Supabase auth admin get user failed: ${response.status}`);
+  return (await response.json()) as SupabaseAuthUser;
+}
+
+/** `attrs` maps directly to GoTrue's `UserAttributes` PUT body - e.g.
+ * `{ email, email_confirm }` to change email, `{ ban_duration }` to
+ * suspend (`"876000h"`, ~100 years) or restore (`"none"`) a user. Never
+ * accepts a raw password/token here - this file has no such caller. */
+export async function supabaseAuthAdminUpdateUser(
+  config: SupabaseServiceConfig,
+  userId: string,
+  attrs: Record<string, unknown>,
+): Promise<SupabaseAuthUser> {
+  const response = await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    headers: headers(config),
+    body: JSON.stringify(attrs),
+  });
+  if (!response.ok) throw new Error(`Supabase auth admin update user failed: ${response.status}`);
+  return (await response.json()) as SupabaseAuthUser;
+}
+
+/** Hard-deletes the `auth.users` row. Every MKR table's `user_id` foreign
+ * key is `on delete cascade` to `auth.users(id)` (see
+ * supabase/migrations/20260913000000_initial_schema.sql) - deleting here
+ * is sufficient to also remove the user's profile/watchlists/watchlist_items/
+ * alerts/devices/preferences/subscriptions/notification_logs. Never call
+ * `DELETE FROM profiles` directly; that would leave an orphaned Auth user. */
+export async function supabaseAuthAdminDeleteUser(config: SupabaseServiceConfig, userId: string): Promise<void> {
+  const response = await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    headers: headers(config),
+  });
+  if (!response.ok) throw new Error(`Supabase auth admin delete user failed: ${response.status}`);
 }
 
 export interface SupabaseAuthUser {
@@ -69,4 +115,7 @@ export interface SupabaseAuthUser {
   email?: string;
   created_at: string;
   last_sign_in_at?: string | null;
+  email_confirmed_at?: string | null;
+  banned_until?: string | null;
+  user_metadata?: Record<string, unknown>;
 }

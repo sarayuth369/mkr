@@ -74,8 +74,16 @@ export const api = {
   settings: () => request('/api/mkr/admin/settings'),
 
   // Phase 2.4 - all return { configured: false } cleanly if Supabase isn't set up.
-  usersGet: () => request('/api/mkr/admin/users'),
+  usersGet: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/api/mkr/admin/users${qs ? `?${qs}` : ''}`);
+  },
   userDetail: (id) => request(`/api/mkr/admin/users/${encodeURIComponent(id)}`),
+  userUpdate: (id, patch) => request(`/api/mkr/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  userSuspend: (id) => request(`/api/mkr/admin/users/${encodeURIComponent(id)}/suspend`, { method: 'POST' }),
+  userUnsuspend: (id) => request(`/api/mkr/admin/users/${encodeURIComponent(id)}/unsuspend`, { method: 'POST' }),
+  userDelete: (id, confirmEmail) =>
+    request(`/api/mkr/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ confirmEmail }) }),
   alertsGet: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return request(`/api/mkr/admin/alerts${qs ? `?${qs}` : ''}`);

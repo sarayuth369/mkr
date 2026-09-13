@@ -270,27 +270,81 @@ async function renderFeatures() {
 }
 
 // ---- Users ------------------------------------------------------------
+function userStatusBadges(u) {
+  const parts = [u.suspended ? statusBadge('unhealthy') : statusBadge('healthy')];
+  return `${u.suspended ? 'Suspended' : 'Active'} ${parts[0]}${u.emailConfirmed ? '' : ` <span class="badge badge-disabled">Email unconfirmed</span>`}`;
+}
+
 async function renderUsers() {
-  const data = await api.usersGet();
+  const q = currentQuery();
+  const filters = {
+    page: Number(q.get('page')) || 1,
+    q: q.get('q') || '',
+    status: q.get('status') || '',
+    emailConfirmed: q.get('emailConfirmed') || '',
+    sort: q.get('sort') || 'created_desc',
+  };
+  const params = {};
+  if (filters.page > 1) params.page = filters.page;
+  if (filters.q) params.q = filters.q;
+  if (filters.status) params.status = filters.status;
+  if (filters.emailConfirmed) params.emailConfirmed = filters.emailConfirmed;
+  if (filters.sort !== 'created_desc') params.sort = filters.sort;
+
+  const data = await api.usersGet(params);
   if (!data.configured) return void (content.innerHTML = notConfiguredCard('Users'));
 
   content.innerHTML = `
     <h2>Users</h2>
     <div class="grid">
-      <div class="card"><div class="stat-label">Total</div><div class="stat-value">${data.totals.total}</div></div>
+      <div class="card"><div class="stat-label">Total${data.scanned ? ' (matching filter)' : ''}</div><div class="stat-value">${data.totals.total}</div></div>
       <div class="card"><div class="stat-label">Active (30d)</div><div class="stat-value">${data.totals.active}</div></div>
       <div class="card"><div class="stat-label">New (30d)</div><div class="stat-value">${data.totals.newLast30Days}</div></div>
       <div class="card"><div class="stat-label">Pro</div><div class="stat-value">${data.totals.pro}</div></div>
     </div>
     <p class="muted">"Guest" browsing is a client-side concept only - every row below is a real registered account.</p>
     <div class="card">
+      <div class="form-row"><label>Search by email</label><input id="user-search" type="text" value="${escapeHtml(filters.q)}" placeholder="name@example.com" /></div>
+      <div class="form-row">
+        <label>Status</label>
+        <select id="user-status-filter">
+          <option value="" ${filters.status === '' ? 'selected' : ''}>All</option>
+          <option value="active" ${filters.status === 'active' ? 'selected' : ''}>Active</option>
+          <option value="suspended" ${filters.status === 'suspended' ? 'selected' : ''}>Suspended</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Email confirmation</label>
+        <select id="user-confirmed-filter">
+          <option value="" ${filters.emailConfirmed === '' ? 'selected' : ''}>All</option>
+          <option value="true" ${filters.emailConfirmed === 'true' ? 'selected' : ''}>Confirmed</option>
+          <option value="false" ${filters.emailConfirmed === 'false' ? 'selected' : ''}>Unconfirmed</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Sort by</label>
+        <select id="user-sort">
+          <option value="created_desc" ${filters.sort === 'created_desc' ? 'selected' : ''}>Newest first</option>
+          <option value="created_asc" ${filters.sort === 'created_asc' ? 'selected' : ''}>Oldest first</option>
+          <option value="lastSignIn_desc" ${filters.sort === 'lastSignIn_desc' ? 'selected' : ''}>Last sign-in (recent first)</option>
+          <option value="lastSignIn_asc" ${filters.sort === 'lastSignIn_asc' ? 'selected' : ''}>Last sign-in (oldest first)</option>
+        </select>
+      </div>
+      ${data.scanned ? '<p class="muted">Search/filter/sort scans a bounded recent window of users, not the entire user base - see docs/MKR-PHASE2-ARCHITECTURE.md.</p>' : ''}
+      <div class="actions">
+        <button class="primary" id="apply-user-filters">Apply</button>
+        <button class="secondary" id="refresh-users">Refresh</button>
+      </div>
+    </div>
+    <div class="card">
       <table>
-        <thead><tr><th>Email</th><th>Plan</th><th>Created</th><th>Last active</th><th>Alerts</th><th>Devices</th></tr></thead>
+        <thead><tr><th>Email</th><th>Status</th><th>Plan</th><th>Created</th><th>Last sign-in</th><th>Alerts</th><th>Devices</th></tr></thead>
         <tbody>
           ${data.users
             .map(
               (u) => `<tr class="row-link" data-id="${escapeHtml(u.id)}">
                 <td>${escapeHtml(u.email ?? '—')}</td>
+                <td>${userStatusBadges(u)}</td>
                 <td>${escapeHtml(u.plan)}</td>
                 <td>${new Date(u.createdAt).toLocaleDateString()}</td>
                 <td>${u.lastActiveAt ? new Date(u.lastActiveAt).toLocaleString() : 'never'}</td>
@@ -301,9 +355,36 @@ async function renderUsers() {
             .join('')}
         </tbody>
       </table>
-      ${data.users.length === 0 ? '<p class="muted">No registered users yet.</p>' : ''}
+      ${data.users.length === 0 ? '<p class="muted">No users match this filter.</p>' : ''}
+      <div class="actions" style="margin-top:12px;">
+        <button class="secondary" id="user-prev-page" ${filters.page <= 1 ? 'disabled' : ''}>&larr; Prev</button>
+        <span class="muted">Page ${data.page}</span>
+        <button class="secondary" id="user-next-page" ${data.hasMore ? '' : 'disabled'}>Next &rarr;</button>
+      </div>
     </div>
   `;
+
+  function goToUsers(nextFilters) {
+    const merged = { ...filters, ...nextFilters };
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(merged).filter(([k, v]) => v && !(k === 'page' && v === 1) && !(k === 'sort' && v === 'created_desc'))),
+    );
+    location.hash = `#/users${qs.toString() ? `?${qs}` : ''}`;
+  }
+
+  document.getElementById('apply-user-filters').addEventListener('click', () =>
+    goToUsers({
+      page: 1,
+      q: document.getElementById('user-search').value.trim(),
+      status: document.getElementById('user-status-filter').value,
+      emailConfirmed: document.getElementById('user-confirmed-filter').value,
+      sort: document.getElementById('user-sort').value,
+    }),
+  );
+  document.getElementById('refresh-users').addEventListener('click', () => renderUsers());
+  document.getElementById('user-prev-page').addEventListener('click', () => goToUsers({ page: filters.page - 1 }));
+  document.getElementById('user-next-page').addEventListener('click', () => goToUsers({ page: filters.page + 1 }));
+
   for (const row of content.querySelectorAll('.row-link')) {
     row.style.cursor = 'pointer';
     row.addEventListener('click', () => (location.hash = `#/users?id=${encodeURIComponent(row.dataset.id)}`));
@@ -315,21 +396,41 @@ async function renderUserDetail(id) {
   if (!data.configured) return void (content.innerHTML = notConfiguredCard('User Detail'));
   if (!data.found) return void (content.innerHTML = '<h2>User Detail</h2><div class="card"><p class="error">User not found.</p></div>');
 
-  const { profile, watchlistItemCount, activeAlerts, devices, subscription } = data;
+  const { auth, profile, watchlistItemCount, activeAlerts, devices, subscription } = data;
   content.innerHTML = `
     <h2>User Detail</h2>
     <p><a href="#/users">&larr; Back to Users</a></p>
     <div class="grid">
-      <div class="card"><div class="stat-label">Plan</div><div class="stat-value">${escapeHtml(profile.plan)}</div></div>
+      <div class="card"><div class="stat-label">Status</div><div class="stat-value">${userStatusBadges(auth)}</div></div>
       <div class="card"><div class="stat-label">Watchlist items</div><div class="stat-value">${watchlistItemCount}</div></div>
       <div class="card"><div class="stat-label">Active alerts</div><div class="stat-value">${activeAlerts.length}</div></div>
       <div class="card"><div class="stat-label">Devices</div><div class="stat-value">${devices.length}</div></div>
     </div>
     <div class="card">
-      <h3>Profile</h3>
-      <p>ID: <code>${escapeHtml(profile.id)}</code></p>
-      <p>Display name: ${escapeHtml(profile.display_name ?? '—')}</p>
-      <p>Member since: ${new Date(profile.created_at).toLocaleDateString()}</p>
+      <h3>Account</h3>
+      <p>User ID: <code>${escapeHtml(auth.id)}</code></p>
+      <p>Email: ${escapeHtml(auth.email ?? '—')}</p>
+      <p>Created: ${new Date(auth.createdAt).toLocaleString()}</p>
+      <p>Last sign-in: ${auth.lastSignInAt ? new Date(auth.lastSignInAt).toLocaleString() : 'never'}</p>
+      ${Object.keys(auth.userMetadata || {}).length > 0 ? `<p>User metadata: <code>${escapeHtml(JSON.stringify(auth.userMetadata))}</code></p>` : ''}
+      <p class="muted">Plan: ${escapeHtml(profile.plan)} · Display name: ${escapeHtml(profile.display_name ?? '—')} · Member since ${new Date(profile.created_at).toLocaleDateString()}</p>
+    </div>
+    <div class="card">
+      <h3>Edit account</h3>
+      <div class="form-row"><label>Email</label><input id="edit-email" type="email" value="${escapeHtml(auth.email ?? '')}" /></div>
+      <p class="muted">Changing the email always requires the user to reconfirm the new address - it is never treated as pre-verified.</p>
+      <div class="form-row"><label>Display name</label><input id="edit-display-name" value="${escapeHtml(profile.display_name ?? '')}" /></div>
+      <div class="actions"><button class="primary" id="save-user-edit">Save</button><span id="user-edit-msg" class="save-msg" hidden></span></div>
+    </div>
+    <div class="card">
+      <h3>Suspension</h3>
+      <p class="muted">Suspending sets Supabase Auth's own ban - a suspended user is rejected on sign-in, not just hidden here.</p>
+      ${
+        auth.suspended
+          ? '<div class="actions"><button class="secondary" id="unsuspend-user">Unsuspend</button><span id="suspend-msg" class="save-msg" hidden></span></div>'
+          : `<div class="toggle-row"><span>I understand this immediately blocks this user from signing in</span><input type="checkbox" id="confirm-suspend" /></div>
+             <div class="actions"><button class="secondary" id="suspend-user">Suspend</button><span id="suspend-msg" class="save-msg" hidden></span></div>`
+      }
     </div>
     <div class="card">
       <h3>Active alerts</h3>
@@ -356,7 +457,83 @@ async function renderUserDetail(id) {
       <p class="muted">No billing/auth secrets are ever shown here.</p>
       ${subscription ? `<p>${escapeHtml(subscription.plan)} - ${statusBadge(subscription.status === 'active' ? 'healthy' : 'disabled')} ${subscription.expires_at ? `(expires ${new Date(subscription.expires_at).toLocaleDateString()})` : ''}</p>` : '<p class="muted">No subscription record.</p>'}
     </div>
+    <div class="card">
+      <h3>Delete account</h3>
+      <p class="warn-text">Delete user permanently? This removes the Auth account and cascades to their profile, watchlists, alerts, devices, preferences, subscriptions, and notification history. This cannot be undone.</p>
+      <div class="form-row"><label>Type the user's email to confirm (${escapeHtml(auth.email ?? '')})</label><input id="delete-confirm-email" type="text" placeholder="${escapeHtml(auth.email ?? '')}" /></div>
+      <div class="actions"><button class="danger" id="delete-user">Delete user permanently</button><span id="delete-msg" class="save-msg" hidden></span></div>
+    </div>
   `;
+
+  document.getElementById('save-user-edit').addEventListener('click', async () => {
+    const msg = document.getElementById('user-edit-msg');
+    try {
+      const email = document.getElementById('edit-email').value.trim();
+      const displayName = document.getElementById('edit-display-name').value.trim();
+      const patch = {};
+      if (email && email !== auth.email) patch.email = email;
+      if (displayName !== (profile.display_name ?? '')) patch.displayName = displayName;
+      if (Object.keys(patch).length === 0) {
+        msg.textContent = 'Nothing changed.';
+      } else {
+        await api.userUpdate(id, patch);
+        msg.textContent = 'Saved.';
+        setTimeout(() => renderUserDetail(id), 600);
+      }
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+    msg.hidden = false;
+  });
+
+  const suspendBtn = document.getElementById('suspend-user');
+  if (suspendBtn) {
+    suspendBtn.addEventListener('click', async () => {
+      const msg = document.getElementById('suspend-msg');
+      if (!document.getElementById('confirm-suspend').checked) {
+        msg.textContent = 'Check the confirmation box first.';
+        msg.hidden = false;
+        return;
+      }
+      try {
+        await api.userSuspend(id);
+        renderUserDetail(id);
+      } catch (err) {
+        msg.textContent = err.message;
+        msg.hidden = false;
+      }
+    });
+  }
+  const unsuspendBtn = document.getElementById('unsuspend-user');
+  if (unsuspendBtn) {
+    unsuspendBtn.addEventListener('click', async () => {
+      try {
+        await api.userUnsuspend(id);
+        renderUserDetail(id);
+      } catch (err) {
+        const msg = document.getElementById('suspend-msg');
+        msg.textContent = err.message;
+        msg.hidden = false;
+      }
+    });
+  }
+
+  document.getElementById('delete-user').addEventListener('click', async () => {
+    const msg = document.getElementById('delete-msg');
+    const typed = document.getElementById('delete-confirm-email').value.trim();
+    if (!typed || typed.toLowerCase() !== (auth.email ?? '').toLowerCase()) {
+      msg.textContent = "Type the user's exact email to confirm.";
+      msg.hidden = false;
+      return;
+    }
+    try {
+      await api.userDelete(id, typed);
+      location.hash = '#/users';
+    } catch (err) {
+      msg.textContent = err.message;
+      msg.hidden = false;
+    }
+  });
 }
 
 // ---- Alerts (Phase 2.4 - user-created price alerts, not admin config) --

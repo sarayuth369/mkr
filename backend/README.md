@@ -250,11 +250,28 @@ for the Phase 2 list (`dashboard`, `providers`, `symbols`, `cache`,
 returns `{"configured": false}` cleanly instead of erroring when Supabase
 isn't set up:
 
-- `GET /users` — totals (total/active-30d/new-30d/pro) + user list. "Guest"
-  never appears here — it's a client-side-only concept, never a fabricated
-  Supabase Auth account.
-- `GET /users/:id` — profile, watchlist item count, active alerts, devices,
-  subscription. No secrets/passwords ever included.
+- `GET /users?page&q&status&emailConfirmed&sort` — totals + paginated user
+  list. "Guest" never appears here — it's a client-side-only concept, never
+  a fabricated Supabase Auth account. Server-side-paginated against
+  GoTrue's own `page`/`per_page`; `q`/`status`/`emailConfirmed`/`sort`
+  scan up to 5 pages in memory (GoTrue's raw Admin API has no server-side
+  search/sort of its own — documented in MKR-PHASE2-ARCHITECTURE.md).
+- `GET /users/:id` — Auth fields (email, confirmed, suspended, created,
+  last sign-in, user_metadata), profile, watchlist item count, active
+  alerts, devices, subscription. No secrets/passwords ever included.
+- `PATCH /users/:id {email?, displayName?}` — admin edit; an email change
+  always requires the user to reconfirm the new address (`email_confirm:
+  false`), never treated as pre-verified. Audit-logged `USER_UPDATED`.
+- `POST /users/:id/suspend` / `POST /users/:id/unsuspend` — real Supabase
+  Auth ban via `ban_duration` (`"876000h"` / `"none"`), not a UI-only flag —
+  a suspended user is rejected on sign-in. Audit-logged `USER_SUSPENDED`/
+  `USER_UNSUSPENDED`.
+- `DELETE /users/:id {confirmEmail}` — hard-deletes the Auth user
+  (`confirmEmail` must match the target's actual email, re-verified
+  server-side, never trusting the Admin Web UI's own check alone). Every
+  MKR table cascades from `auth.users(id)`, so this also removes the
+  user's profile/watchlists/alerts/devices/preferences/subscriptions/
+  notification_logs. Audit-logged `USER_DELETED`.
 - `GET /alerts?status=active|triggered|disabled&symbol=...` — user-created
   price alerts (not to be confused with Phase 2's provider config).
 - `POST /alerts/toggle {alertId, enabled}` — admin enable/disable; always

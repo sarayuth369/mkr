@@ -105,6 +105,11 @@ button.primary:hover { background: var(--navy); }
 button.secondary {
   padding: 9px 16px; border: 1px solid var(--border); border-radius: 8px; background: #fff; cursor: pointer;
 }
+button.danger {
+  padding: 9px 16px; border: none; border-radius: 8px; background: var(--loss); color: #fff;
+  font-weight: 700; cursor: pointer;
+}
+button.danger:hover { opacity: 0.9; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .toggle-row:last-child { border-bottom: none; }
 .save-msg { font-size: 13px; color: var(--gain); margin-left: 10px; }

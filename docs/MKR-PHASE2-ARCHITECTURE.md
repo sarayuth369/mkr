@@ -262,6 +262,39 @@ run. Every admin mutation here (alert enable/disable, push sends) is
 audit-logged the same way Phase 2's provider/config changes already were;
 a mass push additionally requires `{ "confirm": true }` in the request body.
 
+### User management: suspend/delete are real Auth operations, and search has a real limit
+
+Admin Users gained full management (edit email/display name, suspend/
+unsuspend, permanent delete) on top of the read-only view. Two points
+worth being explicit about:
+
+- **Suspension uses GoTrue's own `ban_duration`** (via the Auth Admin
+  API's `PUT /auth/v1/admin/users/:id`), not a homegrown flag - a
+  suspended user is actually rejected by Supabase Auth on sign-in.
+  `"876000h"` (~100 years) suspends, `"none"` restores; both are
+  GoTrue's own conventions, not invented here.
+- **Delete is a hard delete of the `auth.users` row**, which every MKR
+  table cascades from (`on delete cascade` to `auth.users(id)` - see the
+  initial schema migration), so profiles/watchlists/watchlist_items/
+  alerts/devices/preferences/subscriptions/notification_logs for that
+  user are removed automatically. Never `DELETE FROM profiles` directly -
+  that would orphan the Auth account.
+- **GoTrue's raw Admin API has no server-side email search, status
+  filter, or sort** - only `page`/`per_page` (confirmed against the
+  auth-js SDK source). A search/filter/sort request therefore scans up to
+  5 pages (250 users) and filters/sorts in memory, then paginates the
+  result - bounded and disclosed in the Admin Web UI itself, not a silent
+  full-corpus guess. The same "acceptable at early-stage volume,
+  documented scalability path" tradeoff already used for the users-list
+  count aggregation above. A materialized view or a dedicated search
+  index is the natural upgrade if the user base outgrows this.
+- **Admin auth has no per-admin identity** (see `src/admin/auth.ts` -
+  `requireAdmin` verifies only a signed session token from the one shared
+  `ADMIN_PASSWORD`), so there is no "current admin's Supabase user id" to
+  guard a delete/suspend target against. Self-protection for suspend/
+  delete is therefore not implemented - it would require inventing a
+  multi-admin identity model that doesn't exist yet, not a missed check.
+
 ### Guest-first, sync-on-login
 
 "Guest" is a purely client-side concept - `UserProfile.isGuest` - and never
