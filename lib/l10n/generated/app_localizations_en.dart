@@ -684,6 +684,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'This is a placeholder ad slot. No real ad content is loaded.';
 
   @override
+  String get adAppOpenPlaceholder =>
+      'This is a placeholder app-open ad slot. No real ad content is loaded.';
+
+  @override
   String get close => 'Close';
 
   @override

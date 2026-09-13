@@ -1400,6 +1400,12 @@ abstract class AppLocalizations {
   /// **'This is a placeholder ad slot. No real ad content is loaded.'**
   String get adInterstitialPlaceholder;
 
+  /// No description provided for @adAppOpenPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a placeholder app-open ad slot. No real ad content is loaded.'**
+  String get adAppOpenPlaceholder;
+
   /// No description provided for @close.
   ///
   /// In en, this message translates to:

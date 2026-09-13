@@ -5,6 +5,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mkr/app/app.dart';
 import 'package:mkr/core/persistence/app_local_store.dart';
 
+/// The App Open ad placeholder shows automatically on cold start (see
+/// [AppOpenAdHost]) — dismiss it first, the way a real user would, before
+/// asserting on or interacting with anything underneath it.
+Future<void> _dismissAppOpenAdIfShown(WidgetTester tester) async {
+  final closeButton = find.text('Close');
+  if (closeButton.evaluate().isNotEmpty) {
+    await tester.tap(closeButton);
+    await tester.pumpAndSettle();
+  }
+}
+
 void main() {
   testWidgets('MKR boots past onboarding and navigates every bottom nav tab', (tester) async {
     SharedPreferences.setMockInitialValues({'onboarding_complete': true});
@@ -12,6 +23,7 @@ void main() {
 
     await tester.pumpWidget(MkrApp(store: store));
     await tester.pumpAndSettle();
+    await _dismissAppOpenAdIfShown(tester);
 
     expect(find.text('Market Radar'), findsWidgets);
 
@@ -31,6 +43,7 @@ void main() {
 
     await tester.pumpWidget(MkrApp(store: store));
     await tester.pumpAndSettle();
+    await _dismissAppOpenAdIfShown(tester);
 
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();

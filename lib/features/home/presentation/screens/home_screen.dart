@@ -16,7 +16,7 @@ import '../../../../core/widgets/radar_card.dart';
 import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../l10n/generated/app_localizations.dart';
-import '../../../ads/presentation/widgets/ad_banner_slot.dart';
+import '../../../ads/presentation/widgets/mkr_ad_slot.dart';
 import '../../../ai_ask/presentation/screens/ai_ask_screen.dart';
 import '../../../gold/presentation/screens/gold_radar_screen.dart';
 import '../../../markets/domain/market_service.dart';
@@ -75,7 +75,8 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: RefreshIndicator(
+      body: MkrAdBody(
+        child: RefreshIndicator(
         onRefresh: controller.refresh,
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -113,11 +114,11 @@ class HomeScreen extends StatelessWidget {
             Text(l10n.homeMarketSnapshot, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
             _SnapshotList(controller: controller),
-            const SizedBox(height: 16),
-            const AdBannerSlot(),
           ],
         ),
+        ),
       ),
+      bottomNavigationBar: const MkrBottomBannerAd(),
     );
   }
 }

@@ -8,8 +8,12 @@ import '../core/localization/locale_controller.dart';
 import '../core/persistence/app_local_store.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/theme_controller.dart';
+import '../features/ads/application/app_open_ad_manager.dart';
 import '../features/ads/data/mock_ad_service.dart';
+import '../features/ads/domain/ad_analytics.dart';
+import '../features/ads/domain/ad_config.dart';
 import '../features/ads/domain/ad_service.dart';
+import '../features/ads/presentation/widgets/app_open_ad_host.dart';
 import '../features/ai/data/mock_market_ai_service.dart';
 import '../features/ai/domain/market_ai_service.dart';
 import '../features/ai_ask/application/ai_ask_controller.dart';
@@ -94,7 +98,9 @@ class MkrApp extends StatelessWidget {
         Provider<NotificationService>(create: (_) => MockNotificationService()),
         Provider<PortfolioRepository>(create: (_) => MockPortfolioRepository(store)),
         Provider<BillingRepository>(create: (_) => MockBillingRepository(store)),
-        Provider<AdService>(create: (_) => MockAdService()),
+        Provider<AdAnalytics>(create: (_) => const NoopAdAnalytics()),
+        Provider<AdConfig>(create: (_) => AdConfig.fromEnvironment()),
+        Provider<AdService>(create: (ctx) => MockAdService(analytics: ctx.read<AdAnalytics>())),
         Provider<AuthService>(create: (_) => MockAuthService(store)),
 
         ChangeNotifierProvider(create: (ctx) => AuthController(ctx.read<AuthService>())),
@@ -128,6 +134,9 @@ class MkrApp extends StatelessWidget {
           ),
         ),
         ChangeNotifierProvider(create: (ctx) => AiAskController(ctx.read<MarketAIService>())),
+        Provider<AppOpenAdManager>(
+          create: (ctx) => AppOpenAdManager(adService: ctx.read<AdService>(), config: ctx.read<AdConfig>()),
+        ),
       ],
       child: const _AppView(),
     );
@@ -193,7 +202,7 @@ class _AppViewState extends State<_AppView> with WidgetsBindingObserver {
       ],
       supportedLocales: AppLocalizations.supportedLocales,
       home: store.isOnboardingComplete
-          ? const AppShell()
+          ? const AppOpenAdHost(child: AppShell())
           : _OnboardingGate(store: store),
     );
   }
@@ -213,7 +222,7 @@ class _OnboardingGateState extends State<_OnboardingGate> {
 
   @override
   Widget build(BuildContext context) {
-    if (_done) return const AppShell();
+    if (_done) return const AppOpenAdHost(child: AppShell());
     return OnboardingScreen(
       onDone: () async {
         await widget.store.setOnboardingComplete(true);

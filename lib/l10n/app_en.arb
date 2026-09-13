@@ -249,6 +249,7 @@
   "adBannerPlaceholder": "Test ad · Placeholder",
   "adTestAdTitle": "Test Ad",
   "adInterstitialPlaceholder": "This is a placeholder ad slot. No real ad content is loaded.",
+  "adAppOpenPlaceholder": "This is a placeholder app-open ad slot. No real ad content is loaded.",
   "close": "Close",
   "aiAskTitle": "AI Market Assistant",
   "aiAskSubtitle": "Ask anything about investing",

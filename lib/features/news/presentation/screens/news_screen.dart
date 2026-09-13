@@ -7,6 +7,7 @@ import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/mock_data_banner.dart';
 import '../../../../core/widgets/news_card.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../ads/presentation/widgets/mkr_ad_slot.dart';
 import '../../application/news_controller.dart';
 
 class NewsScreen extends StatelessWidget {
@@ -19,7 +20,8 @@ class NewsScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(title: Text(l10n.newsTitle)),
-      body: RefreshIndicator(
+      body: MkrAdBody(
+        child: RefreshIndicator(
         onRefresh: controller.refresh,
         child: controller.state.when(
           loading: () => const Padding(
@@ -41,7 +43,9 @@ class NewsScreen extends StatelessWidget {
             },
           ),
         ),
+        ),
       ),
+      bottomNavigationBar: const MkrBottomBannerAd(),
     );
   }
 }

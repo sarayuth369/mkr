@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../l10n/generated/app_localizations.dart';
+import '../domain/ad_analytics.dart';
 import '../domain/ad_service.dart';
 
 /// Renders clearly-labeled placeholders instead of loading a real ad SDK —
@@ -9,16 +10,26 @@ import '../domain/ad_service.dart';
 /// published test ad unit IDs as a placeholder reference only (no network
 /// call is actually made by this implementation).
 class MockAdService implements AdService {
+  MockAdService({AdAnalytics analytics = const NoopAdAnalytics()}) : _analytics = analytics;
+
   static const testBannerUnitId = 'ca-app-pub-3940256099942544/6300978111';
   static const testInterstitialUnitId = 'ca-app-pub-3940256099942544/1033173712';
+  static const testAppOpenUnitId = 'ca-app-pub-3940256099942544/9257395921';
 
   static const int _interstitialEveryNTriggers = 3;
   final Map<String, int> _triggerCounts = {};
+  final AdAnalytics _analytics;
 
   @override
   Widget buildBanner(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
+    _analytics.onAdLoaded('banner');
+    _analytics.onAdDisplayed('banner');
+    // 50dp matches AdMob's standard/adaptive-banner height on a phone in
+    // portrait — Phase 3 swaps this Container for a real
+    // BannerAdWidget/AnchoredAdaptiveBannerAdSize without the surrounding
+    // slot layout (MkrTopBannerAd/MkrBottomBannerAd) needing to change.
     return Container(
       width: double.infinity,
       height: 50,
@@ -35,12 +46,39 @@ class MockAdService implements AdService {
   }
 
   @override
+  Future<bool> loadAppOpenAd() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    _analytics.onAdLoaded('appOpen');
+    return true;
+  }
+
+  @override
+  Future<void> showAppOpenAd(BuildContext context) async {
+    if (!context.mounted) return;
+    final l10n = AppLocalizations.of(context);
+    _analytics.onAdDisplayed('appOpen');
+    _analytics.onAppOpenShown();
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.adTestAdTitle),
+        content: Text(l10n.adAppOpenPlaceholder),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.close)),
+        ],
+      ),
+    );
+  }
+
+  @override
   Future<void> maybeShowInterstitial(BuildContext context, {required String trigger}) async {
     final count = (_triggerCounts[trigger] ?? 0) + 1;
     _triggerCounts[trigger] = count;
     if (count % _interstitialEveryNTriggers != 0) return;
     if (!context.mounted) return;
     final l10n = AppLocalizations.of(context);
+    _analytics.onAdDisplayed('interstitial');
 
     await showDialog<void>(
       context: context,

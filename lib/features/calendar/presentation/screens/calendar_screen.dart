@@ -9,6 +9,7 @@ import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/mock_data_banner.dart';
 import '../../../../domain/impact_level.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../ads/presentation/widgets/mkr_ad_slot.dart';
 import '../../application/calendar_controller.dart';
 import '../../domain/economic_event.dart';
 
@@ -22,7 +23,8 @@ class CalendarScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(title: Text(l10n.calendarTitle)),
-      body: RefreshIndicator(
+      body: MkrAdBody(
+        child: RefreshIndicator(
         onRefresh: controller.refresh,
         child: CustomScrollView(
           slivers: [
@@ -71,7 +73,9 @@ class CalendarScreen extends StatelessWidget {
             ),
           ],
         ),
+        ),
       ),
+      bottomNavigationBar: const MkrBottomBannerAd(),
     );
   }
 }

@@ -684,6 +684,10 @@ class AppLocalizationsTh extends AppLocalizations {
       'นี่คือพื้นที่โฆษณาตัวอย่าง ไม่มีเนื้อหาโฆษณาจริงถูกโหลด';
 
   @override
+  String get adAppOpenPlaceholder =>
+      'นี่คือพื้นที่โฆษณาแบบเปิดแอปตัวอย่าง ไม่มีเนื้อหาโฆษณาจริงถูกโหลด';
+
+  @override
   String get close => 'ปิด';
 
   @override

@@ -9,6 +9,7 @@ import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/asset_class.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../ads/presentation/widgets/mkr_ad_slot.dart';
 import '../../application/markets_controller.dart';
 import 'market_detail_screen.dart';
 
@@ -45,7 +46,8 @@ class _MarketsScreenState extends State<MarketsScreen> {
 
     return Scaffold(
       appBar: AppBar(title: Text(l10n.marketsTitle)),
-      body: Column(
+      body: MkrAdBody(
+        child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -115,7 +117,9 @@ class _MarketsScreenState extends State<MarketsScreen> {
             ),
           ),
         ],
+        ),
       ),
+      bottomNavigationBar: const MkrBottomBannerAd(),
     );
   }
 }

@@ -16,6 +16,7 @@ import '../../../../core/widgets/price_chart.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../ads/presentation/widgets/mkr_ad_slot.dart';
 import '../../../ai/domain/market_ai_service.dart';
 import '../../../alerts/presentation/screens/create_alert_screen.dart';
 import '../../../calendar/domain/economic_calendar_service.dart';
@@ -75,7 +76,8 @@ class _MarketDetailBody extends StatelessWidget {
           ),
         ],
       ),
-      body: controller.quoteState.when(
+      body: MkrAdBody(
+        child: controller.quoteState.when(
         loading: () => const Padding(padding: EdgeInsets.all(16), child: LoadingSkeletonList(rows: 4)),
         error: (message) => ErrorState(message: message, onRetry: controller.retry),
         empty: () => Center(child: Text(l10n.marketDetailSymbolNotFound)),
@@ -156,7 +158,9 @@ class _MarketDetailBody extends StatelessWidget {
             ),
           );
         },
+        ),
       ),
+      bottomNavigationBar: const MkrBottomBannerAd(),
     );
   }
 }
