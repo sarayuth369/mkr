@@ -3,6 +3,7 @@ import { ProviderError, type MarketDataProvider } from '../types';
 import {
   isTwelveDataError,
   isTwelveDataRateLimited,
+  parseTwelveDataBatchQuotes,
   parseTwelveDataCandles,
   parseTwelveDataMarketStatus,
   parseTwelveDataQuote,
@@ -22,7 +23,11 @@ export class TwelveDataProvider implements MarketDataProvider {
 
   constructor(
     private readonly apiKey: string,
-    private readonly fetchImpl: typeof fetch = fetch,
+    // A bare `fetch` reference loses its required `this` binding once
+    // stored on an instance and called as `this.fetchImpl(...)`, throwing
+    // "Illegal invocation" in the Workers runtime (confirmed live during
+    // deployment) - bind it to globalThis so the default is safe to call.
+    private readonly fetchImpl: typeof fetch = fetch.bind(globalThis),
   ) {}
 
   private url(path: string, params: Record<string, string>): string {
@@ -38,7 +43,15 @@ export class TwelveDataProvider implements MarketDataProvider {
       response = await this.fetchImpl(this.url(path, params), { signal: controller.signal });
     } catch (err) {
       if ((err as Error).name === 'AbortError') throw new ProviderError('Twelve Data request timed out', 'timeout');
-      throw new ProviderError('Twelve Data network error', 'network');
+      // The underlying fetch error's own message/name is useful operational
+      // detail (DNS failure vs. TLS vs. connection refused), kept server-
+      // side only (mapProviderError never forwards it to Flutter) - but
+      // some fetch implementations echo the request URL into their error
+      // message, so the API key is stripped defensively before this touches
+      // any log or the admin health API's lastErrorMessage field.
+      const cause = err as Error;
+      const safeMessage = `${cause.name}: ${cause.message}`.replace(/apikey=[^&\s"']+/gi, 'apikey=[redacted]');
+      throw new ProviderError(`Twelve Data network error: ${safeMessage}`, 'network');
     } finally {
       clearTimeout(timer);
     }
@@ -55,6 +68,53 @@ export class TwelveDataProvider implements MarketDataProvider {
   async getQuote(providerSymbol: string, mkrSymbol: string): Promise<NormalizedQuote | null> {
     const json = await this.request('/quote', { symbol: providerSymbol });
     return parseTwelveDataQuote(json, mkrSymbol);
+  }
+
+  // Twelve Data Free's comma-separated /quote endpoint silently drops
+  // symbols beyond some undocumented per-request cap (confirmed live: a
+  // 25-symbol request came back with usable data for only the first few,
+  // `null` for the rest - not an error, just missing from the response
+  // object) rather than rejecting the request outright. Chunking keeps
+  // each individual upstream call small and reliable while still using a
+  // handful of concurrent requests instead of one per symbol.
+  private static readonly BATCH_CHUNK_SIZE = 8;
+
+  /** Many symbols in as few upstream calls as Twelve Data's per-request cap allows - see the interface doc comment for why this exists. */
+  async getBatchQuotes(providerToMkr: Record<string, string>): Promise<Record<string, NormalizedQuote | null>> {
+    const providerSymbols = Object.keys(providerToMkr);
+    if (providerSymbols.length === 0) return {};
+    if (providerSymbols.length === 1) {
+      const symbol = providerSymbols[0]!;
+      return { [providerToMkr[symbol]!]: await this.getQuote(symbol, providerToMkr[symbol]!) };
+    }
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < providerSymbols.length; i += TwelveDataProvider.BATCH_CHUNK_SIZE) {
+      chunks.push(providerSymbols.slice(i, i + TwelveDataProvider.BATCH_CHUNK_SIZE));
+    }
+
+    const settled = await Promise.allSettled(
+      chunks.map(async (chunk) => {
+        const chunkMap = Object.fromEntries(chunk.map((s) => [s, providerToMkr[s]!]));
+        const json = await this.request('/quote', { symbol: chunk.join(',') });
+        return parseTwelveDataBatchQuotes(json, chunkMap);
+      }),
+    );
+
+    const result: Record<string, NormalizedQuote | null> = {};
+    let allChunksFailed = settled.length > 0;
+    for (const outcome of settled) {
+      if (outcome.status === 'fulfilled') {
+        allChunksFailed = false;
+        Object.assign(result, outcome.value);
+      }
+    }
+    // Only a genuine, total failure (every chunk threw) should look like a
+    // provider fault to the caller's failover logic; a partial chunk
+    // failure just leaves those specific symbols out of `result`, which
+    // the route handler already treats as "no data for this symbol".
+    if (allChunksFailed) throw (settled[0] as PromiseRejectedResult).reason;
+    return result;
   }
 
   async getCandles(providerSymbol: string, mkrSymbol: string, timeframe: MkrTimeframe, outputSize: number): Promise<NormalizedCandle[]> {

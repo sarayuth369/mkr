@@ -105,6 +105,61 @@ export class MarketProviderManager {
     return this.withFailover<NormalizedQuote | null>((provider, symbol) => provider.getQuote(symbol, mkrSymbol), symbolFor);
   }
 
+  /**
+   * One upstream call for many symbols instead of N - see the interface
+   * doc comment on [MarketDataProvider.getBatchQuotes] for why this exists
+   * (Twelve Data Free's rate limit is exhausted almost immediately by N
+   * concurrent individual quote calls for one client's full catalog load).
+   * Same failover discipline as [withFailover]: only falls to secondary
+   * after the primary throws AND a healthCheck confirms it's genuinely
+   * down, never merely because some symbols in the batch came back null.
+   */
+  async getBatchQuotes(
+    mkrSymbols: string[],
+    providerSymbolFor: (id: ProviderId, mkrSymbol: string) => string | null,
+  ): Promise<{ result: Record<string, NormalizedQuote | null>; source: ProviderId | null }> {
+    const buildMap = (id: ProviderId): Record<string, string> => {
+      const map: Record<string, string> = {};
+      for (const mkrSymbol of mkrSymbols) {
+        const providerSymbol = providerSymbolFor(id, mkrSymbol);
+        if (providerSymbol) map[providerSymbol] = mkrSymbol;
+      }
+      return map;
+    };
+
+    if (this.primary) {
+      const map = buildMap(this.primary.id);
+      if (Object.keys(map).length > 0) {
+        try {
+          const result = await this.primary.getBatchQuotes(map);
+          recordSuccess(this.primary.id);
+          return { result, source: this.primary.id };
+        } catch (err) {
+          recordFailure(this.primary.id, (err as Error).message);
+          const probe = await this.primary.healthCheck();
+          if (probe.healthy) throw err; // transient - propagate, don't fail over
+        }
+      }
+    }
+
+    if (this.secondaryEnabled && this.secondary) {
+      const map = buildMap(this.secondary.id);
+      if (Object.keys(map).length > 0) {
+        try {
+          const result = await this.secondary.getBatchQuotes(map);
+          recordSuccess(this.secondary.id);
+          return { result, source: this.secondary.id };
+        } catch (err) {
+          recordFailure(this.secondary.id, (err as Error).message);
+          throw err;
+        }
+      }
+    }
+
+    // Nothing mapped for either provider - a mapping outcome, not a fault.
+    return { result: Object.fromEntries(mkrSymbols.map((s) => [s, null])), source: null };
+  }
+
   getCandles(mkrSymbol: string, timeframe: MkrTimeframe, outputSize: number, symbolFor: (id: ProviderId) => string | null) {
     return this.withFailover<NormalizedCandle[]>((provider, symbol) => provider.getCandles(symbol, mkrSymbol, timeframe, outputSize), symbolFor);
   }

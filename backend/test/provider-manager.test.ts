@@ -32,11 +32,20 @@ class FakeProvider implements MarketDataProvider {
   ) {}
 
   quoteCalls = 0;
+  batchCalls = 0;
 
   async getQuote(): Promise<NormalizedQuote | null> {
     this.quoteCalls++;
     if (this.opts.throwKind) throw new ProviderError(`${this.id} failed`, this.opts.throwKind);
     return this.opts.quoteResult ?? null;
+  }
+
+  async getBatchQuotes(providerToMkr: Record<string, string>): Promise<Record<string, NormalizedQuote | null>> {
+    this.batchCalls++;
+    if (this.opts.throwKind) throw new ProviderError(`${this.id} failed`, this.opts.throwKind);
+    const result: Record<string, NormalizedQuote | null> = {};
+    for (const mkrSymbol of Object.values(providerToMkr)) result[mkrSymbol] = this.opts.quoteResult ?? null;
+    return result;
   }
 
   async getCandles() {
@@ -113,5 +122,52 @@ describe('MarketProviderManager', () => {
     const snapshot = await manager.healthSnapshot();
     expect(snapshot.primary?.status).toBe('healthy');
     expect(snapshot.secondary?.status).toBe('disabled');
+  });
+
+  describe('getBatchQuotes', () => {
+    const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
+
+    it('resolves every symbol in exactly one call to the provider, not one per symbol', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quote(100) });
+      const manager = new MarketProviderManager(primary, null, false);
+
+      const { result, source } = await manager.getBatchQuotes(['AAPL', 'MSFT', 'GOOGL'], providerSymbolFor);
+
+      expect(primary.batchCalls).toBe(1);
+      expect(primary.quoteCalls).toBe(0);
+      expect(source).toBe('twelve_data');
+      expect(Object.keys(result)).toEqual(['AAPL', 'MSFT', 'GOOGL']);
+    });
+
+    it('fails over to secondary only after the primary batch call is confirmed unhealthy', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'rate_limit', healthy: false });
+      const secondary = new FakeProvider('alpaca', { quoteResult: quote(7) });
+      const manager = new MarketProviderManager(primary, secondary, true);
+
+      const { source } = await manager.getBatchQuotes(['AAPL', 'MSFT'], providerSymbolFor);
+
+      expect(source).toBe('alpaca');
+      expect(secondary.batchCalls).toBe(1);
+    });
+
+    it('does not fail over on a transient error the primary is still healthy after', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'timeout', healthy: true });
+      const secondary = new FakeProvider('alpaca', { quoteResult: quote(1) });
+      const manager = new MarketProviderManager(primary, secondary, true);
+
+      await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor)).rejects.toThrow();
+      expect(secondary.batchCalls).toBe(0);
+    });
+
+    it('returns all-null without throwing when no provider maps any requested symbol', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quote(1) });
+      const manager = new MarketProviderManager(primary, null, false);
+
+      const { result, source } = await manager.getBatchQuotes(['UNMAPPED'], () => null);
+
+      expect(source).toBeNull();
+      expect(result).toEqual({ UNMAPPED: null });
+      expect(primary.batchCalls).toBe(0);
+    });
   });
 });

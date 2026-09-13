@@ -168,11 +168,12 @@ async function renderCache() {
   content.innerHTML = `
     <h2>Cache Settings</h2>
     <div class="card">
-      ${ttlField('quoteSeconds', 'Quote TTL (seconds)', ttls.quoteSeconds)}
-      ${ttlField('candleIntradaySeconds', 'Intraday candle TTL (seconds)', ttls.candleIntradaySeconds)}
-      ${ttlField('candleDailySeconds', 'Daily/weekly candle TTL (seconds)', ttls.candleDailySeconds)}
-      ${ttlField('statusSeconds', 'Market status TTL (seconds)', ttls.statusSeconds)}
-      ${ttlField('staleThresholdSeconds', 'Stale threshold (seconds)', ttls.staleThresholdSeconds)}
+      <p class="muted">Cloudflare KV rejects any TTL under 60 seconds, so 60s is the practical floor here.</p>
+      ${ttlField('quoteSeconds', 'Quote TTL (seconds)', ttls.quoteSeconds, 60)}
+      ${ttlField('candleIntradaySeconds', 'Intraday candle TTL (seconds)', ttls.candleIntradaySeconds, 60)}
+      ${ttlField('candleDailySeconds', 'Daily/weekly candle TTL (seconds)', ttls.candleDailySeconds, 60)}
+      ${ttlField('statusSeconds', 'Market status TTL (seconds)', ttls.statusSeconds, 60)}
+      ${ttlField('staleThresholdSeconds', 'Stale threshold (seconds)', ttls.staleThresholdSeconds, 60)}
       <div class="actions">
         <button class="primary" id="save-cache">Save</button>
         <span id="cache-msg" class="save-msg" hidden>Saved.</span>
@@ -189,8 +190,8 @@ async function renderCache() {
   });
 }
 
-function ttlField(key, label, value) {
-  return `<div class="form-row"><label for="field-${key}">${label}</label><input id="field-${key}" type="number" min="1" max="86400" value="${value}" /></div>`;
+function ttlField(key, label, value, min = 1) {
+  return `<div class="form-row"><label for="field-${key}">${label}</label><input id="field-${key}" type="number" min="${min}" max="86400" value="${value}" /></div>`;
 }
 
 // ---- Rate limits ------------------------------------------------------------

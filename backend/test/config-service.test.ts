@@ -10,11 +10,11 @@ function makeEnv(): Env {
     MARKET_PRIMARY_PROVIDER: 'twelve_data',
     MARKET_SECONDARY_PROVIDER: 'alpaca',
     MARKET_SECONDARY_ENABLED: 'false',
-    CACHE_QUOTE_TTL_SECONDS: '15',
-    CACHE_CANDLE_INTRADAY_TTL_SECONDS: '30',
+    CACHE_QUOTE_TTL_SECONDS: '60',
+    CACHE_CANDLE_INTRADAY_TTL_SECONDS: '60',
     CACHE_CANDLE_DAILY_TTL_SECONDS: '600',
     CACHE_STATUS_TTL_SECONDS: '60',
-    STALE_THRESHOLD_SECONDS: '60',
+    STALE_THRESHOLD_SECONDS: '90',
     RATE_LIMIT_PUBLIC_PER_MINUTE: '60',
     RATE_LIMIT_ADMIN_PER_MINUTE: '120',
     RATE_LIMIT_WS_MAX_CONNECTIONS: '500',
@@ -27,7 +27,7 @@ describe('getConfig', () => {
     const config = await getConfig(env);
     expect(config.primaryProvider).toBe('twelve_data');
     expect(config.secondaryEnabled).toBe(false);
-    expect(config.cacheTtls.quoteSeconds).toBe(15);
+    expect(config.cacheTtls.quoteSeconds).toBe(60);
   });
 
   it('Alpaca stays disabled by default, matching the licensing-safety requirement', async () => {
@@ -47,20 +47,21 @@ describe('updateConfig', () => {
 
   it('shallow-merges nested objects like cacheTtls instead of replacing the whole object', async () => {
     const env = makeEnv();
-    await updateConfig(env, { cacheTtls: { quoteSeconds: 5, candleIntradaySeconds: 30, candleDailySeconds: 600, statusSeconds: 60, staleThresholdSeconds: 60 } });
+    await updateConfig(env, { cacheTtls: { quoteSeconds: 90, candleIntradaySeconds: 60, candleDailySeconds: 600, statusSeconds: 60, staleThresholdSeconds: 90 } });
     await updateConfig(env, { featureFlags: { marketDataLive: true, demoMode: true, websocketEnabled: true, newsEnabled: false, economicCalendarEnabled: false, aiBriefEnabled: false, adsEnabled: true, maintenanceMode: false } });
     const config = await getConfig(env);
-    expect(config.cacheTtls.quoteSeconds).toBe(5);
+    expect(config.cacheTtls.quoteSeconds).toBe(90);
     expect(config.featureFlags.demoMode).toBe(true);
   });
 });
 
 describe('validation helpers', () => {
-  it('rejects zero/negative/unbounded TTLs', () => {
+  it('rejects zero/negative/unbounded TTLs, and anything under the KV 60s floor', () => {
     expect(isValidTtlSeconds(0)).toBe(false);
     expect(isValidTtlSeconds(-5)).toBe(false);
     expect(isValidTtlSeconds(999_999)).toBe(false);
-    expect(isValidTtlSeconds(30)).toBe(true);
+    expect(isValidTtlSeconds(30)).toBe(false);
+    expect(isValidTtlSeconds(60)).toBe(true);
   });
 
   it('rejects zero/negative/unbounded rate limits', () => {

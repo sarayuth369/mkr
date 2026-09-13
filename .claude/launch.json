@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mkr-web-real",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "build/web", "-p", "8765"],
+      "port": 8765
+    }
+  ]
+}

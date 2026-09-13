@@ -51,7 +51,40 @@ class TwelveDataParser {
     if (isErrorEnvelope(json)) return null;
     final data = json['data'];
     if (data is! Map<String, dynamic>) return null;
+    return _quoteFromData(data, mkrSymbol, assetClass);
+  }
 
+  /// Parses a `GET /api/mkr/market/quotes` (plural, batch) response body —
+  /// `data.items` is a flat array of the same normalized-quote shape as the
+  /// single-quote endpoint, already resolved server-side in ONE upstream
+  /// call for every requested symbol (see `backend/src/market/market-routes.ts`
+  /// `handleQuotes`) — this is what [MarketProviderManager.getQuotes] must
+  /// call instead of looping [parseQuote]/[getQuote] per symbol; N
+  /// individual REST calls for one client's full catalog load exhausts
+  /// Twelve Data Free's rate limit almost immediately (confirmed live).
+  static List<MarketQuote> parseQuotesBatch({
+    required Map<String, dynamic> json,
+    required AssetClass Function(String symbol) assetClassFor,
+  }) {
+    if (isErrorEnvelope(json)) return const [];
+    final data = json['data'];
+    if (data is! Map<String, dynamic>) return const [];
+    final items = data['items'];
+    if (items is! List) return const [];
+
+    final quotes = <MarketQuote>[];
+    for (final entry in items) {
+      if (entry is! Map) continue;
+      final map = entry.cast<String, dynamic>();
+      final symbol = (map['symbol'] as Object?)?.toString();
+      if (symbol == null) continue;
+      final quote = _quoteFromData(map, symbol, assetClassFor(symbol));
+      if (quote != null) quotes.add(quote);
+    }
+    return quotes;
+  }
+
+  static MarketQuote? _quoteFromData(Map<String, dynamic> data, String mkrSymbol, AssetClass assetClass) {
     final price = _num(data['price']);
     if (price == null) return null;
 

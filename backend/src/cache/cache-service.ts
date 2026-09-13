@@ -14,6 +14,12 @@
 // would close that gap fully; not built here to avoid overengineering an
 // early-stage product - see docs/MKR-PHASE2-ARCHITECTURE.md.
 
+// Cloudflare KV rejects any `expirationTtl` under 60 seconds outright (a
+// hard platform floor, confirmed against the real API during deployment -
+// not a soft/advisory limit) - clamped here so a short TTL request fails
+// gracefully by rounding up rather than throwing a KV write error.
+const KV_MIN_TTL_SECONDS = 60;
+
 const inFlight = new Map<string, Promise<unknown>>();
 
 export interface CacheResult<T> {
@@ -48,7 +54,7 @@ export async function cachedFetch<T>(
   const promise = (async (): Promise<T> => {
     const value = await fetcher();
     const envelope: CacheEnvelope<T> = { v: value };
-    await kv.put(key, JSON.stringify(envelope), { expirationTtl: Math.max(1, Math.floor(ttlSeconds)) });
+    await kv.put(key, JSON.stringify(envelope), { expirationTtl: Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds)) });
     return value;
   })();
 
@@ -62,6 +68,18 @@ export async function cachedFetch<T>(
 
 export function cacheKey(kind: 'quote' | 'candles' | 'status', symbol: string, extra = ''): string {
   return `${kind}:${symbol}${extra ? `:${extra}` : ''}`;
+}
+
+/** Read-only cache lookup, for callers doing their own batched fetch on a miss (see handleQuotes). */
+export async function getCached<T>(kv: KVNamespace, key: string): Promise<T | undefined> {
+  const cached = await kv.get<CacheEnvelope<T>>(key, 'json');
+  return cached ? cached.v : undefined;
+}
+
+/** Write-only cache population, paired with [getCached] for a caller that fetched a whole batch itself in one upstream call. */
+export async function putCached<T>(kv: KVNamespace, key: string, value: T, ttlSeconds: number): Promise<void> {
+  const envelope: CacheEnvelope<T> = { v: value };
+  await kv.put(key, JSON.stringify(envelope), { expirationTtl: Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds)) });
 }
 
 /** Test-only: clears the in-flight map between test cases. */

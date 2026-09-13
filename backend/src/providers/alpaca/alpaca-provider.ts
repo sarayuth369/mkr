@@ -22,7 +22,10 @@ export class AlpacaProvider implements MarketDataProvider {
   constructor(
     private readonly keyId: string,
     private readonly secretKey: string,
-    private readonly fetchImpl: typeof fetch = fetch,
+    // See the identical fix/comment in twelve-data-provider.ts - a bare
+    // `fetch` reference throws "Illegal invocation" once called as
+    // `this.fetchImpl(...)` in the Workers runtime.
+    private readonly fetchImpl: typeof fetch = fetch.bind(globalThis),
   ) {}
 
   private headers(): HeadersInit {
@@ -56,6 +59,19 @@ export class AlpacaProvider implements MarketDataProvider {
     const limit = Math.min(Math.max(outputSize, 1), 1000);
     const json = await this.request(`/${encodeURIComponent(providerSymbol)}/bars?timeframe=${alpacaTimeframe(timeframe)}&limit=${limit}`);
     return parseAlpacaBars(json, mkrSymbol, timeframe);
+  }
+
+  /**
+   * Alpaca's snapshot endpoint is per-symbol only (no documented
+   * comma-separated batch form used here) - standby-only anyway, so this
+   * stays a simple concurrent loop rather than adding batching complexity
+   * for a provider that isn't in the live traffic path.
+   */
+  async getBatchQuotes(providerToMkr: Record<string, string>): Promise<Record<string, NormalizedQuote | null>> {
+    const entries = await Promise.all(
+      Object.entries(providerToMkr).map(async ([providerSymbol, mkrSymbol]) => [mkrSymbol, await this.getQuote(providerSymbol, mkrSymbol)] as const),
+    );
+    return Object.fromEntries(entries);
   }
 
   async getMarketStatus(_providerSymbol: string, mkrSymbol: string): Promise<NormalizedMarketStatus> {

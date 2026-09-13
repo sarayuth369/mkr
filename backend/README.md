@@ -4,6 +4,29 @@ The single market-data gateway for Market Radar (MKR). A Cloudflare Worker
 that Flutter talks to over HTTPS/WebSocket — Flutter never calls Twelve Data
 or Alpaca directly, and never holds an API key.
 
+**Deployed**: `https://mkr-backend.biz2success.workers.dev` · Admin Web:
+`https://mkr-admin.pages.dev` · D1 `mkr-db`, KV `MKR_CONFIG`/`MKR_CACHE`,
+Durable Object `MarketStreamRoom` all provisioned and bound. `TWELVE_DATA_API_KEY`,
+`ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET` are set; Alpaca secrets are not
+(standby, disabled).
+
+**Known limitation — Twelve Data Free's real throughput**: empirically,
+this account's free tier serves reliably in batches of ~8 quotes per
+request/minute window, not MKR's full ~28-symbol default catalog at once.
+`getBatchQuotes` chunks requests (8 provider symbols per upstream call,
+chunks fired concurrently) so a screen needing many quotes costs a handful
+of upstream calls instead of one-per-symbol — a real, load-bearing fix
+(confirmed live: 28 concurrent individual quote calls made every single one
+come back `PROVIDER_UNAVAILABLE`). But the free plan's own per-minute credit
+ceiling is an external constraint no amount of client-side batching removes:
+expect some symbols to honestly show unavailable/stale immediately after a
+cold cache, filling in as caching (60s TTL) carries earlier successes
+forward. This is intentional, honest behavior — never fabricated data — not
+a bug. The two ways to fully resolve it are outside this change's scope by
+the product owner's own instruction: upgrade the Twelve Data plan, or trim
+the default catalog fetched per screen. See
+docs/MKR-PHASE2-ARCHITECTURE.md for detail.
+
 ```
 Flutter  --HTTPS/WS-->  MKR Worker  -->  Twelve Data (primary)
                              |      -->  Alpaca (standby, disabled by default)
@@ -186,6 +209,13 @@ outage). A healthy-but-empty quote (e.g. an unsupported symbol, or simply
 failure. See `src/providers/provider-manager.ts` and its tests.
 
 ## Caching
+
+**Note:** Cloudflare KV rejects any `expirationTtl` under 60 seconds
+outright (confirmed against the live API during deployment) — every cache
+TTL default is 60s+ accordingly, and Admin Web's cache settings page
+enforces the same floor. A Cache-API-backed path is the documented
+upgrade if sub-60s quote freshness is ever needed (see the architecture
+doc's tradeoffs section).
 
 KV-backed, TTL-based, plus per-isolate in-flight request de-duplication —
 concurrent requests for the same symbol collapse into one upstream call

@@ -151,4 +151,50 @@ void main() {
       );
     });
   });
+
+  group('parseQuotesBatch', () {
+    // Regression coverage for the "N individual /quote calls exhausts
+    // Twelve Data Free's rate limit" bug found live: getQuotes() must
+    // consume the batch endpoint's flat items array in one pass, not loop
+    // parseQuote per symbol.
+    test('parses every item in the batch response', () {
+      final quotes = TwelveDataParser.parseQuotesBatch(
+        json: _envelope({
+          'items': [
+            {'symbol': 'AAPL', 'price': 227.5},
+            {'symbol': 'XAU/USD', 'price': 3412.8},
+          ],
+          'errors': [],
+        }),
+        assetClassFor: (symbol) => symbol == 'XAU/USD' ? AssetClass.gold : AssetClass.usStock,
+      );
+      expect(quotes, hasLength(2));
+      expect(quotes.firstWhere((q) => q.symbol == 'AAPL').price, 227.5);
+      expect(quotes.firstWhere((q) => q.symbol == 'XAU/USD').assetClass, AssetClass.gold);
+    });
+
+    test('skips an item missing a price rather than fabricating one', () {
+      final quotes = TwelveDataParser.parseQuotesBatch(
+        json: _envelope({
+          'items': [
+            {'symbol': 'AAPL'},
+          ],
+          'errors': [],
+        }),
+        assetClassFor: (_) => AssetClass.usStock,
+      );
+      expect(quotes, isEmpty);
+    });
+
+    test('returns empty for an error envelope', () {
+      expect(
+        TwelveDataParser.parseQuotesBatch(json: _errorEnvelope('PROVIDER_UNAVAILABLE'), assetClassFor: (_) => AssetClass.usStock),
+        isEmpty,
+      );
+    });
+
+    test('returns empty when items is missing or not a list', () {
+      expect(TwelveDataParser.parseQuotesBatch(json: _envelope(const {}), assetClassFor: (_) => AssetClass.usStock), isEmpty);
+    });
+  });
 }

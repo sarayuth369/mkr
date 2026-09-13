@@ -21,7 +21,10 @@ body {
   color: var(--text);
 }
 
-.screen[hidden] { display: none; }
+/* #login-screen/#app-screen each set their own `display` below (needed for
+   layout when shown); an ID selector always outranks this class+attribute
+   selector on specificity alone, so the hidden state must be ID-scoped too. */
+#login-screen[hidden], #app-screen[hidden] { display: none; }
 
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-mark {

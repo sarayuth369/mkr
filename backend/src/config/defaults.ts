@@ -40,11 +40,15 @@ export function defaultConfig(env: Env): RuntimeConfig {
     secondaryProvider: (env.MARKET_SECONDARY_PROVIDER as ProviderId) || 'alpaca',
     secondaryEnabled: env.MARKET_SECONDARY_ENABLED === 'true',
     cacheTtls: {
-      quoteSeconds: Number(env.CACHE_QUOTE_TTL_SECONDS) || 15,
-      candleIntradaySeconds: Number(env.CACHE_CANDLE_INTRADAY_TTL_SECONDS) || 30,
+      // Cloudflare KV rejects any expirationTtl under 60 seconds (a hard
+      // platform floor, confirmed during deployment) - defaults are 60+
+      // accordingly. A Cache-API-backed path is the documented upgrade if
+      // sub-60s quote freshness is ever needed (see the architecture doc).
+      quoteSeconds: Number(env.CACHE_QUOTE_TTL_SECONDS) || 60,
+      candleIntradaySeconds: Number(env.CACHE_CANDLE_INTRADAY_TTL_SECONDS) || 60,
       candleDailySeconds: Number(env.CACHE_CANDLE_DAILY_TTL_SECONDS) || 600,
       statusSeconds: Number(env.CACHE_STATUS_TTL_SECONDS) || 60,
-      staleThresholdSeconds: Number(env.STALE_THRESHOLD_SECONDS) || 60,
+      staleThresholdSeconds: Number(env.STALE_THRESHOLD_SECONDS) || 90,
     },
     rateLimits: {
       publicPerMinute: Number(env.RATE_LIMIT_PUBLIC_PER_MINUTE) || 60,
@@ -64,9 +68,13 @@ export function defaultConfig(env: Env): RuntimeConfig {
   };
 }
 
-/** Cache TTL validation - refuses dangerous unlimited/zero values (spec 21). */
+/**
+ * Cache TTL validation - refuses dangerous unlimited/zero values (spec 21)
+ * and anything under KV's hard 60-second `expirationTtl` floor, which the
+ * platform rejects outright rather than rounding up.
+ */
 export function isValidTtlSeconds(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 24 * 60 * 60;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 60 && value <= 24 * 60 * 60;
 }
 
 export function isValidRateLimit(value: unknown): value is number {

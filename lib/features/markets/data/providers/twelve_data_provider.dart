@@ -51,6 +51,18 @@ class TwelveDataProvider implements MarketDataProvider {
 
   Uri _restUri(String path, Map<String, String> query) => Uri.parse('$backendBaseUrl$path').replace(queryParameters: query);
 
+  /// `backendBaseUrl` is an http(s) URL (matching `--dart-define
+  /// MARKET_BACKEND_BASE_URL`); WebSocket connections need ws(s). Naive
+  /// string concatenation without this conversion produces an invalid
+  /// `https://.../stream` URI, which throws an uncaught
+  /// `WebSocketChannelException` on the web platform (confirmed live) —
+  /// silently swallowed as a same-frame connect failure on IO instead,
+  /// which is why this only surfaced when actually running the app.
+  Uri _wsUri(String path) {
+    final wsBase = backendBaseUrl.replaceFirst(RegExp(r'^http'), 'ws');
+    return Uri.parse('$wsBase$path');
+  }
+
   @override
   Future<MarketQuote?> getQuote(String symbol) async {
     try {
@@ -64,10 +76,23 @@ class TwelveDataProvider implements MarketDataProvider {
     }
   }
 
+  /// ONE request for every requested symbol via the backend's batch
+  /// endpoint — calling [getQuote] per symbol here (even concurrently) would
+  /// mean N individual REST calls for a client's full catalog load, which
+  /// exhausts Twelve Data Free's rate limit almost immediately (confirmed
+  /// live: every quote came back PROVIDER_UNAVAILABLE under that load).
   @override
   Future<List<MarketQuote>> getQuotes(List<String> symbols) async {
-    final results = await Future.wait(symbols.map(getQuote));
-    return results.whereType<MarketQuote>().toList();
+    if (symbols.isEmpty) return const [];
+    try {
+      final response = await _http.get(_restUri('/api/mkr/market/quotes', {'symbols': symbols.join(',')}));
+      if (response.statusCode != 200) return const [];
+      final json = jsonDecode(response.body);
+      if (json is! Map<String, dynamic>) return const [];
+      return TwelveDataParser.parseQuotesBatch(json: json, assetClassFor: _assetClassFor);
+    } catch (_) {
+      return const [];
+    }
   }
 
   @override
@@ -118,7 +143,7 @@ class TwelveDataProvider implements MarketDataProvider {
 
   void _openSocket() {
     try {
-      final channel = _openWebSocket(Uri.parse('$backendBaseUrl/api/mkr/market/stream'));
+      final channel = _openWebSocket(_wsUri('/api/mkr/market/stream'));
       _channel = channel;
       _reconnectAttempt = 0;
       _channelSubscription = channel.stream.listen(

@@ -56,6 +56,27 @@ export function parseTwelveDataQuote(json: Record<string, unknown>, mkrSymbol: s
   };
 }
 
+/**
+ * Twelve Data's multi-symbol `/quote?symbol=A,B,C` response is an object
+ * keyed by provider symbol (each value shaped like the single-symbol
+ * response) - NOT an array, and NOT the same shape as a single-symbol
+ * request. [providerToMkr] maps each requested provider symbol back to its
+ * MKR symbol so the result can be keyed the way the rest of the app expects.
+ * A symbol Twelve Data omitted or returned an error for maps to `null`,
+ * never fabricated.
+ */
+export function parseTwelveDataBatchQuotes(
+  json: Record<string, unknown>,
+  providerToMkr: Record<string, string>,
+): Record<string, NormalizedQuote | null> {
+  const result: Record<string, NormalizedQuote | null> = {};
+  for (const [providerSymbol, mkrSymbol] of Object.entries(providerToMkr)) {
+    const entry = json[providerSymbol];
+    result[mkrSymbol] = entry && typeof entry === 'object' ? parseTwelveDataQuote(entry as Record<string, unknown>, mkrSymbol) : null;
+  }
+  return result;
+}
+
 export function parseTwelveDataCandles(
   json: Record<string, unknown>,
   mkrSymbol: string,

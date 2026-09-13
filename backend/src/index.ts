@@ -69,8 +69,8 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
 }
 
 async function routeMarket(request: Request, env: Env, path: string, id: string): Promise<Response> {
-  if (path === '/api/mkr/market/stream') return handleMarketStream(request, env);
-
+  // '/api/mkr/market/stream' is intercepted earlier in fetch(), before this
+  // function is ever called - see the comment there for why.
   const { limit } = rateLimitEnv(env, 'public');
   const rl = await checkRateLimit(env.MKR_CACHE, `public:${clientKeyFromRequest(request)}`, limit, 60);
   if (!rl.allowed) return rateLimitedResponse(rl);
@@ -95,6 +95,15 @@ export default {
     if (request.method === 'OPTIONS') {
       const headers = isAdminRoute ? adminCorsHeaders(origin, env.ADMIN_WEB_ORIGIN) : publicCorsHeaders();
       return new Response(null, { status: 204, headers });
+    }
+
+    // The WebSocket upgrade response (HTTP 101, carrying a `webSocket` pair)
+    // must be returned untouched - mutating its headers afterward (adding
+    // CORS/X-Request-Id below) breaks the handshake and the client sees an
+    // immediate abnormal close (code 1006). Confirmed against the live
+    // deployment, not a theoretical concern.
+    if (path === '/api/mkr/market/stream') {
+      return handleMarketStream(request, env);
     }
 
     try {

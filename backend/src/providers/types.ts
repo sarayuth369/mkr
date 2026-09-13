@@ -21,6 +21,18 @@ export interface MarketDataProvider {
    */
   getQuote(providerSymbol: string, mkrSymbol: string): Promise<NormalizedQuote | null>;
 
+  /**
+   * Fetches many quotes in as few upstream requests as the provider allows
+   * (ideally one) - keyed by MKR symbol. Critical for avoiding a "one
+   * upstream call per catalog symbol per client" storm: MKR's Home/Markets
+   * screens legitimately want ~28 quotes on a single load, and firing that
+   * many individual REST calls concurrently exhausts Twelve Data Free's
+   * rate limit almost immediately (confirmed live during deployment - every
+   * quote came back PROVIDER_UNAVAILABLE under that load). [providerToMkr]
+   * maps each provider symbol to request back to its MKR symbol.
+   */
+  getBatchQuotes(providerToMkr: Record<string, string>): Promise<Record<string, NormalizedQuote | null>>;
+
   getCandles(providerSymbol: string, mkrSymbol: string, timeframe: MkrTimeframe, outputSize: number): Promise<NormalizedCandle[]>;
 
   getMarketStatus(providerSymbol: string, mkrSymbol: string): Promise<NormalizedMarketStatus>;

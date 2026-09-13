@@ -118,6 +118,51 @@ remains in place for `AlpacaProvider`, see Limitations below).
 `MarketService`, `MarketDetailController`, and every screen are unchanged —
 they only ever depended on the `MarketService` interface.
 
+## Deployment findings (real bugs only live testing could catch)
+
+Deploying to a real Cloudflare account and actually running the compiled
+Flutter app against it (not just curl) surfaced several defects no amount
+of unit testing against mocks would have caught, each fixed and covered by
+a regression test:
+
+1. **KV's hard 60-second `expirationTtl` floor.** The health-snapshot cache
+   used a 10s TTL; KV rejected the write outright. Fixed by clamping in
+   `cache-service.ts` and raising every cache-TTL default that was below 60s.
+2. **Mutating a WebSocket-upgrade `Response`'s headers breaks the handshake.**
+   `index.ts` was adding CORS/`X-Request-Id` headers to every response
+   including the 101 upgrade response for `/api/mkr/market/stream`, which
+   the client saw as an immediate abnormal close (code 1006). Fixed by
+   returning that one route's response untouched, before the generic
+   header-mutation logic.
+3. **"Illegal invocation" from an unbound `fetch` reference.** Both
+   providers stored `private readonly fetchImpl: typeof fetch = fetch` as a
+   constructor default; calling it later as `this.fetchImpl(...)` loses the
+   `this` binding the Workers runtime's `fetch` implementation requires.
+   Fixed with `fetch.bind(globalThis)`.
+4. **A connect-vs-query race on the Flutter side.** `MarketProviderManager`
+   only set `_active` once its async `connect()` resolved, but every
+   controller calls `getAllQuotes()`/`getQuote()` immediately in its own
+   constructor — reliably losing that race and seeing `_active == null`
+   forever (an empty, error-free result, not a crash - the hardest kind of
+   bug to notice). Fixed with an `ensureConnected()` that every data method
+   awaits, sharing one in-flight connection attempt.
+5. **A concurrent-failure-storm corrupting shared state.** `getAllQuotes()`
+   fires every catalog symbol concurrently; several unsupported/unmapped
+   symbols returning null in the same instant each independently triggered
+   their own `healthCheck()` call, and any one of those being slow enough
+   could spuriously null out `_active` for the whole manager - observed
+   live as real prices rendering correctly while the status chip
+   simultaneously read "PROVIDER UNAVAILABLE." Fixed by deduplicating
+   concurrent failure-handling into one shared in-flight check.
+6. **N individual REST calls instead of one batched call.** `getQuotes()`
+   (Flutter and backend both) looped a per-symbol call rather than using
+   the batch endpoint/upstream support that already existed - for a ~28-
+   symbol catalog load this alone exhausted Twelve Data Free's rate limit
+   immediately, independent of bug 5. Fixed by having both layers call
+   Twelve Data's comma-separated `/quote` support (chunked at 8 provider
+   symbols per upstream call - see `backend/README.md`'s "Known limitation"
+   for why 8, not a bigger number).
+
 ## Known limitation carried into Phase 3
 
 Flutter's client-side `AlpacaProvider` still targets a standalone

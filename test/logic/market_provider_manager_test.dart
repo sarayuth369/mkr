@@ -23,7 +23,7 @@ MarketQuote _quote(String symbol, double price, {MarketDataSource source = Marke
 /// A controllable fake so tests can simulate a genuinely unhealthy provider
 /// vs. one that's merely quiet (e.g. market closed) without any networking.
 class FakeProvider implements MarketDataProvider {
-  FakeProvider(this.id, {this.healthy = true, this.quoteResult});
+  FakeProvider(this.id, {this.healthy = true, this.quoteResult, this.healthCheckDelay});
 
   @override
   final String id;
@@ -31,9 +31,15 @@ class FakeProvider implements MarketDataProvider {
   MarketQuote? quoteResult;
   bool connected = false;
   int getQuoteCalls = 0;
+  int healthCheckCalls = 0;
+  Duration? healthCheckDelay;
 
   @override
-  Future<bool> healthCheck() async => healthy;
+  Future<bool> healthCheck() async {
+    healthCheckCalls++;
+    if (healthCheckDelay != null) await Future<void>.delayed(healthCheckDelay!);
+    return healthy;
+  }
 
   @override
   Future<void> connect() async => connected = true;
@@ -41,15 +47,21 @@ class FakeProvider implements MarketDataProvider {
   @override
   Future<void> disconnect() async => connected = false;
 
+  MarketQuote? Function(String symbol)? quoteResultFor;
+
   @override
   Future<MarketQuote?> getQuote(String symbol) async {
     getQuoteCalls++;
-    return quoteResult;
+    return quoteResultFor != null ? quoteResultFor!(symbol) : quoteResult;
   }
 
+  int getQuotesCalls = 0;
+
   @override
-  Future<List<MarketQuote>> getQuotes(List<String> symbols) async =>
-      symbols.map((s) => quoteResult).whereType<MarketQuote>().toList();
+  Future<List<MarketQuote>> getQuotes(List<String> symbols) async {
+    getQuotesCalls++;
+    return symbols.map((s) => quoteResultFor != null ? quoteResultFor!(s) : quoteResult).whereType<MarketQuote>().toList();
+  }
 
   @override
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async => const [];
@@ -65,6 +77,48 @@ class FakeProvider implements MarketDataProvider {
 }
 
 void main() {
+  test('getQuote auto-connects when called before an explicit connect() — no permanent race against startup', () async {
+    // Regression test: a controller that calls getQuote() (via getAllQuotes)
+    // immediately in its own constructor — every real controller does —
+    // used to silently see activeProvider == null and get an empty result
+    // forever, because connect() was fired-and-forgotten separately in
+    // app.dart and nothing made later calls wait for it. Confirmed live
+    // against the deployed backend before this fix existed.
+    final primary = FakeProvider('twelveData', healthy: true, quoteResult: _quote('AAPL', 123));
+    final manager = MarketProviderManager(primary: primary);
+
+    final result = await manager.getQuote('AAPL');
+
+    expect(result?.price, 123);
+    expect(manager.mode, MarketDataMode.live);
+  });
+
+  test('concurrent unsupported-symbol failures collapse into one health check, not one per symbol', () async {
+    // Regression test: getAllQuotes() fires every catalog symbol
+    // concurrently via Future.wait. If several are unsupported/unmapped
+    // (returning null) in the same instant, each used to independently
+    // trigger its own healthCheck() call - confirmed live against the
+    // deployed backend, where six real symbols rendered correctly on the
+    // Markets screen at the same time the status chip read "PROVIDER
+    // UNAVAILABLE", caused by exactly this concurrent-storm race.
+    final primary = FakeProvider('twelveData', healthy: true, healthCheckDelay: const Duration(milliseconds: 30))
+      ..quoteResultFor = (symbol) => symbol == 'SUPPORTED' ? _quote(symbol, 42) : null;
+    final manager = MarketProviderManager(primary: primary);
+    await manager.connect();
+    primary.healthCheckCalls = 0; // reset the count from connect()'s own probe
+
+    final results = await Future.wait([
+      manager.getQuote('UNSUPPORTED_A'),
+      manager.getQuote('UNSUPPORTED_B'),
+      manager.getQuote('UNSUPPORTED_C'),
+      manager.getQuote('SUPPORTED'),
+    ]);
+
+    expect(primary.healthCheckCalls, 1, reason: 'one shared health check, not one per failed symbol');
+    expect(results, [null, null, null, _quote('SUPPORTED', 42)]);
+    expect(manager.mode, MarketDataMode.live, reason: 'the single health check confirmed the provider is fine');
+  });
+
   test('connects to a healthy primary and reports live', () async {
     final primary = FakeProvider('twelveData', healthy: true);
     final manager = MarketProviderManager(primary: primary);
@@ -169,5 +223,20 @@ void main() {
     expect(primary.connected, isFalse);
     expect(manager.mode, MarketDataMode.offline);
     expect(manager.activeProvider, isNull);
+  });
+
+  test('getQuotes delegates to the provider\'s own batch method once, never loops getQuote per symbol', () async {
+    // Regression test: a whole-catalog load (~28 symbols) must be one
+    // upstream call, not N - confirmed live against the deployed backend,
+    // where N concurrent individual quote calls exhausted Twelve Data
+    // Free's rate limit and every quote came back unavailable.
+    final primary = FakeProvider('twelveData', healthy: true)..quoteResultFor = (s) => _quote(s, 1);
+    final manager = MarketProviderManager(primary: primary);
+
+    final results = await manager.getQuotes(['AAPL', 'MSFT', 'GOOGL']);
+
+    expect(results, hasLength(3));
+    expect(primary.getQuotesCalls, 1);
+    expect(primary.getQuoteCalls, 0);
   });
 }

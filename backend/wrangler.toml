@@ -21,17 +21,17 @@ compatibility_date = "2024-11-01"
 MARKET_PRIMARY_PROVIDER = "twelve_data"
 MARKET_SECONDARY_PROVIDER = "alpaca"
 MARKET_SECONDARY_ENABLED = "false"
-CACHE_QUOTE_TTL_SECONDS = "15"
-CACHE_CANDLE_INTRADAY_TTL_SECONDS = "30"
+# Cloudflare KV rejects any expirationTtl under 60 seconds outright (a hard
+# platform floor found during deployment) - every TTL below is 60+.
+CACHE_QUOTE_TTL_SECONDS = "60"
+CACHE_CANDLE_INTRADAY_TTL_SECONDS = "60"
 CACHE_CANDLE_DAILY_TTL_SECONDS = "600"
 CACHE_STATUS_TTL_SECONDS = "60"
-STALE_THRESHOLD_SECONDS = "60"
+STALE_THRESHOLD_SECONDS = "90"
 RATE_LIMIT_PUBLIC_PER_MINUTE = "60"
 RATE_LIMIT_ADMIN_PER_MINUTE = "120"
 RATE_LIMIT_WS_MAX_CONNECTIONS = "500"
-# Set this to the real deployed Admin Web origin before going to production
-# (e.g. "https://mkr-admin.pages.dev") - admin CORS never allows "*".
-ADMIN_WEB_ORIGIN = "http://localhost:5173"
+ADMIN_WEB_ORIGIN = "https://mkr-admin.pages.dev"
 
 [observability]
 enabled = true
@@ -43,11 +43,11 @@ enabled = true
 # then replace the placeholder ids below with the ones it prints.
 [[kv_namespaces]]
 binding = "MKR_CONFIG"
-id = "REPLACE_WITH_MKR_CONFIG_KV_NAMESPACE_ID"
+id = "f7b4ce88b79943948fd44ed4aea6753d"
 
 [[kv_namespaces]]
 binding = "MKR_CACHE"
-id = "REPLACE_WITH_MKR_CACHE_KV_NAMESPACE_ID"
+id = "aba1430cdadc425687987bf069680f3a"
 
 # ── D1: structured admin data (symbols, audit log) ──────────────────────
 # Create with:
@@ -57,7 +57,7 @@ id = "REPLACE_WITH_MKR_CACHE_KV_NAMESPACE_ID"
 [[d1_databases]]
 binding = "MKR_DB"
 database_name = "mkr-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "68b60095-6159-4e80-9d58-ac9b29354441"
 
 # ── Durable Object: single shared upstream market WebSocket ─────────────
 # One MarketStreamRoom instance fans out live ticks to every connected

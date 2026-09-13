@@ -59,5 +59,6 @@ backend/.wrangler/
 backend/dist/
 admin/node_modules/
 admin/dist/
+admin/.wrangler/
 *.sqlite
 *.sqlite-journal
