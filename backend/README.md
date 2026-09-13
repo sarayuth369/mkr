@@ -1,0 +1,218 @@
+# MKR Backend
+
+The single market-data gateway for Market Radar (MKR). A Cloudflare Worker
+that Flutter talks to over HTTPS/WebSocket — Flutter never calls Twelve Data
+or Alpaca directly, and never holds an API key.
+
+```
+Flutter  --HTTPS/WS-->  MKR Worker  -->  Twelve Data (primary)
+                             |      -->  Alpaca (standby, disabled by default)
+                             |
+                     KV cache / D1 config / Durable Object WS fan-out
+```
+
+This is a **new, isolated** Worker — it does not reuse or modify any other
+Cloudflare project. (`D:\FlutterProjects\auc\backend`, a separate live
+Worker for a different app, was inspected during planning and confirmed
+unrelated to MKR; nothing there was touched.)
+
+## Architecture
+
+- **`src/index.ts`** — router, CORS, rate limiting, error envelope.
+- **`src/providers/`** — `MarketDataProvider` interface, `TwelveDataProvider`
+  (primary), `AlpacaProvider` (standby), `MarketProviderManager` (failover),
+  `provider-registry.ts` (pluggable construction — adding a future provider
+  is one new file + one `switch` case, never a route change).
+- **`src/symbols/`** — `SymbolCatalog` (D1-backed MKR↔provider symbol table)
+  and pure mapping/validation logic.
+- **`src/cache/`** — KV-backed response cache with per-isolate in-flight
+  request de-duplication.
+- **`src/config/`** — KV-backed runtime config (feature flags, provider
+  toggles, cache TTLs, rate limits) that Admin Web edits without a redeploy.
+- **`src/ws/`** — `MarketStreamRoom`, a Durable Object holding the **one**
+  shared upstream Twelve Data WebSocket connection and fanning normalized
+  ticks out to every connected Flutter client.
+- **`src/admin/`** — session-token auth, admin route handlers, audit log.
+- **`src/market/`** — the public `/api/mkr/market/*` route handlers.
+
+See `../docs/MKR-PHASE2-ARCHITECTURE.md` for the full request-flow diagram
+and the design tradeoffs (caching, failover, WebSocket fan-out).
+
+## Environment variables (`wrangler.toml [vars]` — safe to commit)
+
+| Variable | Purpose |
+|---|---|
+| `MARKET_PRIMARY_PROVIDER` | `twelve_data` (default) |
+| `MARKET_SECONDARY_PROVIDER` | `alpaca` |
+| `MARKET_SECONDARY_ENABLED` | `false` by default — see Licensing below |
+| `CACHE_QUOTE_TTL_SECONDS`, `CACHE_CANDLE_INTRADAY_TTL_SECONDS`, `CACHE_CANDLE_DAILY_TTL_SECONDS`, `CACHE_STATUS_TTL_SECONDS`, `STALE_THRESHOLD_SECONDS` | Cache TTL defaults; overridable at runtime from Admin Web |
+| `RATE_LIMIT_PUBLIC_PER_MINUTE`, `RATE_LIMIT_ADMIN_PER_MINUTE`, `RATE_LIMIT_WS_MAX_CONNECTIONS` | Rate-limit defaults; overridable from Admin Web |
+| `ADMIN_WEB_ORIGIN` | The deployed Admin Web origin — admin CORS never uses `*` |
+
+Runtime overrides made from Admin Web live in the `MKR_CONFIG` KV namespace
+and take precedence over these defaults without a redeploy.
+
+## Secrets (never committed — `wrangler secret put <NAME>`)
+
+| Secret | Required for |
+|---|---|
+| `TWELVE_DATA_API_KEY` | Any real (non-mocked) market data. **Reuse the product owner's existing key — do not create a new Twelve Data account.** |
+| `ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY` | Only if/when Alpaca is activated (see Licensing) |
+| `ADMIN_PASSWORD` | Signing in to Admin Web |
+| `ADMIN_SESSION_SECRET` | Signing admin session tokens — any random 32+ byte string, e.g. `openssl rand -base64 32` |
+
+Without `TWELVE_DATA_API_KEY` configured, `/api/mkr/market/*` honestly
+returns `PROVIDER_UNAVAILABLE` rather than fabricating data — this is by
+design (see Phase 1's data-honesty rule) and is exactly the state the
+automated test suite runs in (mocked HTTP responses, no real key needed).
+
+## Local development
+
+```bash
+npm install
+wrangler kv:namespace create MKR_CONFIG   # then paste the id into wrangler.toml
+wrangler kv:namespace create MKR_CACHE
+wrangler d1 create mkr-db                 # then paste the id into wrangler.toml
+wrangler d1 execute mkr-db --local --file=./schema.sql
+wrangler secret put TWELVE_DATA_API_KEY   # optional locally - omit to exercise the offline/error path
+npm run dev
+```
+
+## Deployment
+
+```bash
+wrangler d1 execute mkr-db --file=./schema.sql   # once, against the remote DB
+wrangler secret put TWELVE_DATA_API_KEY
+wrangler secret put ADMIN_PASSWORD
+wrangler secret put ADMIN_SESSION_SECRET
+npm run deploy
+```
+
+Then point the Flutter build at it:
+
+```bash
+flutter build apk --dart-define=MARKET_DATA_MODE=real --dart-define=MARKET_BACKEND_BASE_URL=https://<your-worker>.workers.dev
+```
+
+Nothing here was auto-deployed by this change — see the final report for
+exactly what remains manual.
+
+## API
+
+All responses use `{"success": true, "data": ...}` or
+`{"success": false, "error": {"code", "message"}}`. Error codes:
+`INVALID_SYMBOL`, `INVALID_INTERVAL`, `INVALID_PARAMETER`,
+`PROVIDER_UNAVAILABLE`, `PROVIDER_TIMEOUT`, `PROVIDER_RATE_LIMIT`,
+`AUTH_REQUIRED`, `ADMIN_FORBIDDEN`, `RATE_LIMITED`, `NOT_FOUND`,
+`INTERNAL_ERROR`.
+
+### `GET /api/mkr/market/quote?symbol=XAU/USD`
+
+```json
+{"success": true, "data": {
+  "symbol": "XAU/USD", "name": "Gold Spot", "price": 3412.8,
+  "change": 18.4, "changePercent": 0.54, "open": 3394.4, "high": 3421.1,
+  "low": 3388.2, "previousClose": 3394.4, "volume": null, "bid": null,
+  "ask": null, "currency": "USD", "timestamp": 1234567890000,
+  "source": "twelve_data", "isLive": true, "sessionStatus": "open"
+}}
+```
+
+`data` is `null` for a genuinely healthy-but-empty result (never fabricated).
+
+### `GET /api/mkr/market/quotes?symbols=XAU/USD,AAPL,MSFT`
+
+Partial success — one bad symbol never fails the batch:
+
+```json
+{"success": true, "data": {
+  "items": [ /* NormalizedQuote objects for the symbols that resolved */ ],
+  "errors": [{"symbol": "MSFT", "code": "PROVIDER_TIMEOUT", "message": "..."}],
+  "source": "twelve_data", "timestamp": 1234567890000
+}}
+```
+
+### `GET /api/mkr/market/candles?symbol=AAPL&interval=d1&outputsize=30`
+
+`interval` is one of `m1 m5 m15 h1 h4 d1 w1 mo1`. `data` is an oldest-first
+array of `{symbol, interval, timestamp, open, high, low, close, volume, source}`.
+
+### `GET /api/mkr/market/status?symbol=AAPL`
+
+`{"symbol", "market", "exchange", "session": "open|closed|pre_market|after_hours|unknown", "isOpen", "timestamp", "source"}`.
+`isOpen`/`session` are `null`/`unknown` rather than guessed when the
+provider doesn't report a session.
+
+### `GET /api/mkr/market/health`
+
+```json
+{"success": true, "data": {
+  "primary": {"provider": "twelve_data", "status": "healthy", "latencyMs": 123, "lastSuccessAt": ..., "lastErrorAt": null, "lastErrorMessage": null, "errorCount": 0},
+  "secondary": {"provider": "alpaca", "status": "disabled", "latencyMs": null, ...}
+}}
+```
+
+### `GET /api/mkr/health`, `GET /api/mkr/version`
+
+Plain liveness/version endpoints, no auth.
+
+### WebSocket `wss://<host>/api/mkr/market/stream`
+
+Client → server: `{"action": "subscribe" | "unsubscribe", "symbols": ["AAPL", "XAU/USD"]}`
+(plain MKR symbols — the backend maps to the provider symbol internally).
+
+Server → client tick: `{"symbol": "AAPL", "price": 227.5, "timestamp": 1234567890000, "source": "twelve_data"}`
+
+One shared upstream Twelve Data connection serves every connected client
+(see `src/ws/market-stream-do.ts`); subscriptions are ref-counted so the
+upstream unsubscribes/disconnects once nobody needs a symbol.
+
+### Admin API — `/api/mkr/admin/*`
+
+`POST /login {password}` → `{token, expiresAt}` (rate-limited to 5/min/IP).
+Every other admin route requires `Authorization: Bearer <token>` and is
+rate-limited separately from the public API. See `src/admin/admin-routes.ts`
+for the full list (`dashboard`, `providers`, `symbols`, `cache`,
+`rate-limits`, `features`, `health`, `logs`, `settings`).
+
+## Provider failover
+
+`Twelve Data (primary) → [confirmed unhealthy via healthCheck] → Alpaca (if MARKET_SECONDARY_ENABLED)`.
+A single failed request does **not** trigger failover by itself — the
+manager re-probes `healthCheck()` first; if the primary is still reachable,
+the original error is propagated (a transient timeout/rate-limit, not an
+outage). A healthy-but-empty quote (e.g. an unsupported symbol, or simply
+"nothing to report") is returned as `data: null` and never counted as a
+failure. See `src/providers/provider-manager.ts` and its tests.
+
+## Caching
+
+KV-backed, TTL-based, plus per-isolate in-flight request de-duplication —
+concurrent requests for the same symbol collapse into one upstream call
+(see `src/cache/cache-service.ts`). Cross-isolate concurrent misses can
+each make one upstream call (KV has no compare-and-swap); a Durable-Object
+single-flight lock would close that gap fully and is a documented future
+enhancement, not built now to avoid overengineering an early-stage product.
+
+## Security
+
+- No API key/secret ever appears in `[vars]`, source, git history, logs, or
+  any response body — see `src/logging.ts`'s redaction and
+  `src/admin/audit-log.ts`'s "refuse to log anything secret-shaped" guard.
+- Symbols are validated by format (`src/symbols/symbol-mapper.ts`) and
+  against the D1 catalog before ever reaching a provider call — no
+  user-controlled string reaches an upstream URL unvalidated.
+- No `/proxy?url=...`-style endpoint exists anywhere; every upstream call
+  targets a hardcoded host.
+- Admin endpoints require a signed session token; CORS for admin endpoints
+  is restricted to `ADMIN_WEB_ORIGIN`, never `*`.
+
+## Licensing
+
+Twelve Data: this gateway calls it server-side; production public display
+requires whatever plan/rights the product owner's Twelve Data account
+actually carries — this code does not change or expand that. Alpaca:
+implemented and wired but **disabled by default**
+(`MARKET_SECONDARY_ENABLED=false`) because its commercial redistribution
+rights for MKR have not been confirmed — do not flip this in production
+until that is resolved.

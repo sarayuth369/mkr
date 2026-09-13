@@ -1,0 +1,83 @@
+name = "mkr-backend"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# ── Isolated, brand-new Worker ──────────────────────────────────────────
+# This is a NEW Cloudflare Worker created specifically for MKR (Market
+# Radar). It intentionally does NOT reuse `auc-backend` (a separate, live
+# production Worker for a different app, `com.sarayuth369.auc`) - that
+# project was inspected during MKR Phase 1/2 planning and confirmed to be
+# unrelated infrastructure for a different product; reusing it would risk
+# a different paid app's production behavior for no benefit. This Worker
+# can be deployed under the same Cloudflare account without creating a new
+# account, per the Phase 2 spec's constraint.
+
+# ── Non-secret runtime config ───────────────────────────────────────────
+# All of this is safe to commit - no API keys or credentials. Flip these
+# from the Cloudflare dashboard or via `wrangler deploy` after editing;
+# Admin Web also reads/writes most of this at runtime through KV (see
+# CONFIG_KV below) without requiring a redeploy.
+[vars]
+MARKET_PRIMARY_PROVIDER = "twelve_data"
+MARKET_SECONDARY_PROVIDER = "alpaca"
+MARKET_SECONDARY_ENABLED = "false"
+CACHE_QUOTE_TTL_SECONDS = "15"
+CACHE_CANDLE_INTRADAY_TTL_SECONDS = "30"
+CACHE_CANDLE_DAILY_TTL_SECONDS = "600"
+CACHE_STATUS_TTL_SECONDS = "60"
+STALE_THRESHOLD_SECONDS = "60"
+RATE_LIMIT_PUBLIC_PER_MINUTE = "60"
+RATE_LIMIT_ADMIN_PER_MINUTE = "120"
+RATE_LIMIT_WS_MAX_CONNECTIONS = "500"
+# Set this to the real deployed Admin Web origin before going to production
+# (e.g. "https://mkr-admin.pages.dev") - admin CORS never allows "*".
+ADMIN_WEB_ORIGIN = "http://localhost:5173"
+
+[observability]
+enabled = true
+
+# ── KV: fast runtime config + response caching ──────────────────────────
+# Create with:
+#   wrangler kv:namespace create MKR_CONFIG
+#   wrangler kv:namespace create MKR_CACHE
+# then replace the placeholder ids below with the ones it prints.
+[[kv_namespaces]]
+binding = "MKR_CONFIG"
+id = "REPLACE_WITH_MKR_CONFIG_KV_NAMESPACE_ID"
+
+[[kv_namespaces]]
+binding = "MKR_CACHE"
+id = "REPLACE_WITH_MKR_CACHE_KV_NAMESPACE_ID"
+
+# ── D1: structured admin data (symbols, audit log) ──────────────────────
+# Create with:
+#   wrangler d1 create mkr-db
+# then replace database_id below and run:
+#   wrangler d1 execute mkr-db --file=./schema.sql
+[[d1_databases]]
+binding = "MKR_DB"
+database_name = "mkr-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# ── Durable Object: single shared upstream market WebSocket ─────────────
+# One MarketStreamRoom instance fans out live ticks to every connected
+# Flutter client from ONE upstream Twelve Data WebSocket connection,
+# instead of one upstream connection per client (see src/ws/market-stream-do.ts).
+[[durable_objects.bindings]]
+name = "MARKET_STREAM"
+class_name = "MarketStreamRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MarketStreamRoom"]
+
+# ── Secrets (never committed - set with `wrangler secret put <NAME>`) ───
+# TWELVE_DATA_API_KEY            (required for live data; existing key the
+#                                  product owner already owns - reuse it,
+#                                  do not create a new Twelve Data account)
+# ALPACA_API_KEY_ID              (optional - only if/when Alpaca is activated)
+# ALPACA_API_SECRET_KEY          (optional - only if/when Alpaca is activated)
+# ADMIN_PASSWORD                 (required to sign in to Admin Web)
+# ADMIN_SESSION_SECRET           (required - random 32+ byte string used to
+#                                  sign admin session tokens, e.g.
+#                                  `openssl rand -base64 32`)

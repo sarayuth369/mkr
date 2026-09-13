@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MKR Admin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="login-screen" class="screen">
+    <form id="login-form" class="login-card">
+      <div class="brand">
+        <div class="brand-mark">M</div>
+        <div>
+          <h1>Market Radar Admin</h1>
+          <p class="muted">See the market. Smarter.</p>
+        </div>
+      </div>
+      <label for="backend-url">Backend URL</label>
+      <input id="backend-url" type="url" placeholder="https://mkr-backend.<account>.workers.dev" required />
+      <label for="password">Admin password</label>
+      <input id="password" type="password" autocomplete="current-password" required />
+      <button type="submit">Sign in</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </div>
+
+  <div id="app-screen" class="screen" hidden>
+    <aside class="sidebar">
+      <div class="brand brand-compact">
+        <div class="brand-mark">M</div>
+        <span>MKR Admin</span>
+      </div>
+      <nav id="nav"></nav>
+      <button id="logout" class="link-button">Log out</button>
+    </aside>
+    <main id="content"></main>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

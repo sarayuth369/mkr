@@ -11,30 +11,26 @@ import '../../../../domain/market_quote.dart';
 import '../../../../domain/market_session_status.dart';
 import '../../domain/market_data_provider.dart';
 import '../../domain/timeframe.dart';
-import '../market_data_config.dart';
-import '../symbol_mapping.dart';
 import 'twelve_data_parser.dart';
 
-/// The PRIMARY market-data provider. Calls a configurable backend proxy
-/// (never Twelve Data directly, and never holds an API key — see the
-/// architecture plan's security section) at
-/// `{backendBaseUrl}/api/mkr/market/*`. Until that proxy exists, every call
-/// here fails honestly and [MarketProviderManager] reports
-/// [MarketDataMode.offline]/[MarketDataMode.providerError] — it never
-/// fabricates a quote.
+/// The PRIMARY market-data provider. Calls the MKR backend gateway
+/// (`{backendBaseUrl}/api/mkr/market/*`, see `backend/README.md`) — never
+/// Twelve Data directly, and never holds an API key. The backend does its
+/// own Twelve-Data-primary/Alpaca-standby failover and symbol mapping
+/// server-side (see `backend/src/providers/provider-manager.ts`), so this
+/// class sends plain MKR symbols and only ever parses the backend's
+/// normalized envelope — it has no provider-specific knowledge left.
 ///
-/// REST is used for quotes/history (see [getQuote], [getHistoricalCandles]);
-/// a single shared WebSocket is used for live ticks ([watchQuotes]) so the
-/// app never opens one connection per screen.
+/// A single shared WebSocket is used for live ticks ([watchQuotes]) so the
+/// app never opens one connection per screen; the backend fans that out
+/// from its own single shared upstream connection in turn.
 class TwelveDataProvider implements MarketDataProvider {
   TwelveDataProvider({
     required this.backendBaseUrl,
     http.Client? httpClient,
     WebSocketChannel Function(Uri uri)? webSocketFactory,
-    SymbolMapper? symbolMapper,
   })  : _http = httpClient ?? http.Client(),
-        _openWebSocket = webSocketFactory ?? WebSocketChannel.connect,
-        _symbolMapper = symbolMapper ?? const SymbolMapper();
+        _openWebSocket = webSocketFactory ?? WebSocketChannel.connect;
 
   @override
   final String id = 'twelveData';
@@ -42,7 +38,6 @@ class TwelveDataProvider implements MarketDataProvider {
   final String backendBaseUrl;
   final http.Client _http;
   final WebSocketChannel Function(Uri uri) _openWebSocket;
-  final SymbolMapper _symbolMapper;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _channelSubscription;
@@ -58,11 +53,8 @@ class TwelveDataProvider implements MarketDataProvider {
 
   @override
   Future<MarketQuote?> getQuote(String symbol) async {
-    final providerSymbol = _symbolMapper.toProviderSymbol(symbol, MarketDataProviderId.twelveData);
-    if (providerSymbol == null) return null;
-
     try {
-      final response = await _http.get(_restUri('/api/mkr/market/quote', {'symbol': providerSymbol}));
+      final response = await _http.get(_restUri('/api/mkr/market/quote', {'symbol': symbol}));
       if (response.statusCode != 200) return null;
       final json = jsonDecode(response.body);
       if (json is! Map<String, dynamic>) return null;
@@ -80,13 +72,10 @@ class TwelveDataProvider implements MarketDataProvider {
 
   @override
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async {
-    final providerSymbol = _symbolMapper.toProviderSymbol(symbol, MarketDataProviderId.twelveData);
-    if (providerSymbol == null) return const [];
-
     try {
       final response = await _http.get(_restUri('/api/mkr/market/candles', {
-        'symbol': providerSymbol,
-        'interval': timeframe.providerInterval,
+        'symbol': symbol,
+        'interval': timeframe.name,
       }));
       if (response.statusCode != 200) return const [];
       final json = jsonDecode(response.body);
@@ -100,17 +89,11 @@ class TwelveDataProvider implements MarketDataProvider {
   @override
   Future<MarketSessionStatus> getMarketStatus(String market) async {
     try {
-      final response = await _http.get(_restUri('/api/mkr/market/status', {'market': market}));
+      final response = await _http.get(_restUri('/api/mkr/market/status', {'symbol': market}));
       if (response.statusCode != 200) return MarketSessionStatus.unknown;
       final json = jsonDecode(response.body);
       if (json is! Map<String, dynamic>) return MarketSessionStatus.unknown;
-      return switch (json['status'] as Object?) {
-        'open' => MarketSessionStatus.open,
-        'closed' => MarketSessionStatus.closed,
-        'pre-market' => MarketSessionStatus.preMarket,
-        'after-hours' => MarketSessionStatus.afterHours,
-        _ => MarketSessionStatus.unknown,
-      };
+      return TwelveDataParser.parseMarketStatus(json);
     } catch (_) {
       return MarketSessionStatus.unknown;
     }
@@ -146,9 +129,7 @@ class TwelveDataProvider implements MarketDataProvider {
       );
       // Re-subscribe to whatever symbols were already wanted before a
       // reconnect, so callers of watchQuotes don't have to re-subscribe.
-      for (final symbol in _subscribedSymbols) {
-        _sendSubscribe(symbol);
-      }
+      if (_subscribedSymbols.isNotEmpty) _sendSubscribe(_subscribedSymbols.toList());
     } catch (_) {
       _scheduleReconnect();
     }
@@ -158,19 +139,10 @@ class TwelveDataProvider implements MarketDataProvider {
     if (raw is! String) return;
     final decoded = jsonDecode(raw);
     if (decoded is! Map<String, dynamic>) return;
-    final providerSymbol = (decoded['symbol'] as Object?)?.toString();
-    if (providerSymbol == null) return;
-    final mkrSymbol = _mkrSymbolFor(providerSymbol);
-    if (mkrSymbol == null) return;
-    final quote = TwelveDataParser.parseWsPriceEvent(json: decoded, mkrSymbol: mkrSymbol, assetClass: _assetClassFor(mkrSymbol));
+    final mkrSymbol = (decoded['symbol'] as Object?)?.toString();
+    if (mkrSymbol == null || !_subscribedSymbols.contains(mkrSymbol)) return;
+    final quote = TwelveDataParser.parseWsTick(json: decoded, mkrSymbol: mkrSymbol, assetClass: _assetClassFor(mkrSymbol));
     if (quote != null && !_quoteController.isClosed) _quoteController.add(quote);
-  }
-
-  String? _mkrSymbolFor(String providerSymbol) {
-    for (final symbol in _subscribedSymbols) {
-      if (_symbolMapper.toProviderSymbol(symbol, MarketDataProviderId.twelveData) == providerSymbol) return symbol;
-    }
-    return null;
   }
 
   void _scheduleReconnect() {
@@ -185,23 +157,18 @@ class TwelveDataProvider implements MarketDataProvider {
     _reconnectTimer = Timer(Duration(seconds: delaySeconds), _openSocket);
   }
 
-  void _sendSubscribe(String symbol) {
-    final providerSymbol = _symbolMapper.toProviderSymbol(symbol, MarketDataProviderId.twelveData);
-    if (providerSymbol == null) return;
-    _channel?.sink.add(jsonEncode({'action': 'subscribe', 'symbol': providerSymbol}));
+  void _sendSubscribe(List<String> symbols) {
+    _channel?.sink.add(jsonEncode({'action': 'subscribe', 'symbols': symbols}));
   }
 
-  void _sendUnsubscribe(String symbol) {
-    final providerSymbol = _symbolMapper.toProviderSymbol(symbol, MarketDataProviderId.twelveData);
-    if (providerSymbol == null) return;
-    _channel?.sink.add(jsonEncode({'action': 'unsubscribe', 'symbol': providerSymbol}));
+  void _sendUnsubscribe(List<String> symbols) {
+    _channel?.sink.add(jsonEncode({'action': 'unsubscribe', 'symbols': symbols}));
   }
 
   @override
   Stream<MarketQuote> watchQuotes(List<String> symbols) {
-    for (final symbol in symbols) {
-      if (_subscribedSymbols.add(symbol)) _sendSubscribe(symbol);
-    }
+    final newSymbols = symbols.where(_subscribedSymbols.add).toList();
+    if (newSymbols.isNotEmpty) _sendSubscribe(newSymbols);
     return _quoteController.stream.where((q) => symbols.contains(q.symbol));
   }
 
@@ -209,7 +176,7 @@ class TwelveDataProvider implements MarketDataProvider {
   /// still needs it, so the backend stream doesn't keep pushing ticks no
   /// one is listening to.
   void unsubscribe(String symbol) {
-    if (_subscribedSymbols.remove(symbol)) _sendUnsubscribe(symbol);
+    if (_subscribedSymbols.remove(symbol)) _sendUnsubscribe([symbol]);
   }
 
   @override

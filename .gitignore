@@ -52,3 +52,12 @@ app.*.map.json
 key.properties
 google-services.json
 GoogleService-Info.plist
+
+# Backend (Cloudflare Worker) / Admin Web
+backend/node_modules/
+backend/.wrangler/
+backend/dist/
+admin/node_modules/
+admin/dist/
+*.sqlite
+*.sqlite-journal
