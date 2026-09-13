@@ -23,11 +23,13 @@ class AuthController extends ChangeNotifier {
   })  : _pushService = pushService,
         _deviceRepository = deviceRepository {
     _restore();
+    _authStateSubscription = _service.authStateChanges?.listen((_) => _syncFromService());
   }
 
   final AuthService _service;
   final PushNotificationService _pushService;
   final DeviceRepository _deviceRepository;
+  StreamSubscription<void>? _authStateSubscription;
 
   UserProfile? _profile;
   UserProfile? get profile => _profile;
@@ -42,6 +44,27 @@ class AuthController extends ChangeNotifier {
     _profile ??= await _service.continueAsGuest();
     _loading = false;
     notifyListeners();
+  }
+
+  /// Re-syncs [profile] from [AuthService.currentSession] in response to an
+  /// external auth event (see [AuthService.authStateChanges]) — e.g. a
+  /// revoked/expired refresh token signing the user out server-side without
+  /// this controller's own [logout] ever being called.
+  Future<void> _syncFromService() async {
+    if (_loading) return; // _restore() already owns the initial sync
+    final updated = await _service.currentSession();
+    if (updated == null) {
+      if (_profile?.isGuest == false) {
+        _profile = await _service.continueAsGuest();
+        notifyListeners();
+      }
+      return;
+    }
+    if (updated != _profile) {
+      _profile = updated;
+      notifyListeners();
+      unawaited(_registerDeviceIfPossible());
+    }
   }
 
   Future<void> login(String email, String password) async {
@@ -80,5 +103,11 @@ class AuthController extends ChangeNotifier {
     await _service.logout();
     _profile = await _service.continueAsGuest();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _authStateSubscription?.cancel();
+    super.dispose();
   }
 }

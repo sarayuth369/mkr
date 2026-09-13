@@ -398,6 +398,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get authContinueAsGuest => 'Continue as guest';
 
   @override
+  String get authError => 'Sign-in failed:';
+
+  @override
+  String get authCheckEmailToConfirm =>
+      'Account created — check your email to confirm it before logging in.';
+
+  @override
   String get financialDisclaimer =>
       'MKR provides market information and analytical content for informational and educational purposes only. It does not constitute investment, financial, trading, or other professional advice. Market data may be delayed or inaccurate. Users should conduct their own research and consider their own risk tolerance before making financial decisions.';
 

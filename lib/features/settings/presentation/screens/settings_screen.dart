@@ -6,6 +6,7 @@ import '../../../../core/persistence/app_local_store.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/theme/theme_controller.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../alerts/application/alerts_controller.dart';
 import '../../../auth/application/auth_controller.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../billing/application/entitlement_controller.dart';
@@ -13,6 +14,7 @@ import '../../../billing/domain/entitlement.dart';
 import '../../../billing/presentation/premium_tier_label.dart';
 import '../../../billing/presentation/screens/paywall_screen.dart';
 import '../../../push/presentation/screens/notification_history_screen.dart';
+import '../../../watchlist/application/watchlist_controller.dart';
 import 'about_screen.dart';
 import 'static_text_screen.dart';
 
@@ -45,7 +47,7 @@ class SettingsScreen extends StatelessWidget {
                     child: Text(l10n.authLogin),
                   )
                 : TextButton(
-                    onPressed: auth.logout,
+                    onPressed: () => _handleLogout(context, auth),
                     child: Text(l10n.authLogout),
                   ),
           ),
@@ -150,6 +152,21 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Refreshes the watchlist/alerts lists right after logout so the UI
+/// immediately reflects the fresh (empty, until the new guest/user's own
+/// data loads) state rather than briefly still showing the just-logged-out
+/// account's list — [AuthService.logout] already clears the underlying
+/// local cache (see [AppLocalStore.clearUserScopedCache]), this just makes
+/// the already-built in-memory controllers pick that up right away instead
+/// of waiting for their next unrelated rebuild.
+Future<void> _handleLogout(BuildContext context, AuthController auth) async {
+  await auth.logout();
+  if (!context.mounted) return;
+  await context.read<WatchlistController>().refresh();
+  if (!context.mounted) return;
+  await context.read<AlertsController>().refresh();
 }
 
 class _SectionHeader extends StatelessWidget {

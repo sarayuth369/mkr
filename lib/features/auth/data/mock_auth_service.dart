@@ -7,6 +7,11 @@ class MockAuthService implements AuthService {
 
   final AppLocalStore _store;
 
+  // Mock mode has no external event source — every state change here comes
+  // from an explicit call below, so there's nothing to stream.
+  @override
+  Stream<void>? get authStateChanges => null;
+
   @override
   Future<UserProfile?> currentSession() async {
     final json = _store.authSessionJson;
@@ -38,5 +43,10 @@ class MockAuthService implements AuthService {
   }
 
   @override
-  Future<void> logout() => _store.setAuthSessionJson(null);
+  Future<void> logout() async {
+    await _store.setAuthSessionJson(null);
+    // Prevents the next user (or a fresh guest) on this device from seeing
+    // this account's cached watchlist/alerts before a real fetch completes.
+    await _store.clearUserScopedCache();
+  }
 }

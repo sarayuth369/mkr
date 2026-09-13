@@ -26,6 +26,7 @@ class AppLocalStore {
   static const _kEntitlementTier = 'entitlement_tier';
   static const _kAuthSession = 'auth_session_json';
   static const _kWatchlistMergedForUser = 'watchlist_merged_for_user';
+  static const _kAlertsMergedForUser = 'alerts_merged_for_user';
 
   String? get themeMode => _prefs.getString(_kThemeMode);
   Future<void> setThemeMode(String value) => _prefs.setString(_kThemeMode, value);
@@ -89,4 +90,22 @@ class AppLocalStore {
   /// every login.
   String? get watchlistMergedForUser => _prefs.getString(_kWatchlistMergedForUser);
   Future<void> setWatchlistMergedForUser(String userId) => _prefs.setString(_kWatchlistMergedForUser, userId);
+
+  /// Same one-time-merge tracking as [watchlistMergedForUser], for
+  /// [SupabaseAlertRepository]'s local-price-alerts-into-cloud merge.
+  String? get alertsMergedForUser => _prefs.getString(_kAlertsMergedForUser);
+  Future<void> setAlertsMergedForUser(String userId) => _prefs.setString(_kAlertsMergedForUser, userId);
+
+  /// Wipes every locally-cached, per-account data set (watchlist, alerts,
+  /// and the one-time-merge markers) — called on every logout so a
+  /// different user (or a fresh guest) logging in next on this device can
+  /// never see the previous account's cached data before a real fetch
+  /// completes. Deliberately leaves device-level prefs alone (theme,
+  /// locale, currency, onboarding, entitlement) — those aren't account data.
+  Future<void> clearUserScopedCache() async {
+    await _prefs.remove(_kWatchlistSymbols);
+    await _prefs.remove(_kAlerts);
+    await _prefs.remove(_kWatchlistMergedForUser);
+    await _prefs.remove(_kAlertsMergedForUser);
+  }
 }

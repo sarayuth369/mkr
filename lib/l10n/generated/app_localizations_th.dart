@@ -398,6 +398,13 @@ class AppLocalizationsTh extends AppLocalizations {
   String get authContinueAsGuest => 'ใช้งานแบบผู้เยี่ยมชม';
 
   @override
+  String get authError => 'เข้าสู่ระบบไม่สำเร็จ:';
+
+  @override
+  String get authCheckEmailToConfirm =>
+      'สร้างบัญชีแล้ว — กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ';
+
+  @override
   String get financialDisclaimer =>
       'MKR ให้ข้อมูลตลาดและเนื้อหาวิเคราะห์เพื่อวัตถุประสงค์ในการให้ข้อมูลและการศึกษาเท่านั้น ไม่ถือเป็นคำแนะนำด้านการลงทุน การเงิน การเทรด หรือคำแนะนำทางวิชาชีพอื่นใด ข้อมูลตลาดอาจล่าช้าหรือคลาดเคลื่อน ผู้ใช้ควรศึกษาข้อมูลด้วยตนเองและพิจารณาความเสี่ยงที่ยอมรับได้ก่อนตัดสินใจทางการเงิน';
 

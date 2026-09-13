@@ -22,6 +22,7 @@ import '../features/alerts/application/alerts_controller.dart';
 import '../features/alerts/data/mock_alert_repository.dart';
 import '../features/alerts/data/mock_notification_service.dart';
 import '../features/alerts/data/supabase_alert_cloud_sync.dart';
+import '../features/alerts/data/supabase_alert_repository.dart';
 import '../features/alerts/domain/alert_cloud_sync.dart';
 import '../features/alerts/domain/alert_repository.dart';
 import '../features/alerts/domain/notification_service.dart';
@@ -133,7 +134,11 @@ class MkrApp extends StatelessWidget {
               ? SupabaseNotificationHistoryService(ctx.read<AuthController>())
               : const NoopNotificationHistoryService(),
         ),
-        Provider<AlertRepository>(create: (_) => MockAlertRepository(store)),
+        Provider<AlertRepository>(
+          create: (ctx) => SupabaseConfig.instance.isConfigured
+              ? SupabaseAlertRepository(store, ctx.read<AuthController>())
+              : MockAlertRepository(store),
+        ),
 
         ChangeNotifierProvider(create: (ctx) => EntitlementController(ctx.read<BillingRepository>())),
         ChangeNotifierProvider(create: (ctx) => WatchlistController(ctx.read<WatchlistRepository>())),

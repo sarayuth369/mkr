@@ -9,6 +9,9 @@ class _FakeAuthService implements AuthService {
   UserProfile? nextLoginResult;
 
   @override
+  Stream<void>? get authStateChanges => null;
+
+  @override
   Future<UserProfile?> currentSession() async => null;
 
   @override

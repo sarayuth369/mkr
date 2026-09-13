@@ -15,4 +15,11 @@ class UserProfile {
         email: json['email'] as String,
         isGuest: json['isGuest'] as bool? ?? false,
       );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) || (other is UserProfile && other.id == id && other.email == email && other.isGuest == isGuest);
+
+  @override
+  int get hashCode => Object.hash(id, email, isGuest);
 }

@@ -872,6 +872,18 @@ abstract class AppLocalizations {
   /// **'Continue as guest'**
   String get authContinueAsGuest;
 
+  /// No description provided for @authError.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in failed:'**
+  String get authError;
+
+  /// No description provided for @authCheckEmailToConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Account created — check your email to confirm it before logging in.'**
+  String get authCheckEmailToConfirm;
+
   /// No description provided for @financialDisclaimer.
   ///
   /// In en, this message translates to:
