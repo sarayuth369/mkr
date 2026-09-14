@@ -17,6 +17,22 @@ import '../domain/user_profile.dart';
 /// lib/app/app.dart and docs/MKR-EXTERNAL-INTEGRATIONS.md. Never throws
 /// into the caller: device registration is a best-effort enhancement, not
 /// a login requirement.
+///
+/// Concurrency note (FCM Final Cleanup): an explicit [logout] and an
+/// external session loss detected via [_syncFromService] could plausibly
+/// both fire close together in a real app (e.g. [logout]'s own call into
+/// [AuthService.logout] triggering [AuthService.authStateChanges] before
+/// [logout] itself finishes reassigning [_profile]), resulting in
+/// [_cleanupDevice] running twice for the same lost session. This is
+/// intentionally NOT de-duplicated with a lock/queue (out of scope - see
+/// the task's own "no redesign, no queue" constraint) because it doesn't
+/// need to be: [_cleanupDevice]'s operations are independently
+/// best-effort and safe to repeat (deactivating an already-inactive
+/// device row, or revoking an already-revoked token, are both no-ops or
+/// harmless failures, never a crash - see [_cleanupDevice]'s own doc), and
+/// [_invalidateInFlightRegistration] is called on every path that can
+/// trigger a cleanup, so no re-registration can land for the lost session
+/// regardless of how many times cleanup itself runs.
 class AuthController extends ChangeNotifier {
   AuthController(
     this._service, {
@@ -169,10 +185,33 @@ class AuthController extends ChangeNotifier {
   /// in [_syncFromService]. Never throws - a cleanup failure must never
   /// block the auth flow itself; the caller still transitions to guest
   /// either way.
+  ///
+  /// FCM Final Cleanup - each step gets its OWN try/catch, deliberately:
+  /// [DeviceRepository.deactivateDevice] (Supabase) and
+  /// [PushNotificationService.unregisterDevice] (the FCM transport, revokes
+  /// the token itself) are independent systems with independent failure
+  /// modes. A single shared try/catch around both meant a `deactivateDevice`
+  /// failure jumped straight past `unregisterDevice` entirely - a Supabase
+  /// outage could leave a signed-out FCM token un-revoked. Neither
+  /// operation's failure may prevent the other from being attempted, and
+  /// `getToken()` itself is also independently guarded so that even a
+  /// failure THERE still lets `unregisterDevice()` be attempted afterward
+  /// (it takes no token argument - see [PushNotificationService]).
   Future<void> _cleanupDevice() async {
+    String? token;
     try {
-      final token = await _pushService.getToken();
-      if (token != null) await _deviceRepository.deactivateDevice(token);
+      token = await _pushService.getToken();
+    } catch (_) {
+      // Best-effort - unregisterDevice() below is still attempted regardless.
+    }
+    if (token != null) {
+      try {
+        await _deviceRepository.deactivateDevice(token);
+      } catch (_) {
+        // Best-effort - must not prevent unregisterDevice() below.
+      }
+    }
+    try {
       // Revokes the token itself (a real FCM implementation deletes it
       // outright), not just the Supabase row above - the strongest
       // available guarantee that a signed-out token is never mistaken for

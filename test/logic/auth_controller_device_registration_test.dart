@@ -109,14 +109,31 @@ class _FakePushService implements PushNotificationService {
     return Future.value(permissionGranted);
   }
 
+  /// FCM Final Cleanup - when true, the NEXT `getToken()` call (used by
+  /// `_cleanupDevice()`) throws instead of resolving, to test that a
+  /// failure obtaining the token still lets `unregisterDevice()` (which
+  /// takes no token argument) be attempted independently.
+  bool throwOnGetToken = false;
+
+  /// FCM Final Cleanup - when true, `unregisterDevice()` throws AFTER
+  /// still incrementing [unregisterDeviceCalls] - so a test can assert it
+  /// was genuinely ATTEMPTED even though it failed.
+  bool throwOnUnregisterDevice = false;
+
   @override
-  Future<String?> getToken() async => token;
+  Future<String?> getToken() async {
+    if (throwOnGetToken) throw Exception('fake getToken failure');
+    return token;
+  }
 
   @override
   Future<void> registerDevice() async {}
 
   @override
-  Future<void> unregisterDevice() async => unregisterDeviceCalls++;
+  Future<void> unregisterDevice() async {
+    unregisterDeviceCalls++;
+    if (throwOnUnregisterDevice) throw Exception('fake unregisterDevice failure');
+  }
 
   @override
   Stream<PushMessage> get onForegroundMessage => const Stream.empty();
@@ -135,6 +152,13 @@ class _FakeDeviceRepository implements DeviceRepository {
   String? registeredUserId;
   String? registeredToken;
   String? deactivatedToken;
+  int deactivateDeviceCalls = 0;
+
+  /// FCM Final Cleanup - when true, `deactivateDevice()` throws AFTER still
+  /// incrementing [deactivateDeviceCalls] (so a test can assert it was
+  /// genuinely ATTEMPTED even though it failed) and WITHOUT setting
+  /// [deactivatedToken] (since the operation itself did not succeed).
+  bool throwOnDeactivateDevice = false;
 
   @override
   Future<void> registerDevice({required String userId, required String token, required String platform, required String appVersion}) async {
@@ -144,6 +168,8 @@ class _FakeDeviceRepository implements DeviceRepository {
 
   @override
   Future<void> deactivateDevice(String token) async {
+    deactivateDeviceCalls++;
+    if (throwOnDeactivateDevice) throw Exception('fake deactivateDevice failure');
     deactivatedToken = token;
   }
 }
@@ -401,6 +427,89 @@ void main() {
 
       expect(devices.registeredUserId, isNull); // never registered - correctly abandoned as stale
       expect(devices.deactivatedToken, 'fake-fcm-token'); // cleanup itself still happened normally
+    });
+  });
+
+  group('FCM Final Cleanup - _cleanupDevice operations are independent best-effort steps', () {
+    test('a deactivateDevice failure does not prevent unregisterDevice from being attempted', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-cleanup-1', email: 'cleanup1@example.com');
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository()..throwOnDeactivateDevice = true;
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('cleanup1@example.com', 'password');
+      await pumpMicrotasks();
+
+      await controller.logout();
+
+      expect(devices.deactivateDeviceCalls, 1); // attempted
+      expect(devices.deactivatedToken, isNull); // and it genuinely failed, not silently "succeeded"
+      expect(push.unregisterDeviceCalls, 1); // still attempted despite the failure above - the core fix
+    });
+
+    test('an unregisterDevice failure does not block the auth flow - logout still completes normally', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-cleanup-2', email: 'cleanup2@example.com');
+      final push = _FakePushService()..throwOnUnregisterDevice = true;
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('cleanup2@example.com', 'password');
+      await pumpMicrotasks();
+
+      await expectLater(controller.logout(), completes); // must not throw into the caller
+
+      expect(controller.profile?.isGuest, true); // logout still completed the full auth transition
+      expect(devices.deactivatedToken, 'fake-fcm-token'); // the OTHER operation still succeeded independently
+      expect(push.unregisterDeviceCalls, 1); // was genuinely attempted, not skipped
+    });
+
+    test('a getToken failure during cleanup still attempts unregisterDevice (it takes no token argument)', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-cleanup-3', email: 'cleanup3@example.com');
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('cleanup3@example.com', 'password');
+      await pumpMicrotasks();
+
+      push.throwOnGetToken = true; // fails specifically during logout()'s own cleanup call
+
+      await expectLater(controller.logout(), completes);
+
+      expect(devices.deactivateDeviceCalls, 0); // no token obtained - deactivateDevice was never attempted (needs one)
+      expect(push.unregisterDeviceCalls, 1); // unregisterDevice needs no token - still attempted regardless
+    });
+
+    test('external session loss cleanup also attempts unregisterDevice even when deactivateDevice fails', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-cleanup-4', email: 'cleanup4@example.com');
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository()..throwOnDeactivateDevice = true;
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('cleanup4@example.com', 'password');
+      await pumpMicrotasks();
+
+      auth.emitExternalSessionChange(null); // revoked/expired session, detected externally
+      await pumpMicrotasks();
+
+      expect(devices.deactivateDeviceCalls, 1);
+      expect(push.unregisterDeviceCalls, 1); // both operations independently attempted, same as an explicit logout
+    });
+
+    test('logout completes even when BOTH cleanup operations fail', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-cleanup-5', email: 'cleanup5@example.com');
+      final push = _FakePushService()..throwOnUnregisterDevice = true;
+      final devices = _FakeDeviceRepository()..throwOnDeactivateDevice = true;
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('cleanup5@example.com', 'password');
+      await pumpMicrotasks();
+
+      await expectLater(controller.logout(), completes); // never throws into the auth flow, no matter how much cleanup fails
+
+      expect(controller.profile?.isGuest, true);
+      expect(devices.deactivateDeviceCalls, 1);
+      expect(push.unregisterDeviceCalls, 1);
     });
   });
 }
