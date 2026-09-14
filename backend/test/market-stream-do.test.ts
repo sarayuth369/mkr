@@ -1,8 +1,15 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { SessionPolicy } from '../src/market/session-policy';
 import { MarketStreamRoom } from '../src/ws/market-stream-do';
 import type { SymbolRow } from '../src/symbols/symbol-catalog';
 import type { Env } from '../src/types';
 import { createFakeKv } from './fakes';
+
+// XAU/USD's category is 'gold', a `continuous` policy (Task 5) - this
+// constant reproduces that resolution for tests that seed the aggregator
+// directly (bypassing handleUpstreamMessage, which resolves the real
+// policy from the symbol's D1 category itself).
+const CONTINUOUS: SessionPolicy = { kind: 'continuous', timezone: 'UTC' };
 
 // Cloudflare Workers exposes `WebSocket.READY_STATE_OPEN` as a runtime
 // static; plain Node's global `WebSocket` does not define it. Since these
@@ -18,7 +25,7 @@ beforeAll(() => {
 const XAU: SymbolRow = {
   symbol: 'XAU/USD',
   display_name: 'Gold',
-  category: 'metals',
+  category: 'gold', // matches schema.sql's real category value for XAU/USD - see session-policy.ts, category drives policy selection
   enabled: 1,
   featured: 1,
   sort_order: 1,
@@ -28,7 +35,7 @@ const XAU: SymbolRow = {
   cache_ttl_seconds: null,
   updated_at: 0,
 };
-const AAPL: SymbolRow = { ...XAU, symbol: 'AAPL', category: 'us_equity', twelve_data_symbol: 'AAPL' };
+const AAPL: SymbolRow = { ...XAU, symbol: 'AAPL', category: 'us_stock', twelve_data_symbol: 'AAPL' }; // 'us_stock' matches schema.sql's real category value
 
 function fakeD1(rows: SymbolRow[]): D1Database {
   return {
@@ -359,7 +366,7 @@ describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Ta
     it('the snapshot reflects live state already in the aggregator, not a stale value', async () => {
       const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
       room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
-      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, M1_BUCKET + 1000, 'twelve_data');
+      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, M1_BUCKET + 1000, 'twelve_data', CONTINUOUS);
 
       const socket = fakeSocket();
       const sent: string[] = [];
@@ -411,7 +418,7 @@ describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Ta
       // (the upstream frame carries no timestamp field) - seed a bucket far
       // enough in the past that the next real tick deterministically rolls it over.
       const past = Date.now() - 5 * 60_000;
-      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, past, 'twelve_data');
+      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, past, 'twelve_data', CONTINUOUS);
 
       const socket = fakeSocket();
       const sent: string[] = [];
@@ -435,7 +442,7 @@ describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Ta
       const socket = fakeSocket();
       socket.send = () => {};
       await room.subscribeCandles(socket, ['XAU/USD'], ['m1']);
-      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, Date.now(), 'twelve_data');
+      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, Date.now(), 'twelve_data', CONTINUOUS);
 
       room.unsubscribeCandles(socket, ['XAU/USD'], ['m1']);
 
@@ -549,6 +556,71 @@ describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Ta
       await room.subscribeCandles(socket, ['AAPL'], ['m1']);
 
       expect(sent).toHaveLength(1);
+    });
+
+    describe('Task 5 - reconciliation compares against the session-aware bucket, not raw UTC', () => {
+      // "Now" fixed to 2026-09-14T14:00:00Z (10:00 EDT - mid NYSE regular
+      // session). Exchange-local midnight for AAPL (us_stock) on this date
+      // is 2026-09-14T04:00:00Z.
+      const NOW = Date.UTC(2026, 8, 14, 14, 0, 0);
+
+      afterEach(() => vi.useRealTimers());
+
+      it("d1 reconciliation seeds CURRENT when the provider's most recent candle IS today's exchange-local session", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        // Twelve Data's real datetime format (space-separated, no 'Z') is
+        // parsed via a pre-existing, unrelated `Date.parse` call this task
+        // does not touch - using an unambiguous ISO 'Z' string here isolates
+        // this test to the comparison logic this task DOES change, not that
+        // parser's own timezone-interpretation behavior (a separately
+        // documented, pre-existing characteristic - see the Task 2 ADR).
+        // Exchange-local midnight for AAPL on 2026-09-14 is 2026-09-14T04:00:00Z.
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () =>
+            new Response(JSON.stringify({ values: [{ datetime: '2026-09-14T04:00:00.000Z', open: '229', high: '231', low: '228', close: '230', volume: '1000' }] }), {
+              status: 200,
+            }),
+          ),
+        );
+        const env = makeEnv({ TWELVE_DATA_API_KEY: 'fake-key-not-real', MKR_CONFIG: createFakeKv() });
+        const room = new MarketStreamRoom(fakeState() as never, env) as RoomInternals;
+        room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+        const socket = fakeSocket();
+        socket.send = () => {};
+        await room.subscribeCandles(socket, ['AAPL'], ['d1']);
+
+        const current = room.candleAggregator.getCurrent('AAPL', 'd1', 'twelve_data');
+        expect(current).not.toBeNull(); // seeded as the LIVE bucket, not lastClosed
+        expect(current?.close).toBe(230);
+      });
+
+      it("d1 reconciliation seeds lastClosed (NOT current) for a candle that is still yesterday in exchange-local time even though it's already 'today' in UTC - the exact bug this task fixes", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        // 2026-09-14T02:00:00Z is UTC-"today" but EDT-"yesterday" (Sept 13, 22:00 EDT).
+        // Under the OLD UTC-only comparison (`mostRecent.timestamp >= bucketStart(now,'d1')`,
+        // UTC day start = Sept 14 00:00 UTC), 02:00 UTC >= 00:00 UTC would have been
+        // wrongly treated as "still today's bucket" and seeded as CURRENT.
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () =>
+            new Response(JSON.stringify({ values: [{ datetime: '2026-09-14T02:00:00.000Z', open: '227', high: '228', low: '226', close: '227.5', volume: '900' }] }), {
+              status: 200,
+            }),
+          ),
+        );
+        const env = makeEnv({ TWELVE_DATA_API_KEY: 'fake-key-not-real', MKR_CONFIG: createFakeKv() });
+        const room = new MarketStreamRoom(fakeState() as never, env) as RoomInternals;
+        room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+        const socket = fakeSocket();
+        socket.send = () => {};
+        await room.subscribeCandles(socket, ['AAPL'], ['d1']);
+
+        expect(room.candleAggregator.getCurrent('AAPL', 'd1', 'twelve_data')).toBeNull(); // correctly NOT seeded as current
+        expect(room.candleAggregator.getLastClosed('AAPL', 'd1')?.close).toBe(227.5); // correctly seeded as the prior (closed) session instead
+      });
     });
   });
 

@@ -1,5 +1,5 @@
 import type { MarketDataSource, MkrTimeframe, NormalizedCandle } from '../types';
-import { bucketStart, isSameBucket } from './timeframe-bucket';
+import { resolveBucketStart, resolveIsSameBucket, type SessionPolicy } from './session-policy';
 
 /** What a client actually receives - [NormalizedCandle]'s exact fields (same shape as the REST /candles response) plus the two realtime-only fields. */
 export interface RealtimeCandle extends NormalizedCandle {
@@ -93,10 +93,19 @@ export class CandleAggregator {
     this.lastClosed.set(key, { ...candle, lastTickAt: seededAt, closed: true });
   }
 
-  ingest(symbol: string, timeframe: MkrTimeframe, price: number, tickTimestamp: number, source: MarketDataSource): IngestResult {
+  /**
+   * `policy` (Task 5) resolves d1/w1/mo1 bucket boundaries against the
+   * symbol's actual exchange session where one is evidenced (`us_stock`/
+   * `indices` - see session-policy.ts), instead of a blanket UTC calendar
+   * day/week/month. m1/m5/m15/h1/h4 are completely unaffected by `policy` -
+   * `resolveBucketStart` falls through to the exact pre-existing UTC math
+   * for those, and for any `continuous`-policy category regardless of
+   * timeframe.
+   */
+  ingest(symbol: string, timeframe: MkrTimeframe, price: number, tickTimestamp: number, source: MarketDataSource, policy: SessionPolicy): IngestResult {
     const key = CandleAggregator.key(symbol, timeframe);
     const existing = this.current.get(key);
-    const thisBucketStart = bucketStart(tickTimestamp, timeframe);
+    const thisBucketStart = resolveBucketStart(tickTimestamp, timeframe, policy);
 
     if (!existing) {
       const fresh: MutableBucket = { bucketStart: thisBucketStart, open: price, high: price, low: price, close: price, closeTickTimestamp: tickTimestamp, lastTickAt: tickTimestamp };
@@ -104,7 +113,7 @@ export class CandleAggregator {
       return { current: this.toPublic(symbol, timeframe, fresh, source, false), rolledOverFrom: null, ignoredAsStale: false };
     }
 
-    if (isSameBucket(tickTimestamp, existing.bucketStart, timeframe)) {
+    if (resolveIsSameBucket(tickTimestamp, existing.bucketStart, timeframe, policy)) {
       existing.high = Math.max(existing.high, price);
       existing.low = Math.min(existing.low, price);
       existing.lastTickAt = Math.max(existing.lastTickAt, tickTimestamp);

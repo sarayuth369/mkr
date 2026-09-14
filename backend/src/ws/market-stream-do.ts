@@ -6,7 +6,7 @@ import { logError, logInfo } from '../logging';
 import { CandleAggregator, type RealtimeCandle } from '../market/candle-aggregator';
 import { candleTtlFor } from '../market/normalize';
 import { managerFor } from '../market/provider-manager-factory';
-import { bucketStart } from '../market/timeframe-bucket';
+import { resolveBucketStart, sessionPolicyForCategory, type SessionPolicy } from '../market/session-policy';
 import { catalogFor } from '../symbols/symbol-catalog';
 import { mapSymbolFromRows } from '../symbols/symbol-mapper';
 import type { Env, MkrTimeframe, ProviderId } from '../types';
@@ -236,6 +236,7 @@ export class MarketStreamRoom {
       const rows = await this.getSymbolRows();
       const symbolFor = (id: ProviderId) => mapSymbolFromRows(rows, symbol, id);
       const ttl = candleTtlFor(timeframe, config.cacheTtls);
+      const policy = this.policyFor(rows, symbol);
 
       const { value: candles } = await cachedFetch(this.env.MKR_CACHE, cacheKey('candles', symbol, `${timeframe}:pool-seed`), ttl, async () => {
         const { result } = await manager.getCandles(symbol, timeframe, 2, symbolFor);
@@ -245,8 +246,15 @@ export class MarketStreamRoom {
       const mostRecent = candles[candles.length - 1];
       if (!mostRecent) return;
 
+      // Task 5: which bucket "now" resolves to must use the SAME
+      // session-aware policy the live tick path uses (resolveBucketStart),
+      // not raw UTC - otherwise reconciliation could misjudge whether the
+      // provider's most recent historical candle is still the live/open
+      // bucket for a session-based asset (e.g. a UTC-day comparison could
+      // wrongly treat a US-equity candle as "already closed" mid-session,
+      // or vice versa).
       const now = Date.now();
-      if (mostRecent.timestamp >= bucketStart(now, timeframe)) {
+      if (mostRecent.timestamp >= resolveBucketStart(now, timeframe, policy)) {
         this.candleAggregator.seed(symbol, timeframe, mostRecent, now);
         const secondMostRecent = candles[candles.length - 2];
         if (secondMostRecent) this.candleAggregator.seedLastClosed(symbol, timeframe, secondMostRecent, now);
@@ -289,6 +297,12 @@ export class MarketStreamRoom {
     const rows = await catalogFor(this.env).all();
     this.symbolRowsCache = { rows, fetchedAt: Date.now() };
     return rows;
+  }
+
+  /** Task 5 - resolves the session policy for a symbol from its D1 `category` (schema.sql). Falls back to the `continuous`/UTC policy (unchanged pre-existing behavior) if the symbol row can't be found - never throws, never guesses a session that isn't evidenced. */
+  private policyFor(rows: Awaited<ReturnType<ReturnType<typeof catalogFor>['all']>>, mkrSymbol: string): SessionPolicy {
+    const row = rows.find((r) => r.symbol === mkrSymbol);
+    return sessionPolicyForCategory(row?.category ?? 'other');
   }
 
   private async subscribeClient(socket: WebSocket, symbols: string[]): Promise<void> {
@@ -546,8 +560,11 @@ export class MarketStreamRoom {
     // for costs nothing extra per tick.
     const timeframes = this.candleDemand.get(mkrSymbol);
     if (timeframes && timeframes.size > 0) {
+      // this.symbolRowsCache is guaranteed non-null here: mkrSymbolForProviderSymbol
+      // above already returned early if it were null.
+      const policy = this.policyFor(this.symbolRowsCache!.rows, mkrSymbol);
       for (const timeframe of timeframes) {
-        const result = this.candleAggregator.ingest(mkrSymbol, timeframe, frame.price, tick.timestamp, 'twelve_data');
+        const result = this.candleAggregator.ingest(mkrSymbol, timeframe, frame.price, tick.timestamp, 'twelve_data', policy);
         if (result.ignoredAsStale) continue;
         const key = `${mkrSymbol}:${timeframe}`;
         const candleSubs = this.candleSubscribers.get(key);
