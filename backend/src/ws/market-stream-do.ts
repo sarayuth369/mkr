@@ -1,9 +1,16 @@
 import { evaluateTick } from '../alerts/alert-engine';
 import { getAlertIndex } from '../alerts/alert-index';
-import { logError } from '../logging';
+import { cachedFetch, cacheKey } from '../cache/cache-service';
+import { getConfig } from '../config/config-service';
+import { logError, logInfo } from '../logging';
+import { CandleAggregator, type RealtimeCandle } from '../market/candle-aggregator';
+import { candleTtlFor } from '../market/normalize';
+import { managerFor } from '../market/provider-manager-factory';
+import { bucketStart } from '../market/timeframe-bucket';
 import { catalogFor } from '../symbols/symbol-catalog';
 import { mapSymbolFromRows } from '../symbols/symbol-mapper';
-import type { Env } from '../types';
+import type { Env, MkrTimeframe, ProviderId } from '../types';
+import { candleMessage, snapshotMessage, validTimeframes } from './protocol-v2';
 
 interface NormalizedTick {
   symbol: string;
@@ -58,6 +65,13 @@ export class MarketStreamRoom {
   private pendingIdleUnsubscribe = new Map<string, number>();
   /** MKR symbol -> canonical last-known quote (Decision 5's "one tick feeds every consumer"). */
   private quoteState = new Map<string, NormalizedTick>();
+
+  /** Task 2 - server-side canonical candle aggregation (WS Protocol V2). */
+  private candleAggregator = new CandleAggregator();
+  /** `${symbol}:${timeframe}` -> the sockets that asked for candle updates on that pair. */
+  private candleSubscribers = new Map<string, Set<WebSocket>>();
+  /** symbol -> the set of timeframes with at least one candle subscriber - only these are fed ticks (Decision 15: bounds memory to actual demand). */
+  private candleDemand = new Map<string, Set<MkrTimeframe>>();
 
   private upstream: WebSocket | null = null;
   private upstreamSubscribedProviderSymbols = new Set<string>();
@@ -116,11 +130,28 @@ export class MarketStreamRoom {
     this.clientSubscriptions.delete(socket);
     this.clients.delete(socket);
     for (const symbol of symbols) this.unsubscribeClientFromSymbol(socket, symbol);
+
+    for (const [key, subs] of this.candleSubscribers) {
+      if (!subs.has(socket)) continue;
+      subs.delete(socket);
+      if (subs.size === 0) this.dropCandleDemand(key);
+    }
+  }
+
+  private dropCandleDemand(key: string): void {
+    this.candleSubscribers.delete(key);
+    const separatorIndex = key.lastIndexOf(':');
+    const symbol = key.slice(0, separatorIndex);
+    const timeframe = key.slice(separatorIndex + 1) as MkrTimeframe;
+    const demand = this.candleDemand.get(symbol);
+    demand?.delete(timeframe);
+    if (demand && demand.size === 0) this.candleDemand.delete(symbol);
+    this.candleAggregator.clear(symbol, timeframe); // Decision 15 cleanup lifecycle - bounds memory to actual demand
   }
 
   private async handleClientMessage(socket: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     if (typeof raw !== 'string') return;
-    let msg: { action?: string; symbols?: string[] };
+    let msg: { action?: string; symbols?: string[]; timeframes?: unknown };
     try {
       msg = JSON.parse(raw);
     } catch {
@@ -128,11 +159,126 @@ export class MarketStreamRoom {
     }
     if (!Array.isArray(msg.symbols)) return;
     const symbols = [...new Set(msg.symbols.map((s) => String(s).toUpperCase()))];
+    // WS Protocol V2 (Task 2) - `timeframes` is an optional additive field on
+    // the SAME subscribe/unsubscribe action V1 clients already send; a V1
+    // client that never sends it simply gets no candle behavior, unchanged.
+    const timeframes = validTimeframes(msg.timeframes);
 
     if (msg.action === 'subscribe') {
       await this.subscribeClient(socket, symbols);
+      if (timeframes.length > 0) await this.subscribeCandles(socket, symbols, timeframes);
     } else if (msg.action === 'unsubscribe') {
       for (const symbol of symbols) this.unsubscribeClientFromSymbol(socket, symbol);
+      if (timeframes.length > 0) this.unsubscribeCandles(socket, symbols, timeframes);
+    }
+  }
+
+  /**
+   * Registers candle demand and sends an immediate snapshot (Decision 11) -
+   * never creates a new upstream tick subscription by itself (Decision 12):
+   * candle aggregation only ever runs off ticks that `subscribeClient`
+   * (viewer refs) or `syncAlertRefs` (alert refs) already caused to flow.
+   * A client that asks for candles on a symbol with no viewer/alert ref
+   * gets a snapshot (possibly reconciled from historical REST) but no
+   * further live updates until some ref exists - a deliberate, documented
+   * limitation matching that explicit constraint, not an oversight.
+   */
+  private async subscribeCandles(socket: WebSocket, symbols: string[], timeframes: MkrTimeframe[]): Promise<void> {
+    for (const symbol of symbols) {
+      const demand = this.candleDemand.get(symbol) ?? new Set<MkrTimeframe>();
+      for (const timeframe of timeframes) {
+        const key = `${symbol}:${timeframe}`;
+        let subs = this.candleSubscribers.get(key);
+        if (!subs) {
+          subs = new Set();
+          this.candleSubscribers.set(key, subs);
+        }
+        subs.add(socket);
+        demand.add(timeframe);
+      }
+      this.candleDemand.set(symbol, demand);
+
+      for (const timeframe of timeframes) {
+        await this.reconcileIfNeeded(symbol, timeframe);
+        const current = this.candleAggregator.getCurrent(symbol, timeframe, 'twelve_data');
+        const lastClosed = this.candleAggregator.getLastClosed(symbol, timeframe);
+        this.sendToSocket(socket, snapshotMessage(symbol, timeframe, { current, lastClosed }));
+      }
+    }
+  }
+
+  private unsubscribeCandles(socket: WebSocket, symbols: string[], timeframes: MkrTimeframe[]): void {
+    for (const symbol of symbols) {
+      for (const timeframe of timeframes) {
+        const key = `${symbol}:${timeframe}`;
+        const subs = this.candleSubscribers.get(key);
+        if (!subs) continue;
+        subs.delete(socket);
+        if (subs.size === 0) this.dropCandleDemand(key);
+      }
+    }
+  }
+
+  /**
+   * Decision 8 - seeds the aggregator from ONE historical REST call (via
+   * the existing provider abstraction, KV-cached and single-flight
+   * coalesced via [cachedFetch] - never a REST call per tick, never a
+   * second provider-manager). No-op (and no REST call at all) once a live
+   * bucket already exists for this (symbol, timeframe) - reconciliation
+   * only ever runs on cold start for that pair, not on every subscribe.
+   */
+  private async reconcileIfNeeded(symbol: string, timeframe: MkrTimeframe): Promise<void> {
+    if (this.candleAggregator.getCurrent(symbol, timeframe, 'twelve_data')) return;
+
+    try {
+      const config = await getConfig(this.env);
+      const manager = await managerFor(this.env, config);
+      const rows = await this.getSymbolRows();
+      const symbolFor = (id: ProviderId) => mapSymbolFromRows(rows, symbol, id);
+      const ttl = candleTtlFor(timeframe, config.cacheTtls);
+
+      const { value: candles } = await cachedFetch(this.env.MKR_CACHE, cacheKey('candles', symbol, `${timeframe}:pool-seed`), ttl, async () => {
+        const { result } = await manager.getCandles(symbol, timeframe, 2, symbolFor);
+        return result;
+      });
+
+      const mostRecent = candles[candles.length - 1];
+      if (!mostRecent) return;
+
+      const now = Date.now();
+      if (mostRecent.timestamp >= bucketStart(now, timeframe)) {
+        this.candleAggregator.seed(symbol, timeframe, mostRecent, now);
+        const secondMostRecent = candles[candles.length - 2];
+        if (secondMostRecent) this.candleAggregator.seedLastClosed(symbol, timeframe, secondMostRecent, now);
+      } else {
+        this.candleAggregator.seedLastClosed(symbol, timeframe, mostRecent, now);
+      }
+      logInfo('candle reconciliation', { symbol, timeframe });
+    } catch (err) {
+      // Non-fatal: the client still gets a snapshot (both fields null) and
+      // the aggregator seeds itself normally from the next live tick -
+      // reconciliation only improves cold-start completeness, it is never
+      // required for correctness.
+      logError('candle reconciliation failed - continuing without seed', { symbol, timeframe, message: (err as Error).message });
+    }
+  }
+
+  private broadcastCandle(subs: Set<WebSocket>, candle: RealtimeCandle): void {
+    const payload = JSON.stringify(candleMessage(candle));
+    for (const socket of subs) {
+      try {
+        socket.send(payload);
+      } catch {
+        this.removeClient(socket);
+      }
+    }
+  }
+
+  private sendToSocket(socket: WebSocket, envelope: unknown): void {
+    try {
+      socket.send(JSON.stringify(envelope));
+    } catch {
+      this.removeClient(socket);
     }
   }
 
@@ -392,6 +538,25 @@ export class MarketStreamRoom {
         } catch {
           this.removeClient(socket);
         }
+      }
+    }
+
+    // Candle aggregation (Task 2, Decision 5) - only for timeframes with an
+    // actual subscriber (candleDemand), so a symbol nobody wants candles
+    // for costs nothing extra per tick.
+    const timeframes = this.candleDemand.get(mkrSymbol);
+    if (timeframes && timeframes.size > 0) {
+      for (const timeframe of timeframes) {
+        const result = this.candleAggregator.ingest(mkrSymbol, timeframe, frame.price, tick.timestamp, 'twelve_data');
+        if (result.ignoredAsStale) continue;
+        const key = `${mkrSymbol}:${timeframe}`;
+        const candleSubs = this.candleSubscribers.get(key);
+        if (!candleSubs || candleSubs.size === 0) continue;
+        if (result.rolledOverFrom) {
+          logInfo('candle rollover', { symbol: mkrSymbol, timeframe, bucketStart: result.current.timestamp });
+          this.broadcastCandle(candleSubs, result.rolledOverFrom);
+        }
+        this.broadcastCandle(candleSubs, result.current);
       }
     }
 

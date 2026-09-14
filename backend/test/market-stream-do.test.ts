@@ -53,7 +53,7 @@ function fakeD1(rows: SymbolRow[]): D1Database {
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
-    MKR_CONFIG: {} as never,
+    MKR_CONFIG: createFakeKv(),
     MKR_CACHE: createFakeKv(),
     MKR_DB: fakeD1([XAU, AAPL]),
     MARKET_STREAM: {} as never,
@@ -334,6 +334,248 @@ describe('MarketStreamRoom - Market Pool Core (Phase 1/2/3 direct DO tests)', ()
       const room = new MarketStreamRoom(fakeState() as never, makeEnv());
       const response = await room.fetch(new Request('https://internal/'));
       expect(response.status).toBe(400);
+    });
+  });
+});
+
+const M1_BUCKET = Date.UTC(2026, 8, 14, 10, 23, 0);
+
+describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Task 2)', () => {
+  describe('subscribeCandles - snapshot semantics (Decision 11)', () => {
+    it('sends an immediate snapshot with both fields null when no data exists yet (no API key configured)', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      const socket = fakeSocket();
+      const sent: string[] = [];
+      socket.send = (payload: string) => sent.push(payload);
+
+      await room.subscribeCandles(socket, ['XAU/USD'], ['m1']);
+
+      expect(sent).toHaveLength(1);
+      const envelope = JSON.parse(sent[0]!);
+      expect(envelope).toMatchObject({ v: 2, type: 'snapshot', symbol: 'XAU/USD', timeframe: 'm1' });
+      expect(envelope.data).toEqual({ current: null, lastClosed: null });
+    });
+
+    it('the snapshot reflects live state already in the aggregator, not a stale value', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, M1_BUCKET + 1000, 'twelve_data');
+
+      const socket = fakeSocket();
+      const sent: string[] = [];
+      socket.send = (payload: string) => sent.push(payload);
+      await room.subscribeCandles(socket, ['XAU/USD'], ['m1']);
+
+      const envelope = JSON.parse(sent[0]!);
+      expect(envelope.data.current).toMatchObject({ close: 3450 });
+    });
+  });
+
+  describe('candle demand and tick-driven broadcast', () => {
+    it('a tick for a symbol with candle demand broadcasts a v2 candle message only to candle subscribers, not all viewers', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+
+      const viewerOnlySocket = fakeSocket();
+      const viewerSent: string[] = [];
+      viewerOnlySocket.send = (p: string) => viewerSent.push(p);
+      await room.subscribeClient(viewerOnlySocket, ['XAU/USD']);
+
+      const candleSocket = fakeSocket();
+      const candleSent: string[] = [];
+      candleSocket.send = (p: string) => candleSent.push(p);
+      await room.subscribeCandles(candleSocket, ['XAU/USD'], ['m1']);
+      candleSent.length = 0; // drop the initial snapshot
+
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3451 }));
+
+      expect(viewerSent.some((p) => JSON.parse(p).v === 2)).toBe(false); // viewer only ever gets V1 tick frames
+      expect(candleSent).toHaveLength(1);
+      const envelope = JSON.parse(candleSent[0]!);
+      expect(envelope).toMatchObject({ v: 2, type: 'candle', symbol: 'XAU/USD', timeframe: 'm1' });
+    });
+
+    it('a tick for a symbol with NO candle demand does no aggregation work at all (candleAggregator stays empty)', () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'AAPL', price: 200 }));
+
+      expect(room.candleAggregator.getCurrent('AAPL', 'm1', 'twelve_data')).toBeNull();
+    });
+
+    it('a bucket rollover broadcasts BOTH the closed candle and the new current candle', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      // handleUpstreamMessage timestamps every tick with Date.now() internally
+      // (the upstream frame carries no timestamp field) - seed a bucket far
+      // enough in the past that the next real tick deterministically rolls it over.
+      const past = Date.now() - 5 * 60_000;
+      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, past, 'twelve_data');
+
+      const socket = fakeSocket();
+      const sent: string[] = [];
+      socket.send = (p: string) => sent.push(p);
+      await room.subscribeCandles(socket, ['XAU/USD'], ['m1']);
+      sent.length = 0;
+
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3460 }));
+
+      const messages = sent.map((p) => JSON.parse(p));
+      expect(messages).toHaveLength(2);
+      expect(messages[0]).toMatchObject({ type: 'candle', data: { close: 3450, closed: true } });
+      expect(messages[1]).toMatchObject({ type: 'candle', data: { open: 3460, closed: false } });
+    });
+  });
+
+  describe('cleanup lifecycle (Decision 15) - unsubscribe and disconnect both release candle state', () => {
+    it('unsubscribeCandles removes the socket and clears aggregator state once no subscriber remains', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socket = fakeSocket();
+      socket.send = () => {};
+      await room.subscribeCandles(socket, ['XAU/USD'], ['m1']);
+      room.candleAggregator.ingest('XAU/USD', 'm1', 3450, Date.now(), 'twelve_data');
+
+      room.unsubscribeCandles(socket, ['XAU/USD'], ['m1']);
+
+      expect(room.candleSubscribers.has('XAU/USD:m1')).toBe(false);
+      expect(room.candleAggregator.getCurrent('XAU/USD', 'm1', 'twelve_data')).toBeNull();
+    });
+
+    it('a disconnecting client (removeClient) also releases its candle subscriptions', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socket = fakeSocket();
+      socket.send = () => {};
+      await room.subscribeCandles(socket, ['XAU/USD'], ['m1']);
+
+      room.removeClient(socket);
+
+      expect(room.candleSubscribers.has('XAU/USD:m1')).toBe(false);
+      expect(room.candleDemand.has('XAU/USD')).toBe(false);
+    });
+
+    it('one socket unsubscribing does not affect another socket still subscribed to the same (symbol, timeframe)', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const a = fakeSocket();
+      a.send = () => {};
+      const b = fakeSocket();
+      b.send = () => {};
+      await room.subscribeCandles(a, ['XAU/USD'], ['m1']);
+      await room.subscribeCandles(b, ['XAU/USD'], ['m1']);
+
+      room.unsubscribeCandles(a, ['XAU/USD'], ['m1']);
+
+      expect(room.candleSubscribers.get('XAU/USD:m1').has(b)).toBe(true);
+    });
+  });
+
+  describe('backward compatibility - V1 clients are unaffected', () => {
+    it('a subscribe message without "timeframes" does no candle work at all', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      const socket = fakeSocket();
+      socket.send = () => {};
+
+      await room.handleClientMessage(socket, JSON.stringify({ action: 'subscribe', symbols: ['XAU/USD'] }));
+
+      expect(room.candleDemand.size).toBe(0);
+      expect(room.candleSubscribers.size).toBe(0);
+    });
+
+    it('handleClientMessage tolerates a malformed "timeframes" field (not an array) without throwing', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      const socket = fakeSocket();
+      socket.send = () => {};
+
+      await expect(
+        room.handleClientMessage(socket, JSON.stringify({ action: 'subscribe', symbols: ['XAU/USD'], timeframes: 'm1' })),
+      ).resolves.toBeUndefined();
+      expect(room.candleDemand.size).toBe(0); // 'm1' as a bare string, not an array, is dropped by validTimeframes
+    });
+  });
+
+  describe('historical reconciliation (Decision 8) - single-flight, no REST-per-tick', () => {
+    it('concurrent candle subscriptions to the same (symbol, timeframe) coalesce into ONE REST call', async () => {
+      const currentBucketStart = M1_BUCKET;
+      const fetchSpy = vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            values: [
+              { datetime: new Date(currentBucketStart).toISOString(), open: '150', high: '151', low: '149', close: '150.5', volume: '1000' },
+              { datetime: new Date(currentBucketStart - 60_000).toISOString(), open: '148', high: '150', low: '147', close: '150', volume: '900' },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const env = makeEnv({ TWELVE_DATA_API_KEY: 'fake-key-not-real', MKR_CONFIG: createFakeKv() });
+      const room = new MarketStreamRoom(fakeState() as never, env) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+
+      const socketA = fakeSocket();
+      socketA.send = () => {};
+      const socketB = fakeSocket();
+      socketB.send = () => {};
+
+      await Promise.all([room.subscribeCandles(socketA, ['AAPL'], ['m1']), room.subscribeCandles(socketB, ['AAPL'], ['m1'])]);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1); // single-flight coalesced via cachedFetch, not one call per subscriber
+      expect(room.candleAggregator.getCurrent('AAPL', 'm1', 'twelve_data')?.open).toBe(150);
+    });
+
+    it('a normal tick never triggers a REST call - no per-tick request explosion', () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      room.candleDemand.set('XAU/USD', new Set(['m1']));
+      room.candleSubscribers.set('XAU/USD:m1', new Set());
+
+      for (let i = 0; i < 50; i++) room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3450 + i }));
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('reconciliation failure (no provider available) does not throw - subscribeCandles still completes and sends a snapshot', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals; // no TWELVE_DATA_API_KEY
+      const socket = fakeSocket();
+      const sent: string[] = [];
+      socket.send = (p: string) => sent.push(p);
+
+      await room.subscribeCandles(socket, ['AAPL'], ['m1']);
+
+      expect(sent).toHaveLength(1);
+    });
+  });
+
+  describe('does not disturb existing pooling/alert-only behavior (Decision 12/13)', () => {
+    it('100 clients subscribing to candles for the same symbol still share exactly 1 upstream tick subscription', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      for (let i = 0; i < 100; i++) {
+        const socket = fakeSocket();
+        socket.send = () => {};
+        await room.subscribeClient(socket, ['XAU/USD']);
+        await room.subscribeCandles(socket, ['XAU/USD'], ['m1']);
+      }
+      expect(room.upstreamSubscribedProviderSymbols.size).toBe(1);
+    });
+
+    it('an alert-only symbol (zero viewers) still records ticks into quoteState even with candle demand present', async () => {
+      const env = makeEnv();
+      await env.MKR_CACHE.put('alerts:index', JSON.stringify({ bySymbol: { 'XAU/USD': [{ id: 'a1' }] }, builtAt: Date.now() }));
+      const room = new MarketStreamRoom(fakeState() as never, env) as RoomInternals;
+      await room.syncAlertRefs();
+      room.candleDemand.set('XAU/USD', new Set(['m1']));
+      room.candleSubscribers.set('XAU/USD:m1', new Set());
+
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3451 }));
+
+      expect(room.quoteState.get('XAU/USD')?.price).toBe(3451);
+      expect(room.candleAggregator.getCurrent('XAU/USD', 'm1', 'twelve_data')?.close).toBe(3451);
     });
   });
 });

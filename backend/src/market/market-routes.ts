@@ -2,18 +2,11 @@ import { cachedFetch, cacheKey, coalesced, getCached, putCached } from '../cache
 import { getConfig } from '../config/config-service';
 import { ApiError, jsonResponse } from '../errors';
 import { logError, logInfo } from '../logging';
-import { MarketProviderManager } from '../providers/provider-manager';
-import { buildProvider } from '../providers/provider-registry';
 import { catalogFor, type SymbolRow } from '../symbols/symbol-catalog';
 import { isValidMkrSymbolFormat, mapSymbolFromRows, parseSymbolList } from '../symbols/symbol-mapper';
 import type { Env, ProviderId } from '../types';
 import { candleTtlFor, mapProviderError, parseTimeframe } from './normalize';
-
-async function managerFor(env: Env, config: Awaited<ReturnType<typeof getConfig>>): Promise<MarketProviderManager> {
-  const primary = buildProvider(config.primaryProvider, env);
-  const secondary = config.secondaryProvider ? buildProvider(config.secondaryProvider, env) : null;
-  return new MarketProviderManager(primary, secondary, config.secondaryEnabled);
-}
+import { managerFor } from './provider-manager-factory';
 
 async function requireSymbolRow(env: Env, symbol: string): Promise<SymbolRow> {
   if (!isValidMkrSymbolFormat(symbol)) throw new ApiError('INVALID_SYMBOL', `Invalid symbol format: ${symbol}`);
