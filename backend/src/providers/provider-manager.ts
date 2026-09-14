@@ -1,4 +1,5 @@
 import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, NormalizedQuote, ProviderHealth, ProviderId } from '../types';
+import { circuitSnapshot, isCircuitOpen, recordCircuitFailure, recordCircuitSuccess } from './circuit-breaker';
 import { admitProviderRequest, type ProviderBudgetPolicy, type RequestPriority } from './quota-manager';
 import { ProviderError, type MarketDataProvider } from './types';
 
@@ -63,6 +64,15 @@ function budgetErrorFor(tier: string): ProviderError {
  * an empty/no-data result (that is surfaced as `null`, not an exception -
  * see [MarketDataProvider.getQuote]).
  *
+ * Final Production Task: once a provider IS confirmed unhealthy, a circuit
+ * breaker (circuit-breaker.ts) trips for it - subsequent requests within
+ * the backoff window skip contacting that provider entirely (no request,
+ * no extra healthCheck probe, avoiding both a failover storm and needless
+ * quota spend on a known-down provider) and go straight to whatever
+ * fallback exists. The single-failure "confirmed unhealthy" determination
+ * itself is unchanged - the breaker only takes over for what happens
+ * AFTER that determination, never replaces it.
+ *
  * Task 6: every actual provider call in this class is now gated by the
  * centralized quota guard (quota-manager.ts) - this is the ONE place
  * that gate is enforced, so no caller can bypass it by going around this
@@ -116,7 +126,7 @@ export class MarketProviderManager {
   ): Promise<{ result: T; source: ProviderId }> {
     let budgetDeniedTier: string | null = null;
 
-    if (this.primary) {
+    if (this.primary && !isCircuitOpen(this.primary.id)) {
       const symbol = symbolFor(this.primary.id);
       if (symbol) {
         const decision = this.admit(this.primary.id, priority);
@@ -124,6 +134,7 @@ export class MarketProviderManager {
           try {
             const result = await call(this.primary, symbol);
             recordSuccess(this.primary.id);
+            recordCircuitSuccess(this.primary.id);
             return { result, source: this.primary.id };
           } catch (err) {
             recordFailure(this.primary.id, (err as Error).message);
@@ -133,6 +144,7 @@ export class MarketProviderManager {
               // genuine outage. Do not fail over; propagate the real error.
               throw err;
             }
+            recordCircuitFailure(this.primary.id); // confirmed unhealthy - trip/extend the breaker
             // Confirmed unhealthy - fall through to the secondary below.
           }
         } else {
@@ -141,7 +153,7 @@ export class MarketProviderManager {
       }
     }
 
-    if (this.secondaryEnabled && this.secondary) {
+    if (this.secondaryEnabled && this.secondary && !isCircuitOpen(this.secondary.id)) {
       const symbol = symbolFor(this.secondary.id);
       if (symbol) {
         const decision = this.admit(this.secondary.id, priority);
@@ -149,9 +161,11 @@ export class MarketProviderManager {
           try {
             const result = await call(this.secondary, symbol);
             recordSuccess(this.secondary.id);
+            recordCircuitSuccess(this.secondary.id);
             return { result, source: this.secondary.id };
           } catch (err) {
             recordFailure(this.secondary.id, (err as Error).message);
+            recordCircuitFailure(this.secondary.id); // no further fallback - any confirmed failure trips it
             throw err;
           }
         }
@@ -191,7 +205,7 @@ export class MarketProviderManager {
     };
     let budgetDeniedTier: string | null = null;
 
-    if (this.primary) {
+    if (this.primary && !isCircuitOpen(this.primary.id)) {
       const map = buildMap(this.primary.id);
       if (Object.keys(map).length > 0) {
         const decision = this.admit(this.primary.id, priority);
@@ -199,11 +213,13 @@ export class MarketProviderManager {
           try {
             const result = await this.primary.getBatchQuotes(map);
             recordSuccess(this.primary.id);
+            recordCircuitSuccess(this.primary.id);
             return { result, source: this.primary.id };
           } catch (err) {
             recordFailure(this.primary.id, (err as Error).message);
             const probe = await this.primary.healthCheck();
             if (probe.healthy) throw err; // transient - propagate, don't fail over
+            recordCircuitFailure(this.primary.id);
           }
         } else {
           budgetDeniedTier = decision.tier;
@@ -211,7 +227,7 @@ export class MarketProviderManager {
       }
     }
 
-    if (this.secondaryEnabled && this.secondary) {
+    if (this.secondaryEnabled && this.secondary && !isCircuitOpen(this.secondary.id)) {
       const map = buildMap(this.secondary.id);
       if (Object.keys(map).length > 0) {
         const decision = this.admit(this.secondary.id, priority);
@@ -219,9 +235,11 @@ export class MarketProviderManager {
           try {
             const result = await this.secondary.getBatchQuotes(map);
             recordSuccess(this.secondary.id);
+            recordCircuitSuccess(this.secondary.id);
             return { result, source: this.secondary.id };
           } catch (err) {
             recordFailure(this.secondary.id, (err as Error).message);
+            recordCircuitFailure(this.secondary.id);
             throw err;
           }
         }
@@ -251,11 +269,19 @@ export class MarketProviderManager {
    * probe reports `status: 'unknown'` (never fabricated as healthy/
    * unhealthy) rather than throwing - a health endpoint must degrade
    * gracefully, never itself become the outage.
+   *
+   * Final Production Task: while a provider's circuit is OPEN (already
+   * confirmed down, backoff not yet elapsed), this skips the live probe
+   * entirely and reports `unhealthy` directly from the breaker's own
+   * state - we already know the answer, so spending a second P4 request
+   * (and its quota) to re-ask would be wasteful. Once the backoff window
+   * elapses (half-open), a real probe runs again as the recovery trial.
    */
   async healthSnapshot(): Promise<{ primary: ProviderHealth | null; secondary: ProviderHealth | null }> {
     const build = async (provider: MarketDataProvider | null, enabled: boolean): Promise<ProviderHealth | null> => {
       if (!provider) return null;
       const mem = healthEntry(provider.id);
+      const circuit = circuitSnapshot(provider.id);
       if (!enabled) {
         return {
           provider: provider.id,
@@ -265,6 +291,22 @@ export class MarketProviderManager {
           lastErrorAt: mem.lastErrorAt,
           lastErrorMessage: mem.lastErrorMessage,
           errorCount: mem.errorCount,
+          circuit: circuit.status,
+          circuitNextProbeAt: circuit.nextProbeAt,
+        };
+      }
+
+      if (circuit.status === 'open') {
+        return {
+          provider: provider.id,
+          status: 'unhealthy',
+          latencyMs: null,
+          lastSuccessAt: mem.lastSuccessAt,
+          lastErrorAt: mem.lastErrorAt,
+          lastErrorMessage: mem.lastErrorMessage,
+          errorCount: mem.errorCount,
+          circuit: circuit.status,
+          circuitNextProbeAt: circuit.nextProbeAt,
         };
       }
 
@@ -278,10 +320,15 @@ export class MarketProviderManager {
           lastErrorAt: mem.lastErrorAt,
           lastErrorMessage: mem.lastErrorMessage,
           errorCount: mem.errorCount,
+          circuit: circuit.status,
+          circuitNextProbeAt: circuit.nextProbeAt,
         };
       }
 
       const probe = await provider.healthCheck();
+      if (probe.healthy) recordCircuitSuccess(provider.id);
+      else recordCircuitFailure(provider.id);
+      const circuitAfter = circuitSnapshot(provider.id);
       return {
         provider: provider.id,
         status: probe.healthy ? 'healthy' : 'unhealthy',
@@ -290,6 +337,8 @@ export class MarketProviderManager {
         lastErrorAt: mem.lastErrorAt,
         lastErrorMessage: mem.lastErrorMessage,
         errorCount: mem.errorCount,
+        circuit: circuitAfter.status,
+        circuitNextProbeAt: circuitAfter.nextProbeAt,
       };
     };
 

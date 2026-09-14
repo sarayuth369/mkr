@@ -10,7 +10,7 @@ import { resolveBucketStart, sessionPolicyForCategory, type SessionPolicy } from
 import { catalogFor } from '../symbols/symbol-catalog';
 import { mapSymbolFromRows } from '../symbols/symbol-mapper';
 import type { Env, MkrTimeframe, ProviderId } from '../types';
-import { candleMessage, snapshotMessage, validTimeframes } from './protocol-v2';
+import { candleMessage, snapshotMessage, statusMessage, validTimeframes, type SymbolLiveStatus } from './protocol-v2';
 
 interface NormalizedTick {
   symbol: string;
@@ -65,6 +65,8 @@ export class MarketStreamRoom {
   private pendingIdleUnsubscribe = new Map<string, number>();
   /** MKR symbol -> canonical last-known quote (Decision 5's "one tick feeds every consumer"). */
   private quoteState = new Map<string, NormalizedTick>();
+  /** MKR symbol -> the `status` value last broadcast to its viewers (Final Production Task) - lets [broadcastStatusIfChanged] send only on an actual transition, never every heartbeat. */
+  private lastBroadcastStatus = new Map<string, SymbolLiveStatus>();
 
   /** Task 2 - server-side canonical candle aggregation (WS Protocol V2). */
   private candleAggregator = new CandleAggregator();
@@ -400,6 +402,51 @@ export class MarketStreamRoom {
     }
   }
 
+  /**
+   * Final Production Task - single source of truth for a symbol's
+   * stale/gap/degraded/offline state, shared by both `poolStatusSnapshot`
+   * (admin observability) and the WS `status` broadcast below, so the two
+   * surfaces can never disagree. See `SymbolLiveStatus` in protocol-v2.ts
+   * for the exact meaning of each value.
+   */
+  private computeSymbolStatus(symbol: string, now: number = Date.now()): SymbolLiveStatus {
+    const staleThresholdMs = (Number(this.env.STALE_THRESHOLD_SECONDS) || 90) * 1000;
+    const quote = this.quoteState.get(symbol);
+    if (!quote) return 'offline'; // never received a tick for this symbol at all
+    if (now - quote.timestamp <= staleThresholdMs) return 'live';
+    const connected = this.upstream !== null && this.upstream.readyState === WebSocket.READY_STATE_OPEN;
+    return connected ? 'stale' : 'degraded'; // has a prior quote - "stale" if upstream is up but quiet, "degraded" if the upstream link itself is down
+  }
+
+  /**
+   * Broadcasts a `status` V2 frame to a symbol's viewers ONLY when the
+   * computed status actually changed since the last broadcast - never on
+   * every heartbeat, so this cannot become a KV-write-storm-style spam
+   * source. No-op for a symbol with zero connected viewers (alert-only
+   * refs have no socket to send to).
+   */
+  private broadcastStatusIfChanged(symbol: string, now: number = Date.now()): void {
+    const subscribers = this.symbolSubscribers.get(symbol);
+    if (!subscribers || subscribers.size === 0) return;
+    const status = this.computeSymbolStatus(symbol, now);
+    if (this.lastBroadcastStatus.get(symbol) === status) return;
+    this.lastBroadcastStatus.set(symbol, status);
+    const lastTickAt = this.quoteState.get(symbol)?.timestamp ?? null;
+    const payload = JSON.stringify(statusMessage(symbol, { status, lastTickAt }));
+    for (const socket of subscribers) {
+      try {
+        socket.send(payload);
+      } catch {
+        this.removeClient(socket);
+      }
+    }
+  }
+
+  /** Re-checks every symbol with a connected viewer - used after an event that can silently change many symbols' status at once (upstream connect/disconnect, or the heartbeat's "did anything go quiet" sweep). */
+  private sweepAllViewerStatuses(now: number = Date.now()): void {
+    for (const symbol of this.symbolSubscribers.keys()) this.broadcastStatusIfChanged(symbol, now);
+  }
+
   private poolStatusSnapshot() {
     const staleThresholdMs = (Number(this.env.STALE_THRESHOLD_SECONDS) || 90) * 1000;
     const now = Date.now();
@@ -428,6 +475,8 @@ export class MarketStreamRoom {
           lastPrice: quote?.price ?? null,
           lastTickAt: quote?.timestamp ?? null,
           isStale: quote ? now - quote.timestamp > staleThresholdMs : null,
+          /** Final Production Task - richer status than the boolean above; see computeSymbolStatus. */
+          liveStatus: this.computeSymbolStatus(symbol, now),
         };
       }),
     };
@@ -488,6 +537,7 @@ export class MarketStreamRoom {
       for (const providerSymbol of this.upstreamSubscribedProviderSymbols) {
         this.sendUpstream({ action: 'subscribe', params: { symbols: providerSymbol } });
       }
+      this.sweepAllViewerStatuses(); // link restored - any symbol stuck at 'degraded' can now read 'stale' (or 'live' once its next tick lands)
 
       await this.state.storage.setAlarm(Date.now() + HEARTBEAT_INTERVAL_MS);
     } catch {
@@ -497,7 +547,13 @@ export class MarketStreamRoom {
 
   private scheduleReconnect(): void {
     this.upstream = null;
-    if (this.symbolSubscribers.size === 0 && this.alertRefCounts.size === 0) return; // nobody needs data - stay disconnected
+    // Capture BEFORE the status sweep: a send failure inside the sweep can
+    // synchronously call removeClient (a genuinely dead socket), which
+    // would itself shrink symbolSubscribers - that must not retroactively
+    // change the "does anybody need data" decision made in this same call.
+    const hasAnyDemand = this.symbolSubscribers.size > 0 || this.alertRefCounts.size > 0;
+    this.sweepAllViewerStatuses(); // the upstream link just dropped - viewers of a symbol that was 'live'/'stale' should immediately see 'degraded', not wait up to a heartbeat interval
+    if (!hasAnyDemand) return; // nobody needs data - stay disconnected
     this.reconnectAttempt += 1;
     // Exponential backoff with jitter (Decision 11/Phase 2) - jitter avoids
     // every symbol's reconnect landing on the exact same tick after a
@@ -513,6 +569,11 @@ export class MarketStreamRoom {
     if (this.upstream && this.upstream.readyState === WebSocket.READY_STATE_OPEN) {
       this.sendUpstream({ action: 'heartbeat' });
       this.sweepIdleUnsubscribes();
+      // Catches the "quietly went quiet" transitions (live -> stale) that
+      // have no discrete triggering event of their own - a tick arriving
+      // already triggers the check above in handleUpstreamMessage, but the
+      // ABSENCE of ticks only becomes visible on this periodic sweep.
+      this.sweepAllViewerStatuses();
       await this.state.storage.setAlarm(Date.now() + HEARTBEAT_INTERVAL_MS);
       return;
     }
@@ -542,6 +603,7 @@ export class MarketStreamRoom {
     // a real bug that would have made alert-only monitoring (Decision 3)
     // a no-op the moment it started being exercised by Phase 1/3.
     this.quoteState.set(mkrSymbol, tick);
+    this.broadcastStatusIfChanged(mkrSymbol, tick.timestamp); // a fresh tick is the most common way a symbol transitions back to 'live'
 
     const subscribers = this.symbolSubscribers.get(mkrSymbol);
     if (subscribers && subscribers.size > 0) {

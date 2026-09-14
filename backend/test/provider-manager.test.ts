@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { _resetCircuitsForTests } from '../src/providers/circuit-breaker';
 import { MarketProviderManager, _resetHealthForTests, type ProviderBudgets } from '../src/providers/provider-manager';
 import { _resetQuotaUsageForTests, recordProviderRequest } from '../src/providers/quota-manager';
 import { ProviderError, type MarketDataProvider } from '../src/providers/types';
@@ -86,6 +87,7 @@ const symbolFor = () => 'AAPL';
 beforeEach(() => {
   _resetHealthForTests();
   _resetQuotaUsageForTests();
+  _resetCircuitsForTests();
 });
 
 describe('MarketProviderManager', () => {
@@ -293,6 +295,97 @@ describe('MarketProviderManager', () => {
         expect(result?.price).toBe(100);
       }
       expect(primary.quoteCalls).toBe(50);
+    });
+  });
+
+  describe('Final Production Task - circuit breaker integration', () => {
+    it('once confirmed unhealthy, a SECOND request skips the primary entirely - no extra call, no extra healthCheck probe', async () => {
+      let healthCheckCalls = 0;
+      const opts = { throwKind: 'network' as const, healthy: false };
+      const primary = new FakeProvider('twelve_data', opts);
+      const originalHealthCheck = primary.healthCheck.bind(primary);
+      primary.healthCheck = async () => {
+        healthCheckCalls++;
+        return originalHealthCheck();
+      };
+      const secondary = new FakeProvider('alpaca', { quoteResult: quote(50) });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      // First request: primary fails, healthCheck confirms unhealthy, trips the breaker, falls to secondary.
+      await manager.getQuote('AAPL', symbolFor, 'P1');
+      expect(primary.quoteCalls).toBe(1);
+      expect(healthCheckCalls).toBe(1);
+
+      // Second request: breaker is open - primary must not be contacted at all this time.
+      await manager.getQuote('AAPL', symbolFor, 'P1');
+      expect(primary.quoteCalls).toBe(1); // still 1 - not called again
+      expect(healthCheckCalls).toBe(1); // still 1 - no redundant probe either
+    });
+
+    it('a single transient failure (healthCheck confirms still healthy) does NOT trip the breaker - the next request still tries the primary normally', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'timeout', healthy: true });
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow();
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow();
+
+      expect(primary.quoteCalls).toBe(2); // both attempts reached the provider - breaker never tripped
+    });
+
+    it('after the backoff window elapses, the next request is allowed through as a recovery trial, and success fully closes the breaker', async () => {
+      const opts = { throwKind: 'network' as const, healthy: false };
+      const primary = new FakeProvider('twelve_data', opts);
+      const secondary = new FakeProvider('alpaca', { quoteResult: quote(50) });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      await manager.getQuote('AAPL', symbolFor, 'P1'); // trips the breaker (falls to secondary)
+      expect(primary.quoteCalls).toBe(1);
+
+      // Simulate recovery: the provider starts succeeding again, and enough
+      // wall-clock time passes for the backoff window to elapse.
+      opts.throwKind = undefined as unknown as 'network';
+      (primary as unknown as { opts: { quoteResult: unknown } }).opts.quoteResult = quote(200);
+      const realNow = Date.now;
+      try {
+        Date.now = () => realNow() + 31_000; // past the 30s max initial backoff
+        const { result, source } = await manager.getQuote('AAPL', symbolFor, 'P1');
+        expect(source).toBe('twelve_data'); // the recovery trial succeeded - primary is used again, not secondary
+        expect(result?.price).toBe(200);
+        expect(primary.quoteCalls).toBe(2); // the trial WAS a real call to primary, unlike the skipped one before it
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it('circuit state is isolated per provider - tripping the primary\'s breaker never affects the secondary\'s own circuit', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const secondary = new FakeProvider('alpaca', { quoteResult: quote(50) });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      await manager.getQuote('AAPL', symbolFor, 'P1'); // trips primary's breaker, secondary succeeds
+      const { source } = await manager.getQuote('AAPL', symbolFor, 'P1'); // primary skipped (breaker open), secondary tried fresh each time
+
+      expect(source).toBe('alpaca');
+      expect(secondary.quoteCalls).toBe(2); // secondary's own circuit was never affected - it keeps being tried normally
+    });
+
+    it('healthSnapshot skips the live probe entirely while the circuit is open - reports unhealthy directly, saving a redundant quota-consuming request', async () => {
+      let healthCheckCalls = 0;
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const originalHealthCheck = primary.healthCheck.bind(primary);
+      primary.healthCheck = async () => {
+        healthCheckCalls++;
+        return originalHealthCheck();
+      };
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      await manager.getQuote('AAPL', symbolFor, 'P1').catch(() => {}); // trips the breaker (1 healthCheck call, from the confirm-unhealthy step)
+      expect(healthCheckCalls).toBe(1);
+
+      const snapshot = await manager.healthSnapshot();
+      expect(snapshot.primary?.status).toBe('unhealthy');
+      expect(snapshot.primary?.circuit).toBe('open');
+      expect(healthCheckCalls).toBe(1); // healthSnapshot did NOT spend a second probe - it already knew the answer
     });
   });
 });

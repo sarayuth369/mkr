@@ -112,4 +112,7 @@ export interface ProviderHealth {
   lastErrorAt: number | null;
   lastErrorMessage: string | null;
   errorCount: number;
+  /** Final Production Task - circuit breaker state (circuit-breaker.ts). 'closed' = normal; 'open' = known-down, requests are being skipped until the backoff window elapses; 'half_open' = backoff elapsed, the next request is a recovery trial. */
+  circuit: 'closed' | 'open' | 'half_open';
+  circuitNextProbeAt: number | null;
 }

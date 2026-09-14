@@ -16,7 +16,7 @@ import type { RealtimeCandle } from '../market/candle-aggregator';
  * is what makes V2 additive rather than a version-negotiated protocol
  * switch: no Flutter change was needed or made for this task.
  */
-export type WsV2MessageType = 'candle' | 'snapshot' | 'error';
+export type WsV2MessageType = 'candle' | 'snapshot' | 'error' | 'status';
 
 export interface WsV2Envelope<T = unknown> {
   v: 2;
@@ -55,6 +55,35 @@ export function snapshotMessage(symbol: string, timeframe: MkrTimeframe, data: S
 
 export function errorMessage(reason: string, symbol?: string): WsV2Envelope<{ reason: string }> {
   return { v: 2, type: 'error', symbol, timestamp: Date.now(), data: { reason } };
+}
+
+/**
+ * Final Production Task - stale/gap/degraded/offline signaling. Sourced
+ * entirely from state `MarketStreamRoom` already tracks for
+ * `poolStatusSnapshot()` (quoteState + upstream connection) - this just
+ * gives connected clients the same picture over the wire, on change, so a
+ * Flutter client can stop labeling a frozen price "LIVE" without polling
+ * an admin endpoint. Additive: a V1 client that never asked for this simply
+ * never looks at `type: 'status'` frames.
+ *
+ * - `live`: a tick arrived within the configured stale threshold.
+ * - `stale`: upstream is connected but no fresh tick has arrived in time
+ *   (e.g. a quiet/closed market) - the last known price is still shown,
+ *   just not labeled live.
+ * - `degraded`: the shared upstream connection is currently down and
+ *   reconnecting, but this symbol has a previously-received quote.
+ * - `offline`: no quote has ever been received for this symbol (cold
+ *   start, or the upstream has never successfully connected).
+ */
+export type SymbolLiveStatus = 'live' | 'stale' | 'degraded' | 'offline';
+
+export interface SymbolStatusData {
+  status: SymbolLiveStatus;
+  lastTickAt: number | null;
+}
+
+export function statusMessage(symbol: string, data: SymbolStatusData): WsV2Envelope<SymbolStatusData> {
+  return { v: 2, type: 'status', symbol, timestamp: Date.now(), data };
 }
 
 /** Validates a client-supplied `timeframes` field - unknown/malformed entries are dropped, never guessed or coerced (matching the existing "unsupported symbol - silently skip" convention for `symbols`). */

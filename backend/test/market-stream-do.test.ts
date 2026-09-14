@@ -99,7 +99,13 @@ function fakeState() {
 }
 
 function fakeSocket(): WebSocket {
-  return {} as unknown as WebSocket;
+  // Final Production Task - status broadcasting means subscribeClient's
+  // surrounding code paths (scheduleReconnect, heartbeat sweep, tick
+  // handling) can now legitimately call `.send()` on a subscribed socket
+  // where they previously never did. Every real WebSocket has `.send`; a
+  // test that wants to inspect what was sent already overrides this with
+  // its own spy, same as before.
+  return { send: () => {} } as unknown as WebSocket;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -396,7 +402,7 @@ describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Ta
 
       room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3451 }));
 
-      expect(viewerSent.some((p) => JSON.parse(p).v === 2)).toBe(false); // viewer only ever gets V1 tick frames
+      expect(viewerSent.some((p) => JSON.parse(p).type === 'candle')).toBe(false); // a plain viewer never gets candle-type V2 frames (a status-type V2 frame IS expected here - Final Production Task stale/degraded/offline signaling - see the dedicated describe block below)
       expect(candleSent).toHaveLength(1);
       const envelope = JSON.parse(candleSent[0]!);
       expect(envelope).toMatchObject({ v: 2, type: 'candle', symbol: 'XAU/USD', timeframe: 'm1' });
@@ -648,6 +654,138 @@ describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Ta
 
       expect(room.quoteState.get('XAU/USD')?.price).toBe(3451);
       expect(room.candleAggregator.getCurrent('XAU/USD', 'm1', 'twelve_data')?.close).toBe(3451);
+    });
+  });
+});
+
+describe('MarketStreamRoom - Final Production Task: stale/gap/degraded/offline WS status signaling', () => {
+  describe('computeSymbolStatus - single source of truth', () => {
+    it('reports "offline" for a symbol with no quote ever received', () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      expect(room.computeSymbolStatus('XAU/USD')).toBe('offline');
+    });
+
+    it('reports "live" for a quote within the stale threshold', () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.quoteState.set('XAU/USD', { symbol: 'XAU/USD', price: 3450, timestamp: Date.now(), source: 'twelve_data' });
+      expect(room.computeSymbolStatus('XAU/USD')).toBe('live');
+    });
+
+    it('reports "stale" for an old quote while the upstream link is still connected', () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.quoteState.set('XAU/USD', { symbol: 'XAU/USD', price: 3450, timestamp: Date.now() - 200_000, source: 'twelve_data' }); // STALE_THRESHOLD_SECONDS=90 in makeEnv()
+      room.upstream = { readyState: 1 };
+      expect(room.computeSymbolStatus('XAU/USD')).toBe('stale');
+    });
+
+    it('reports "degraded" for an old quote once the upstream link itself is down', () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.quoteState.set('XAU/USD', { symbol: 'XAU/USD', price: 3450, timestamp: Date.now() - 200_000, source: 'twelve_data' });
+      room.upstream = null;
+      expect(room.computeSymbolStatus('XAU/USD')).toBe('degraded');
+    });
+  });
+
+  describe('broadcastStatusIfChanged - only on an actual transition, never every call', () => {
+    it('a tick arriving for a previously-offline symbol broadcasts a status transition to "live" to its viewers', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socket = fakeSocket();
+      const sent: string[] = [];
+      socket.send = (p: string) => sent.push(p);
+      await room.subscribeClient(socket, ['XAU/USD']);
+
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3450 }));
+
+      const statusMessages = sent.map((p) => JSON.parse(p)).filter((m) => m.type === 'status');
+      expect(statusMessages).toHaveLength(1);
+      expect(statusMessages[0]).toMatchObject({ v: 2, type: 'status', symbol: 'XAU/USD', data: { status: 'live' } });
+    });
+
+    it('a second tick that does NOT change the status does not re-broadcast', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socket = fakeSocket();
+      const sent: string[] = [];
+      socket.send = (p: string) => sent.push(p);
+      await room.subscribeClient(socket, ['XAU/USD']);
+
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3450 }));
+      const countAfterFirst = sent.map((p) => JSON.parse(p)).filter((m) => m.type === 'status').length;
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3451 }));
+      const countAfterSecond = sent.map((p) => JSON.parse(p)).filter((m) => m.type === 'status').length;
+
+      expect(countAfterFirst).toBe(1);
+      expect(countAfterSecond).toBe(1); // still-live tick did not trigger a second status frame
+    });
+
+    it('an alert-only symbol with zero viewers never gets a status broadcast (nobody to send it to)', () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      room.alertRefCounts.set('XAU/USD', 1);
+
+      expect(() => room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3450 }))).not.toThrow();
+      expect(room.lastBroadcastStatus.has('XAU/USD')).toBe(false);
+    });
+  });
+
+  describe('the upstream link dropping/restoring re-sweeps every viewed symbol\'s status', () => {
+    it('scheduleReconnect (upstream dropped) flips a "live" symbol to "degraded" for its viewers', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socket = fakeSocket();
+      const sent: string[] = [];
+      socket.send = (p: string) => sent.push(p);
+      await room.subscribeClient(socket, ['XAU/USD']);
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3450 })); // now 'live'
+      sent.length = 0;
+
+      // Age the quote past the stale threshold (STALE_THRESHOLD_SECONDS=90
+      // in makeEnv()) - a quote that's still fresh stays 'live' through a
+      // momentary disconnect by design (the data itself is still good), so
+      // this isolates the disconnect's own effect from mere time passing.
+      room.quoteState.get('XAU/USD').timestamp = Date.now() - 200_000;
+      room.upstream = { readyState: 1 }; // simulate a connected link right before it drops
+      room.scheduleReconnect();
+
+      const statusMessages = sent.map((p) => JSON.parse(p)).filter((m) => m.type === 'status');
+      expect(statusMessages).toHaveLength(1);
+      expect(statusMessages[0]).toMatchObject({ type: 'status', data: { status: 'degraded' } });
+    });
+
+    it('does not schedule a reconnect when nobody needs data, even though the status sweep runs first', () => {
+      const state = fakeState();
+      const room = new MarketStreamRoom(state as never, makeEnv()) as RoomInternals;
+      room.scheduleReconnect();
+      expect(state.storage.setAlarm).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('poolStatusSnapshot exposes the same liveStatus computation (admin/WS parity)', () => {
+    it('a fresh tick is reflected as liveStatus "live" in the admin snapshot', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3450 }));
+
+      const snapshot = room.poolStatusSnapshot();
+      expect(snapshot.symbols.find((s: { symbol: string }) => s.symbol === 'XAU/USD').liveStatus).toBe('live');
+    });
+  });
+
+  describe('backward compatibility - a V1-only client is unaffected by status frames', () => {
+    it('a status frame carries no top-level "price" field, so it is safely ignored by the existing V1 parser (TwelveDataParser.parseWsTick requires decoded.price)', async () => {
+      const room = new MarketStreamRoom(fakeState() as never, makeEnv()) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socket = fakeSocket();
+      const sent: string[] = [];
+      socket.send = (p: string) => sent.push(p);
+      await room.subscribeClient(socket, ['XAU/USD']);
+
+      room.handleUpstreamMessage(JSON.stringify({ event: 'price', symbol: 'XAU/USD', price: 3450 }));
+
+      const statusFrame = sent.map((p) => JSON.parse(p)).find((m) => m.type === 'status');
+      expect(statusFrame).toBeDefined();
+      expect(statusFrame.price).toBeUndefined();
     });
   });
 });
