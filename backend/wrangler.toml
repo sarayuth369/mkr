@@ -74,9 +74,21 @@ database_id = "68b60095-6159-4e80-9d58-ac9b29354441"
 name = "MARKET_STREAM"
 class_name = "MarketStreamRoom"
 
+# Rate-limit counter shard, one instance per rate-limit key (see
+# src/ratelimit-do.ts) - replaces the old per-request KV write that alone
+# exceeded the Workers KV free-tier PUT quota (Phase 0 KV remediation, see
+# docs/architecture/MKR_MARKET_DATA_ARCHITECTURE_DECISIONS.md).
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterRoom"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MarketStreamRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimiterRoom"]
 
 # ── Secrets (never committed - set with `wrangler secret put <NAME>`) ───
 # TWELVE_DATA_API_KEY            (required for live data; existing key the

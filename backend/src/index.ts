@@ -34,9 +34,11 @@ import { logError } from './logging';
 import { handleCandles, handleMarketHealth, handleMarketStatus, handleQuote, handleQuotes } from './market/market-routes';
 import { checkRateLimit, clientKeyFromRequest, rateLimitedResponse, rateLimitEnv } from './ratelimit';
 import type { Env } from './types';
+import { fetchPoolStatus, triggerAlertRefSync } from './ws/market-stream-do';
 import { handleMarketStream } from './ws/ws-routes';
 
 export { MarketStreamRoom } from './ws/market-stream-do';
+export { RateLimiterRoom } from './ratelimit-do';
 
 function requestId(): string {
   return crypto.randomUUID();
@@ -47,14 +49,14 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
   // yet - but it gets a much stricter rate limit to resist brute-forcing.
   if (path === '/api/mkr/admin/login' && request.method === 'POST') {
     const key = `admin-login:${clientKeyFromRequest(request)}`;
-    const limit = await checkRateLimit(env.MKR_CACHE, key, 5, 60);
+    const limit = await checkRateLimit(env.RATE_LIMITER, key, 5, 60);
     if (!limit.allowed) return rateLimitedResponse(limit);
     return handleAdminLogin(request, env);
   }
 
   await requireAdmin(request, env);
   const { limit: adminLimit } = rateLimitEnv(env, 'admin');
-  const rl = await checkRateLimit(env.MKR_CACHE, `admin:${clientKeyFromRequest(request)}`, adminLimit, 60);
+  const rl = await checkRateLimit(env.RATE_LIMITER, `admin:${clientKeyFromRequest(request)}`, adminLimit, 60);
   if (!rl.allowed) return rateLimitedResponse(rl);
 
   // A real per-admin identity would come from the session token/SSO once
@@ -95,6 +97,13 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
   if (path === '/api/mkr/admin/notification-logs' && request.method === 'GET') return handleAdminNotificationLogs(request, env);
   if (path === '/api/mkr/admin/subscriptions' && request.method === 'GET') return handleAdminSubscriptionsGet(request, env);
 
+  // Phase 11 (partial) - Market Pool observability, reusing the existing
+  // admin auth/routing rather than a separate endpoint/auth mechanism.
+  if (path === '/api/mkr/admin/market-pool' && request.method === 'GET') {
+    const status = await fetchPoolStatus(env);
+    return new Response(JSON.stringify({ success: true, data: status }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
   throw new ApiError('NOT_FOUND', `No admin route for ${request.method} ${path}`);
 }
 
@@ -102,7 +111,7 @@ async function routeMarket(request: Request, env: Env, path: string, id: string)
   // '/api/mkr/market/stream' is intercepted earlier in fetch(), before this
   // function is ever called - see the comment there for why.
   const { limit } = rateLimitEnv(env, 'public');
-  const rl = await checkRateLimit(env.MKR_CACHE, `public:${clientKeyFromRequest(request)}`, limit, 60);
+  const rl = await checkRateLimit(env.RATE_LIMITER, `public:${clientKeyFromRequest(request)}`, limit, 60);
   if (!rl.allowed) return rateLimitedResponse(rl);
 
   if (path === '/api/mkr/market/quote') return handleQuote(request, env, id);
@@ -120,7 +129,11 @@ export default {
    * configured. This keeps tick evaluation in market-stream-do.ts reading
    * only KV, never querying Supabase per tick. */
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(refreshAlertIndex(env).then(() => undefined));
+    ctx.waitUntil(
+      refreshAlertIndex(env)
+        .then(() => triggerAlertRefSync(env))
+        .then(() => undefined),
+    );
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

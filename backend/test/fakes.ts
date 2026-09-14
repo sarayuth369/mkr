@@ -1,3 +1,5 @@
+import { RateLimiterRoom } from '../src/ratelimit-do';
+
 /** Minimal D1Database stand-in that just records every bound statement -
  * enough to assert what an audit-log write contained without a real D1
  * binding (or touching any real data). */
@@ -29,6 +31,29 @@ export function createFakeD1(): { db: D1Database; calls: RecordedD1Call[] } {
     },
   } as unknown as D1Database;
   return { db, calls };
+}
+
+/** Minimal fake DurableObjectNamespace for RateLimiterRoom - shards by
+ * `idFromName(key)` exactly like the real namespace, backing each shard
+ * with a real `RateLimiterRoom` instance so behavior (window rollover,
+ * per-key isolation) matches production, not a re-implementation of it. */
+export function createFakeRateLimiterNamespace(): DurableObjectNamespace {
+  const rooms = new Map<string, { fetch(input: string, init?: RequestInit): Promise<Response> }>();
+  return {
+    idFromName(name: string) {
+      return { toString: () => name } as unknown as DurableObjectId;
+    },
+    get(id: DurableObjectId) {
+      const key = id.toString();
+      let room = rooms.get(key);
+      if (!room) {
+        const instance = new RateLimiterRoom();
+        room = { fetch: (input: string, init?: RequestInit) => instance.fetch(new Request(input, init)) };
+        rooms.set(key, room);
+      }
+      return room as unknown as DurableObjectStub;
+    },
+  } as unknown as DurableObjectNamespace;
 }
 
 /** Minimal in-memory KVNamespace stand-in - just enough of the surface these tests touch. */

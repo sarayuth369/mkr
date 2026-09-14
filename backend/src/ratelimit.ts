@@ -1,3 +1,4 @@
+import { logError } from './logging';
 import type { Env } from './types';
 
 export interface RateLimitResult {
@@ -7,33 +8,41 @@ export interface RateLimitResult {
 }
 
 /**
- * Fixed-window limiter backed by KV, shared across isolates/regions (unlike
- * a plain in-memory Map, which only protects a single isolate). KV writes
- * are eventually-consistent, so under very high concurrency a client can
- * slightly exceed the limit for one window - an accepted tradeoff for an
- * early-stage app; swapping in Cloudflare's native Workers Rate Limiting
- * binding later is a drop-in replacement for this function if stricter
- * enforcement is ever needed.
+ * Fixed-window limiter backed by a Durable Object (see ratelimit-do.ts),
+ * sharded one DO instance per key - NOT backed by KV. KV was the original
+ * design but produced one KV .put() per allowed request, which alone
+ * exceeded the Workers KV free-tier 1,000 PUT/day quota under any real
+ * traffic (see docs/architecture/MKR_MARKET_DATA_ARCHITECTURE_DECISIONS.md,
+ * Phase 0.B). The DO shard holds its window counter purely in memory - zero
+ * KV writes, zero DO storage writes, and stronger consistency than the old
+ * KV read-then-write race since each shard is single-threaded.
+ *
+ * Fails OPEN (allowed: true) if the DO call itself throws (e.g. a transient
+ * platform error) - a rate limiter must never turn into a public API outage;
+ * see the "KV 429 -> uncaught -> 500" incident this migration fixes.
  */
 export async function checkRateLimit(
-  kv: KVNamespace,
+  namespace: DurableObjectNamespace,
   key: string,
   limit: number,
   windowSeconds: number,
   now: number = Date.now(),
 ): Promise<RateLimitResult> {
-  const windowStart = Math.floor(now / (windowSeconds * 1000)) * (windowSeconds * 1000);
-  const resetAt = windowStart + windowSeconds * 1000;
-  const storageKey = `ratelimit:${key}:${windowStart}`;
+  const windowMs = windowSeconds * 1000;
+  const windowStart = Math.floor(now / windowMs) * windowMs;
+  const resetAt = windowStart + windowMs;
 
-  const current = Number((await kv.get(storageKey)) ?? '0');
-  if (current >= limit) {
-    return { allowed: false, remaining: 0, resetAt };
+  try {
+    const stub = namespace.get(namespace.idFromName(key));
+    const response = await stub.fetch('https://rate-limiter.internal/check', {
+      method: 'POST',
+      body: JSON.stringify({ limit, windowSeconds, now }),
+    });
+    return (await response.json()) as RateLimitResult;
+  } catch (err) {
+    logError('rate limiter DO call failed - failing open', { key, message: (err as Error).message });
+    return { allowed: true, remaining: Math.max(0, limit - 1), resetAt };
   }
-
-  const next = current + 1;
-  await kv.put(storageKey, String(next), { expirationTtl: windowSeconds + 5 });
-  return { allowed: true, remaining: Math.max(0, limit - next), resetAt };
 }
 
 export function clientKeyFromRequest(request: Request): string {

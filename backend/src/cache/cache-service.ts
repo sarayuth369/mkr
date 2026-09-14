@@ -14,6 +14,8 @@
 // would close that gap fully; not built here to avoid overengineering an
 // early-stage product - see docs/MKR-PHASE2-ARCHITECTURE.md.
 
+import { safeKvPut } from '../kv-safety';
+
 // Cloudflare KV rejects any `expirationTtl` under 60 seconds outright (a
 // hard platform floor, confirmed against the real API during deployment -
 // not a soft/advisory limit) - clamped here so a short TTL request fails
@@ -54,13 +56,40 @@ export async function cachedFetch<T>(
   const promise = (async (): Promise<T> => {
     const value = await fetcher();
     const envelope: CacheEnvelope<T> = { v: value };
-    await kv.put(key, JSON.stringify(envelope), { expirationTtl: Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds)) });
+    // Best-effort: the fetch already succeeded, so a cache-write failure
+    // (e.g. KV quota exhausted) must not fail the caller's request - see
+    // kv-safety.ts.
+    await safeKvPut(kv, key, JSON.stringify(envelope), { expirationTtl: Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds)) }, 'cachedFetch');
     return value;
   })();
 
   inFlight.set(key, promise);
   try {
     return { value: await promise, cached: false };
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+/**
+ * General-purpose single-flight coalescing, sharing the same per-isolate
+ * `inFlight` map as [cachedFetch] above but for callers that manage their
+ * own KV read/write (e.g. handleQuotes' batch path, which reads/writes
+ * several cache keys at once and can't express itself as one [cachedFetch]
+ * call). Fixes the verified gap where handleQuotes bypassed in-flight
+ * dedup entirely - concurrent identical batch requests each independently
+ * called the provider (Decision 7, Phase 5). Callers should build `key`
+ * from the exact request shape (e.g. the sorted uncached-symbol list) so
+ * only genuinely-equivalent concurrent requests coalesce.
+ */
+export async function coalesced<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const pending = inFlight.get(key);
+  if (pending) return pending as Promise<T>;
+
+  const promise = fetcher();
+  inFlight.set(key, promise);
+  try {
+    return await promise;
   } finally {
     inFlight.delete(key);
   }
@@ -79,7 +108,7 @@ export async function getCached<T>(kv: KVNamespace, key: string): Promise<T | un
 /** Write-only cache population, paired with [getCached] for a caller that fetched a whole batch itself in one upstream call. */
 export async function putCached<T>(kv: KVNamespace, key: string, value: T, ttlSeconds: number): Promise<void> {
   const envelope: CacheEnvelope<T> = { v: value };
-  await kv.put(key, JSON.stringify(envelope), { expirationTtl: Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds)) });
+  await safeKvPut(kv, key, JSON.stringify(envelope), { expirationTtl: Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds)) }, 'putCached');
 }
 
 /** Test-only: clears the in-flight map between test cases. */

@@ -4,6 +4,7 @@ export interface Env {
   MKR_CACHE: KVNamespace;
   MKR_DB: D1Database;
   MARKET_STREAM: DurableObjectNamespace;
+  RATE_LIMITER: DurableObjectNamespace;
 
   MARKET_PRIMARY_PROVIDER: string;
   MARKET_SECONDARY_PROVIDER: string;
