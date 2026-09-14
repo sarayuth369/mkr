@@ -89,6 +89,22 @@ function budgetErrorFor(tier: string): ProviderError {
  * (there is no further fallback), but no longer needlessly disables
  * Alpaca for a one-off blip.
  *
+ * Final Edit Task 2: `healthCheck()` makes a REAL provider REST call, the
+ * same as any other provider method - Mac's follow-up review found that
+ * the confirmation probe above called it directly, bypassing quota
+ * admission entirely (the call WAS still counted, via the provider's own
+ * `request()` choke point, but never ADMITTED first). `confirmUnhealthy`
+ * is now the only way this class calls `healthCheck()` for a failover
+ * confirmation - it performs the SAME P4 admission check `healthSnapshot`
+ * already did, before ever touching the provider. If that admission is
+ * denied, the provider is not contacted a second time, and - critically -
+ * the circuit is NOT tripped, since an outage that was never actually
+ * re-confirmed must never be treated as confirmed (same "never fabricate
+ * health data" principle `healthSnapshot` already follows for a
+ * budget-denied probe). The half-open trial path is unaffected - it never
+ * called `healthCheck()` in the first place (the trial request itself IS
+ * the confirmation), so there is nothing to admit there.
+ *
  * Task 6: every actual provider call in this class is now gated by the
  * centralized quota guard (quota-manager.ts) - this is the ONE place
  * that gate is enforced, so no caller can bypass it by going around this
@@ -135,6 +151,29 @@ export class MarketProviderManager {
     return admitProviderRequest(id, priority, this.budgetFor(id));
   }
 
+  /**
+   * Final Edit Task 2 - the ONLY path this class uses to call
+   * `healthCheck()` for a failover confirmation (i.e. NOT the half-open
+   * trial path, which never calls `healthCheck()` at all). Performs a P4
+   * quota admission BEFORE contacting the provider a second time - a
+   * confirmation probe is exactly the kind of "optional/background" work
+   * P4 exists for, and it must obey the same budget/shedding rules as any
+   * other real provider call. Never records usage itself; the provider's
+   * own `request()` choke point still does that, exactly once, only if
+   * admission allowed the call to actually happen.
+   *
+   * Returns `'unknown'` (never contacted, nothing learned) when admission
+   * is denied - callers must treat this the same as a NOT-yet-confirmed
+   * outage: never trip the circuit, since that would fabricate a health
+   * verdict for a provider that was never actually re-checked.
+   */
+  private async confirmUnhealthy(id: ProviderId, provider: MarketDataProvider): Promise<'healthy' | 'unhealthy' | 'unknown'> {
+    const decision = this.admit(id, 'P4');
+    if (!decision.allowed) return 'unknown';
+    const probe = await provider.healthCheck();
+    return probe.healthy ? 'healthy' : 'unhealthy';
+  }
+
   private async withFailover<T>(
     call: (provider: MarketDataProvider, providerSymbol: string) => Promise<T>,
     symbolFor: (id: ProviderId) => string | null,
@@ -162,10 +201,13 @@ export class MarketProviderManager {
                 // quota to re-ask a question this attempt already answered).
                 recordCircuitFailure(this.primary.id);
               } else {
-                const probe = await this.primary.healthCheck();
-                if (probe.healthy) {
-                  // Confirmed still reachable - a one-off/transient fault,
-                  // not a genuine outage. Do not fail over; propagate.
+                const confirmation = await this.confirmUnhealthy(this.primary.id, this.primary);
+                if (confirmation !== 'unhealthy') {
+                  // 'healthy' - confirmed still reachable, a one-off/
+                  // transient fault, not a genuine outage. 'unknown' - the
+                  // confirmation probe itself was budget-denied, so nothing
+                  // was actually learned - never trip the circuit on an
+                  // UNVERIFIED outage. Either way: do not fail over; propagate.
                   throw err;
                 }
                 recordCircuitFailure(this.primary.id); // confirmed unhealthy - trip/extend the breaker
@@ -204,8 +246,10 @@ export class MarketProviderManager {
               if (admission.isProbe) {
                 recordCircuitFailure(this.secondary.id);
               } else {
-                const probe = await this.secondary.healthCheck();
-                if (!probe.healthy) recordCircuitFailure(this.secondary.id);
+                const confirmation = await this.confirmUnhealthy(this.secondary.id, this.secondary);
+                if (confirmation === 'unhealthy') recordCircuitFailure(this.secondary.id);
+                // 'healthy' or 'unknown' (budget-denied confirmation): never
+                // trip the circuit on an unverified outage - same rule as primary.
               }
               throw err;
             }
@@ -268,8 +312,8 @@ export class MarketProviderManager {
               if (admission.isProbe) {
                 recordCircuitFailure(this.primary.id); // the trial's own failure is the confirmation
               } else {
-                const probe = await this.primary.healthCheck();
-                if (probe.healthy) throw err; // transient - propagate, don't fail over
+                const confirmation = await this.confirmUnhealthy(this.primary.id, this.primary);
+                if (confirmation !== 'unhealthy') throw err; // 'healthy' (transient) or 'unknown' (unverified) - propagate, don't fail over, don't trip
                 recordCircuitFailure(this.primary.id);
               }
             }
@@ -301,8 +345,8 @@ export class MarketProviderManager {
               if (admission.isProbe) {
                 recordCircuitFailure(this.secondary.id);
               } else {
-                const probe = await this.secondary.healthCheck();
-                if (!probe.healthy) recordCircuitFailure(this.secondary.id);
+                const confirmation = await this.confirmUnhealthy(this.secondary.id, this.secondary);
+                if (confirmation === 'unhealthy') recordCircuitFailure(this.secondary.id);
               }
               throw err;
             }

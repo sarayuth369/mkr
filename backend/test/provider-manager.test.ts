@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { _resetCircuitsForTests } from '../src/providers/circuit-breaker';
+import { _resetCircuitsForTests, circuitStatus } from '../src/providers/circuit-breaker';
 import { MarketProviderManager, _resetHealthForTests, type ProviderBudgets } from '../src/providers/provider-manager';
-import { _resetQuotaUsageForTests, recordProviderRequest } from '../src/providers/quota-manager';
+import { _resetQuotaUsageForTests, budgetSnapshot, recordProviderRequest } from '../src/providers/quota-manager';
 import { ProviderError, type MarketDataProvider } from '../src/providers/types';
 import type { NormalizedQuote, ProviderId } from '../src/types';
 
@@ -83,6 +83,21 @@ class FakeProvider implements MarketDataProvider {
 }
 
 const symbolFor = () => 'AAPL';
+
+function usedCount(id: ProviderId, dailyRequestBudget = 1_000_000): number {
+  return budgetSnapshot(id, { dailyRequestBudget }).usedCount;
+}
+
+/** Wraps a FakeProvider's healthCheck to count real invocations, exactly the pattern the existing circuit-breaker tests above already use. */
+function countHealthChecks(provider: FakeProvider): { calls: () => number } {
+  let calls = 0;
+  const original = provider.healthCheck.bind(provider);
+  provider.healthCheck = async () => {
+    calls++;
+    return original();
+  };
+  return { calls: () => calls };
+}
 
 beforeEach(() => {
   _resetHealthForTests();
@@ -485,6 +500,142 @@ describe('MarketProviderManager', () => {
       expect(source).toBeNull();
       expect(result).toEqual({ AAPL: null });
       expect(secondary.batchCalls).toBe(1); // skipped this time - confirmed-unhealthy trip carried over
+    });
+  });
+
+  describe('Final Edit Task 2 - healthCheck() confirmation is quota-admitted (P4), never bypasses the budget guard', () => {
+    it('a failed primary request followed by a healthCheck confirmation consumes exactly 2 real attempts, both covered by quota policy', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const budgets: ProviderBudgets = { twelveData: { dailyRequestBudget: 100 }, alpaca: { dailyRequestBudget: 0 } };
+      // No secondary configured - once confirmed unhealthy, withFailover has
+      // nothing left to fall through to, so it throws its OWN generic "no
+      // healthy provider" error rather than the original one (pre-existing
+      // behavior, unrelated to this fix) - the property under test here is
+      // the confirmation probe's own admission/recording, not the exact
+      // error surfaced.
+      const manager = new MarketProviderManager(primary, null, false, budgets);
+      const hc = countHealthChecks(primary);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow();
+
+      expect(primary.quoteCalls).toBe(1); // the original attempt
+      expect(hc.calls()).toBe(1); // the confirmation probe - actually ran, because P4 admission was allowed
+      expect(usedCount('twelve_data', 100)).toBe(2); // BOTH real attempts recorded - the confirmation probe is not a free bypass
+      expect(circuitStatus('twelve_data')).toBe('open'); // confirmed unhealthy - correctly tripped
+    });
+
+    it('a failed secondary request followed by a healthCheck confirmation has the same property', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const secondary = new FakeProvider('alpaca', { throwKind: 'network', healthy: false });
+      const budgets: ProviderBudgets = { twelveData: { dailyRequestBudget: 100 }, alpaca: { dailyRequestBudget: 100 } };
+      const manager = new MarketProviderManager(primary, secondary, true, budgets);
+      const hc = countHealthChecks(secondary);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow('alpaca failed');
+
+      expect(secondary.quoteCalls).toBe(1);
+      expect(hc.calls()).toBe(1);
+      expect(usedCount('alpaca', 100)).toBe(2); // both the failed request and its confirmation probe recorded
+      expect(circuitStatus('alpaca')).toBe('open');
+    });
+
+    it('when P4 health-check admission is denied, healthCheck is NOT contacted, the original error is preserved, and the circuit is NOT tripped from an unverified outage', async () => {
+      // Budget of exactly 1: the primary's own getQuote attempt consumes
+      // the entire daily budget, leaving nothing for a SECOND real request -
+      // so the P4 confirmation probe must be denied (100% used -> 'stopped'
+      // tier -> P4 is the first priority shed at 70%, already gone by 100%).
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const budgets: ProviderBudgets = { twelveData: { dailyRequestBudget: 1 }, alpaca: { dailyRequestBudget: 0 } };
+      const manager = new MarketProviderManager(primary, null, false, budgets);
+      const hc = countHealthChecks(primary);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow('twelve_data failed'); // the ORIGINAL error, not a budget error
+
+      expect(primary.quoteCalls).toBe(1); // only the original attempt - healthCheck's own request() never ran
+      expect(hc.calls()).toBe(0); // the confirmation probe was never even attempted
+      expect(usedCount('twelve_data', 1)).toBe(1); // still just 1 - no bypassed second request was ever recorded
+      expect(circuitStatus('twelve_data')).toBe('closed'); // NEVER trip on an unverified outage - this is the core of the fix
+    });
+
+    it('a budget-denied confirmation does not fail over either - the outage was never actually confirmed, so falling to secondary would be just as unverified', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const secondary = new FakeProvider('alpaca', { quoteResult: quote(999) });
+      const budgets: ProviderBudgets = { twelveData: { dailyRequestBudget: 1 }, alpaca: { dailyRequestBudget: 0 } };
+      const manager = new MarketProviderManager(primary, secondary, true, budgets);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow('twelve_data failed');
+
+      expect(secondary.quoteCalls).toBe(0); // never even tried - the primary's real error propagates directly instead
+    });
+
+    it('half-open claimed trials still do not perform an extra healthCheck, even under a real quota policy', async () => {
+      const opts = { throwKind: 'network' as const, healthy: false };
+      const primary = new FakeProvider('twelve_data', opts);
+      const secondary = new FakeProvider('alpaca', { quoteResult: quote(50) });
+      const budgets: ProviderBudgets = { twelveData: { dailyRequestBudget: 100 }, alpaca: { dailyRequestBudget: 100 } };
+      const manager = new MarketProviderManager(primary, secondary, true, budgets);
+      const hc = countHealthChecks(primary);
+
+      await manager.getQuote('AAPL', symbolFor, 'P1'); // primary fails, P4-admitted healthCheck confirms unhealthy, trips the breaker, falls to secondary
+      expect(hc.calls()).toBe(1); // exactly the confirmation probe from the initial trip - not yet the trial
+
+      opts.throwKind = undefined as unknown as 'network';
+      (primary as unknown as { opts: { quoteResult: unknown } }).opts.quoteResult = quote(200);
+      const realNow = Date.now;
+      try {
+        Date.now = () => realNow() + 31_000; // past the max initial backoff - half-open
+        const { source } = await manager.getQuote('AAPL', symbolFor, 'P1'); // the claimed trial itself
+        expect(source).toBe('twelve_data');
+        expect(hc.calls()).toBe(1); // STILL 1 - the trial's own outcome IS the confirmation, never a separate healthCheck
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it('getBatchQuotes applies the same quota-admitted confirmation rule: denied P4 means no healthCheck, no trip, original error preserved', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const budgets: ProviderBudgets = { twelveData: { dailyRequestBudget: 1 }, alpaca: { dailyRequestBudget: 0 } };
+      const manager = new MarketProviderManager(primary, null, false, budgets);
+      const hc = countHealthChecks(primary);
+      const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
+
+      await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1')).rejects.toThrow('twelve_data failed');
+
+      expect(primary.batchCalls).toBe(1);
+      expect(hc.calls()).toBe(0);
+      expect(circuitStatus('twelve_data')).toBe('closed');
+    });
+
+    it('getBatchQuotes: with sufficient budget, the confirmation probe runs and both attempts are recorded', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const budgets: ProviderBudgets = { twelveData: { dailyRequestBudget: 100 }, alpaca: { dailyRequestBudget: 0 } };
+      const manager = new MarketProviderManager(primary, null, false, budgets);
+      const hc = countHealthChecks(primary);
+      const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
+
+      // No secondary configured - a confirmed-unhealthy primary with
+      // nothing to fall through to resolves all-null rather than throwing
+      // (getBatchQuotes' own pre-existing, documented "no provider
+      // reachable" behavior - see the Finding 2 describe block above). The
+      // property under test is the confirmation probe's own
+      // admission/recording, not the exact resolved shape.
+      const { source } = await manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1');
+
+      expect(source).toBeNull();
+      expect(hc.calls()).toBe(1);
+      expect(usedCount('twelve_data', 100)).toBe(2);
+      expect(circuitStatus('twelve_data')).toBe('open');
+    });
+
+    it('an unconfigured budget (0) never denies the confirmation probe either - regression check for the default/no-op case', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+      const hc = countHealthChecks(primary);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow();
+
+      expect(hc.calls()).toBe(1); // unconfigured budget fails open, same as every other admission check in this codebase
+      expect(circuitStatus('twelve_data')).toBe('open');
     });
   });
 });
