@@ -19,6 +19,9 @@ export interface Env {
   RATE_LIMIT_WS_MAX_CONNECTIONS: string;
   /** Admin Web's deployed origin, e.g. "https://mkr-admin.pages.dev" - admin CORS never uses "*". */
   ADMIN_WEB_ORIGIN: string;
+  /** Task 6 - both optional, both default to "0" (unconfigured/quota guard inactive) if unset. Never a fabricated default - set to the real daily limit from your own provider account when known. */
+  PROVIDER_TWELVE_DATA_DAILY_BUDGET?: string;
+  PROVIDER_ALPACA_DAILY_BUDGET?: string;
 
   // Secrets - never logged, never returned in any API response body.
   TWELVE_DATA_API_KEY?: string;

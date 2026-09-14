@@ -20,6 +20,7 @@ export async function getConfig(env: Env): Promise<RuntimeConfig> {
     ...stored,
     cacheTtls: { ...fallback.cacheTtls, ...stored.cacheTtls },
     rateLimits: { ...fallback.rateLimits, ...stored.rateLimits },
+    providerBudgets: { ...fallback.providerBudgets, ...stored.providerBudgets },
     featureFlags: { ...fallback.featureFlags, ...stored.featureFlags },
   };
 }
@@ -35,6 +36,7 @@ export async function updateConfig(env: Env, patch: Partial<RuntimeConfig>): Pro
     ...patch,
     cacheTtls: { ...current.cacheTtls, ...patch.cacheTtls },
     rateLimits: { ...current.rateLimits, ...patch.rateLimits },
+    providerBudgets: { ...current.providerBudgets, ...patch.providerBudgets },
     featureFlags: { ...current.featureFlags, ...patch.featureFlags },
   };
   await setConfig(env, next);

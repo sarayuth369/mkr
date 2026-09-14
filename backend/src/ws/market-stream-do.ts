@@ -239,7 +239,7 @@ export class MarketStreamRoom {
       const policy = this.policyFor(rows, symbol);
 
       const { value: candles } = await cachedFetch(this.env.MKR_CACHE, cacheKey('candles', symbol, `${timeframe}:pool-seed`), ttl, async () => {
-        const { result } = await manager.getCandles(symbol, timeframe, 2, symbolFor);
+        const { result } = await manager.getCandles(symbol, timeframe, 2, symbolFor, 'P3'); // reconciliation/warm maintenance (Task 6)
         return result;
       });
 

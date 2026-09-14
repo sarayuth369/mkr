@@ -13,5 +13,5 @@ import type { Env } from '../types';
 export async function managerFor(env: Env, config: Awaited<ReturnType<typeof getConfig>>): Promise<MarketProviderManager> {
   const primary = buildProvider(config.primaryProvider, env);
   const secondary = config.secondaryProvider ? buildProvider(config.secondaryProvider, env) : null;
-  return new MarketProviderManager(primary, secondary, config.secondaryEnabled);
+  return new MarketProviderManager(primary, secondary, config.secondaryEnabled, config.providerBudgets);
 }

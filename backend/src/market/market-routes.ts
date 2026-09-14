@@ -34,7 +34,7 @@ export async function handleQuote(request: Request, env: Env, requestId: string)
     // NormalizedQuote, so nothing is lost by dropping the old wrapper.
     const { value } = await cachedFetch(env.MKR_CACHE, cacheKey('quote', symbol), ttl, async () => {
       const manager = await managerFor(env, config);
-      const { result } = await manager.getQuote(symbol, symbolFor);
+      const { result } = await manager.getQuote(symbol, symbolFor, 'P1'); // user-requested market data
       return result;
     });
     logInfo('quote served', { requestId, route: 'quote', symbol, provider: value?.source, latencyMs: Date.now() - start });
@@ -111,7 +111,7 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
       // provider. This is what getCached/putCached above bypassed - see
       // coalesced()'s doc comment in cache-service.ts.
       const coalesceKey = `batch-quotes:${[...uncached].sort().join(',')}`;
-      const { result } = await coalesced(coalesceKey, () => manager.getBatchQuotes(uncached, providerSymbolFor));
+      const { result } = await coalesced(coalesceKey, () => manager.getBatchQuotes(uncached, providerSymbolFor, 'P1')); // user-requested market data
 
       await Promise.all(
         uncached.map(async (symbol) => {
@@ -148,7 +148,7 @@ export async function handleCandles(request: Request, env: Env, requestId: strin
   try {
     const { value } = await cachedFetch(env.MKR_CACHE, cacheKey('candles', symbol, `${timeframe}:${outputSize}`), ttl, async () => {
       const manager = await managerFor(env, config);
-      const { result, source } = await manager.getCandles(symbol, timeframe, outputSize, symbolFor);
+      const { result, source } = await manager.getCandles(symbol, timeframe, outputSize, symbolFor, 'P1'); // user-requested market data
       return { candles: result, source };
     });
     logInfo('candles served', { requestId, route: 'candles', symbol, provider: value.source, latencyMs: Date.now() - start });
@@ -179,7 +179,7 @@ export async function handleMarketStatus(request: Request, env: Env, requestId: 
   try {
     const { value } = await cachedFetch(env.MKR_CACHE, cacheKey('status', symbol), config.cacheTtls.statusSeconds, async () => {
       const manager = await managerFor(env, config);
-      const { result } = await manager.getMarketStatus(symbol, symbolFor);
+      const { result } = await manager.getMarketStatus(symbol, symbolFor, 'P1'); // user-requested market data
       return result;
     });
     return jsonResponse(value);

@@ -32,6 +32,15 @@ RATE_LIMIT_PUBLIC_PER_MINUTE = "60"
 RATE_LIMIT_ADMIN_PER_MINUTE = "120"
 RATE_LIMIT_WS_MAX_CONNECTIONS = "500"
 ADMIN_WEB_ORIGIN = "https://mkr-admin.pages.dev"
+# Task 6 - provider REST request budget guard (src/providers/quota-manager.ts).
+# Both default to "0" (unconfigured) if left out entirely - "0" means the
+# guard is wired up and tracking usage but never denies a request, since
+# this codebase has no reliable source for Twelve Data's or Alpaca's
+# actual plan limits and none was fabricated. Set these to the real daily
+# request limit from your own provider account/dashboard once known -
+# also editable from Admin Web (Providers) without a redeploy.
+PROVIDER_TWELVE_DATA_DAILY_BUDGET = "0"
+PROVIDER_ALPACA_DAILY_BUDGET = "0"
 
 [observability]
 enabled = true

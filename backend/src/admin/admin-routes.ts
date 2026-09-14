@@ -1,19 +1,18 @@
 import { getConfig, updateConfig } from '../config/config-service';
-import { isValidRateLimit, isValidTtlSeconds } from '../config/defaults';
+import { isValidDailyBudget, isValidRateLimit, isValidTtlSeconds } from '../config/defaults';
+import { managerFor } from '../market/provider-manager-factory';
 import { ApiError, jsonResponse } from '../errors';
-import { MarketProviderManager } from '../providers/provider-manager';
-import { buildProvider } from '../providers/provider-registry';
+import { budgetSnapshot } from '../providers/quota-manager';
 import { catalogFor } from '../symbols/symbol-catalog';
 import type { Env, ProviderId } from '../types';
 import { createSessionToken, verifyPassword } from './auth';
 import { listAuditLog, recordAuditEntry } from './audit-log';
 
-async function managerFor(env: Env): Promise<MarketProviderManager> {
-  const config = await getConfig(env);
-  const primary = buildProvider(config.primaryProvider, env);
-  const secondary = config.secondaryProvider ? buildProvider(config.secondaryProvider, env) : null;
-  return new MarketProviderManager(primary, secondary, config.secondaryEnabled);
-}
+// Task 6: this used to be a second, local copy of provider-manager-factory.ts's
+// managerFor - a real "alternate route" that bypassed whatever the shared
+// factory does (now including the quota guard). Replaced with the shared
+// one so admin routes are gated by the same budget guard as everything
+// else, with no second construction path left to drift out of sync.
 
 export async function handleAdminLogin(request: Request, env: Env): Promise<Response> {
   if (!env.ADMIN_PASSWORD || !env.ADMIN_SESSION_SECRET) {
@@ -29,7 +28,7 @@ export async function handleAdminLogin(request: Request, env: Env): Promise<Resp
 
 export async function handleAdminDashboard(_request: Request, env: Env): Promise<Response> {
   const config = await getConfig(env);
-  const manager = await managerFor(env);
+  const manager = await managerFor(env, config);
   const health = await manager.healthSnapshot();
   const symbols = await catalogFor(env).all();
   return jsonResponse({
@@ -43,7 +42,7 @@ export async function handleAdminDashboard(_request: Request, env: Env): Promise
 
 export async function handleAdminProvidersGet(_request: Request, env: Env): Promise<Response> {
   const config = await getConfig(env);
-  const manager = await managerFor(env);
+  const manager = await managerFor(env, config);
   const health = await manager.healthSnapshot();
   return jsonResponse({
     primaryProvider: config.primaryProvider,
@@ -54,6 +53,13 @@ export async function handleAdminProvidersGet(_request: Request, env: Env): Prom
       alpaca: !!(env.ALPACA_API_KEY_ID && env.ALPACA_API_SECRET_KEY),
     },
     health,
+    // Task 6 - read-only snapshot of the quota guard's current state per
+    // provider (tier/usedFraction/budget). `budget: null` means
+    // unconfigured (guard inactive) - never a fabricated number.
+    budgets: {
+      twelve_data: budgetSnapshot('twelve_data', config.providerBudgets.twelveData),
+      alpaca: budgetSnapshot('alpaca', config.providerBudgets.alpaca),
+    },
   });
 }
 
@@ -62,6 +68,7 @@ export async function handleAdminProvidersUpdate(request: Request, env: Env, act
     primaryProvider: ProviderId;
     secondaryProvider: ProviderId | null;
     secondaryEnabled: boolean;
+    providerBudgets: Partial<{ twelveData: { dailyRequestBudget: number }; alpaca: { dailyRequestBudget: number } }>;
   }>;
 
   const before = await getConfig(env);
@@ -69,10 +76,25 @@ export async function handleAdminProvidersUpdate(request: Request, env: Env, act
     throw new ApiError('INVALID_PARAMETER', 'Cannot enable Alpaca: ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY secrets are not configured.');
   }
 
+  const budgetPatch = { ...before.providerBudgets };
+  if (body.providerBudgets?.twelveData !== undefined) {
+    if (!isValidDailyBudget(body.providerBudgets.twelveData.dailyRequestBudget)) {
+      throw new ApiError('INVALID_PARAMETER', 'providerBudgets.twelveData.dailyRequestBudget must be >= 0');
+    }
+    budgetPatch.twelveData = body.providerBudgets.twelveData;
+  }
+  if (body.providerBudgets?.alpaca !== undefined) {
+    if (!isValidDailyBudget(body.providerBudgets.alpaca.dailyRequestBudget)) {
+      throw new ApiError('INVALID_PARAMETER', 'providerBudgets.alpaca.dailyRequestBudget must be >= 0');
+    }
+    budgetPatch.alpaca = body.providerBudgets.alpaca;
+  }
+
   const after = await updateConfig(env, {
     primaryProvider: body.primaryProvider ?? before.primaryProvider,
     secondaryProvider: body.secondaryProvider ?? before.secondaryProvider,
     secondaryEnabled: body.secondaryEnabled ?? before.secondaryEnabled,
+    providerBudgets: budgetPatch,
   });
 
   if (before.secondaryEnabled !== after.secondaryEnabled) {
@@ -86,6 +108,9 @@ export async function handleAdminProvidersUpdate(request: Request, env: Env, act
   }
   if (before.primaryProvider !== after.primaryProvider) {
     await recordAuditEntry(env, { actor, action: 'provider.primary.changed', oldValue: before.primaryProvider, newValue: after.primaryProvider });
+  }
+  if (JSON.stringify(before.providerBudgets) !== JSON.stringify(after.providerBudgets)) {
+    await recordAuditEntry(env, { actor, action: 'provider.budgets.changed', oldValue: before.providerBudgets, newValue: after.providerBudgets });
   }
   return jsonResponse(after);
 }
@@ -197,7 +222,8 @@ export async function handleAdminFeaturesUpdate(request: Request, env: Env, acto
 }
 
 export async function handleAdminHealth(_request: Request, env: Env): Promise<Response> {
-  const manager = await managerFor(env);
+  const config = await getConfig(env);
+  const manager = await managerFor(env, config);
   const health = await manager.healthSnapshot();
   let d1Ok = true;
   try {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getConfig, updateConfig } from '../src/config/config-service';
-import { isValidRateLimit, isValidTtlSeconds } from '../src/config/defaults';
+import { isValidDailyBudget, isValidRateLimit, isValidTtlSeconds } from '../src/config/defaults';
 import type { Env } from '../src/types';
 import { createFakeKv } from './fakes';
 
@@ -33,6 +33,19 @@ describe('getConfig', () => {
   it('Alpaca stays disabled by default, matching the licensing-safety requirement', async () => {
     const config = await getConfig(makeEnv());
     expect(config.secondaryEnabled).toBe(false);
+  });
+
+  it('Task 6 - both provider budgets default to 0 (unconfigured) when no env var is set - never a fabricated number', async () => {
+    const config = await getConfig(makeEnv());
+    expect(config.providerBudgets.twelveData.dailyRequestBudget).toBe(0);
+    expect(config.providerBudgets.alpaca.dailyRequestBudget).toBe(0);
+  });
+
+  it('reads PROVIDER_TWELVE_DATA_DAILY_BUDGET / PROVIDER_ALPACA_DAILY_BUDGET when set', async () => {
+    const env = { ...makeEnv(), PROVIDER_TWELVE_DATA_DAILY_BUDGET: '750', PROVIDER_ALPACA_DAILY_BUDGET: '200' };
+    const config = await getConfig(env);
+    expect(config.providerBudgets.twelveData.dailyRequestBudget).toBe(750);
+    expect(config.providerBudgets.alpaca.dailyRequestBudget).toBe(200);
   });
 });
 
@@ -69,6 +82,15 @@ describe('updateConfig', () => {
     expect(config.cacheTtls.quoteSeconds).toBe(90);
     expect(config.featureFlags.demoMode).toBe(true);
   });
+
+  it('shallow-merges providerBudgets - updating one provider leaves the other untouched', async () => {
+    const env = makeEnv();
+    await updateConfig(env, { providerBudgets: { twelveData: { dailyRequestBudget: 500 }, alpaca: { dailyRequestBudget: 0 } } });
+    await updateConfig(env, { providerBudgets: { twelveData: { dailyRequestBudget: 500 }, alpaca: { dailyRequestBudget: 100 } } });
+    const config = await getConfig(env);
+    expect(config.providerBudgets.twelveData.dailyRequestBudget).toBe(500);
+    expect(config.providerBudgets.alpaca.dailyRequestBudget).toBe(100);
+  });
 });
 
 describe('validation helpers', () => {
@@ -85,5 +107,13 @@ describe('validation helpers', () => {
     expect(isValidRateLimit(-1)).toBe(false);
     expect(isValidRateLimit(1_000_001)).toBe(false);
     expect(isValidRateLimit(60)).toBe(true);
+  });
+
+  it('isValidDailyBudget accepts 0 (unconfigured/disabled) unlike rate limits, but rejects negative/non-finite/implausibly large values', () => {
+    expect(isValidDailyBudget(0)).toBe(true);
+    expect(isValidDailyBudget(800)).toBe(true);
+    expect(isValidDailyBudget(-1)).toBe(false);
+    expect(isValidDailyBudget(NaN)).toBe(false);
+    expect(isValidDailyBudget(100_000_000)).toBe(false);
   });
 });
