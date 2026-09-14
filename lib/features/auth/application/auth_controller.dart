@@ -43,19 +43,35 @@ class AuthController extends ChangeNotifier {
 
   bool get isAuthenticated => _profile != null;
 
+  /// FCM Final Correction Task Finding 1 - a "session epoch". Registration
+  /// (`_registerDeviceIfPossible`) is a multi-step async operation
+  /// (`initialize()` → `requestPermission()` → `getToken()` →
+  /// `registerDevice()`), and the user can log out or the session can
+  /// change while it's still in flight. Every place [_profile] changes to
+  /// a DIFFERENT identity (a different user, or guest) bumps this via
+  /// [_invalidateInFlightRegistration] BEFORE the reassignment; a
+  /// registration attempt captures the epoch at its start and re-checks it
+  /// immediately before the actual write, so a write that was already
+  /// "in flight" when the identity changed is silently abandoned instead
+  /// of registering a token against a session that is no longer current.
+  int _sessionEpoch = 0;
+
+  void _invalidateInFlightRegistration() => _sessionEpoch++;
+
   Future<void> _restore() async {
     _profile = await _service.currentSession();
     _profile ??= await _service.continueAsGuest();
     _loading = false;
     notifyListeners();
-    // FCM Correction Task Finding 1: a fresh install/reinstall (or any
-    // cold start) can restore an already-authenticated Supabase session
-    // while this device has never registered its current FCM token -
-    // login()/register() aren't called on this path, so without this the
-    // device would go unregistered until an unrelated token-refresh event
-    // happened to fire later. Guest-safe (same guard as every other call
-    // site) and best-effort - never blocks/delays startup, since
-    // notifyListeners() above has already unblocked the UI.
+    // A fresh install/reinstall (or any cold start) can restore an
+    // already-authenticated Supabase session while this device has never
+    // registered its current FCM token - login()/register() aren't called
+    // on this path, so without this the device would go unregistered until
+    // an unrelated token-refresh event happened to fire later. Guest-safe
+    // (same guard as every other call site) and best-effort - never
+    // blocks/delays startup, since notifyListeners() above has already
+    // unblocked the UI. No epoch bump needed here - this is the very first
+    // assignment, nothing was "in flight" before it.
     if (_profile?.isGuest == false) unawaited(_registerDeviceIfPossible());
   }
 
@@ -68,12 +84,23 @@ class AuthController extends ChangeNotifier {
     final updated = await _service.currentSession();
     if (updated == null) {
       if (_profile?.isGuest == false) {
+        // FCM Final Correction Task Finding 2 - the session was lost
+        // externally (never went through logout()), but the device row/
+        // transport token this session may have registered must still be
+        // cleaned up the same way an explicit logout would - otherwise a
+        // revoked/expired session leaves an active-looking device behind
+        // indefinitely. Invalidate BEFORE cleanup/reassignment so any
+        // still-in-flight registration for this (now-lost) session aborts
+        // rather than racing the cleanup below.
+        _invalidateInFlightRegistration();
+        await _cleanupDevice();
         _profile = await _service.continueAsGuest();
         notifyListeners();
       }
-      return;
+      return; // already guest - nothing registered, nothing to clean up
     }
     if (updated != _profile) {
+      _invalidateInFlightRegistration();
       _profile = updated;
       notifyListeners();
       unawaited(_registerDeviceIfPossible());
@@ -81,12 +108,14 @@ class AuthController extends ChangeNotifier {
   }
 
   Future<void> login(String email, String password) async {
+    _invalidateInFlightRegistration();
     _profile = await _service.login(email: email, password: password);
     notifyListeners();
     unawaited(_registerDeviceIfPossible());
   }
 
   Future<void> register(String email, String password) async {
+    _invalidateInFlightRegistration();
     _profile = await _service.register(email: email, password: password);
     notifyListeners();
     unawaited(_registerDeviceIfPossible());
@@ -95,11 +124,22 @@ class AuthController extends ChangeNotifier {
   Future<void> _registerDeviceIfPossible() async {
     final profile = _profile;
     if (profile == null || profile.isGuest) return;
+    final epoch = _sessionEpoch;
     try {
       await _pushService.initialize();
       if (!await _pushService.requestPermission()) return;
       final token = await _pushService.getToken();
       if (token == null) return;
+      // FCM Final Correction Task Finding 1 - re-validate immediately
+      // before the write: everything above this line is real async work
+      // (native calls) the session could have changed underneath. `profile`
+      // itself is also re-checked against the live [_profile] (value
+      // equality, matching [_syncFromService]'s own `updated != _profile`
+      // idiom - [UserProfile] defines `==` by id/email/isGuest), not just
+      // the epoch counter, so this can never register a long-captured
+      // profile that is no longer the active one even if some future edit
+      // forgot to bump the epoch on a particular transition.
+      if (epoch != _sessionEpoch || profile != _profile) return;
       await _deviceRepository.registerDevice(userId: profile.id, token: token, platform: 'android', appVersion: appVersion);
     } catch (_) {
       // Best-effort - a push registration failure must never affect login.
@@ -111,7 +151,9 @@ class AuthController extends ChangeNotifier {
   /// the moment the rotation fires — never the user who was signed in when
   /// the stream was first subscribed, since that could be stale by the
   /// time a real rotation happens. Silently ignored for a guest session,
-  /// same guard as [_registerDeviceIfPossible].
+  /// same guard as [_registerDeviceIfPossible]. No epoch check needed here:
+  /// [_profile] is read fresh at invocation and there is no `await` before
+  /// the write below for a concurrent identity change to race against.
   Future<void> _onTokenRefresh(String token) async {
     final profile = _profile;
     if (profile == null || profile.isGuest) return;
@@ -122,7 +164,12 @@ class AuthController extends ChangeNotifier {
     }
   }
 
-  Future<void> logout() async {
+  /// Best-effort push-device cleanup (spec 2.3's sign-out requirement) -
+  /// shared by an explicit [logout] and an external session loss detected
+  /// in [_syncFromService]. Never throws - a cleanup failure must never
+  /// block the auth flow itself; the caller still transitions to guest
+  /// either way.
+  Future<void> _cleanupDevice() async {
     try {
       final token = await _pushService.getToken();
       if (token != null) await _deviceRepository.deactivateDevice(token);
@@ -132,8 +179,16 @@ class AuthController extends ChangeNotifier {
       // one still belonging to this user (spec 2.3's sign-out requirement).
       await _pushService.unregisterDevice();
     } catch (_) {
-      // Best-effort - must never block logout.
+      // Best-effort.
     }
+  }
+
+  Future<void> logout() async {
+    // Invalidate FIRST - a registration still in flight for the user who
+    // is about to be signed out must abandon its write rather than racing
+    // the cleanup below (FCM Final Correction Task Finding 1).
+    _invalidateInFlightRegistration();
+    await _cleanupDevice();
     await _service.logout();
     _profile = await _service.continueAsGuest();
     notifyListeners();

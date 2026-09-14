@@ -10,29 +10,50 @@ import 'package:mkr/features/push/domain/push_notification_service.dart';
 class _FakeAuthService implements AuthService {
   UserProfile? nextLoginResult;
 
-  /// Simulates a session already restored from persisted storage at
-  /// startup (e.g. a fresh install/reinstall with a still-valid Supabase
-  /// refresh token) - distinct from `nextLoginResult`, which only feeds
-  /// an explicit `login()`/`register()` call.
-  UserProfile? restoredSession;
+  /// Backing store for `currentSession()` - `restoredSession` is a
+  /// readability alias used at construction time (mirrors real usage:
+  /// "this is the session already on disk when the controller is first
+  /// created"); `emitExternalSessionChange` mutates the SAME field later to
+  /// simulate a live external event (e.g. a revoked/expired refresh token)
+  /// reaching `authStateChanges` without going through this controller's
+  /// own `login()`/`logout()`.
+  UserProfile? _session;
+  set restoredSession(UserProfile? value) => _session = value;
+
+  final _authStateController = StreamController<void>.broadcast();
 
   @override
-  Stream<void>? get authStateChanges => null;
+  Stream<void> get authStateChanges => _authStateController.stream;
 
   @override
-  Future<UserProfile?> currentSession() async => restoredSession;
+  Future<UserProfile?> currentSession() async => _session;
 
   @override
   Future<UserProfile> continueAsGuest() async => const UserProfile(id: 'guest', email: '', isGuest: true);
 
   @override
-  Future<UserProfile> login({required String email, required String password}) async => nextLoginResult!;
+  Future<UserProfile> login({required String email, required String password}) async {
+    _session = nextLoginResult;
+    return nextLoginResult!;
+  }
 
   @override
-  Future<UserProfile> register({required String email, required String password}) async => nextLoginResult!;
+  Future<UserProfile> register({required String email, required String password}) async {
+    _session = nextLoginResult;
+    return nextLoginResult!;
+  }
 
   @override
-  Future<void> logout() async {}
+  Future<void> logout() async => _session = null;
+
+  /// Test helper (FCM Final Correction Task Findings 1/2) - simulates an
+  /// EXTERNAL auth event reaching `AuthController` via `authStateChanges`,
+  /// without going through this controller's own `login()`/`logout()` -
+  /// e.g. Supabase revoking/expiring a refresh token server-side.
+  void emitExternalSessionChange(UserProfile? newSession) {
+    _session = newSession;
+    _authStateController.add(null);
+  }
 }
 
 class _FakePushService implements PushNotificationService {
@@ -42,6 +63,35 @@ class _FakePushService implements PushNotificationService {
   int unregisterDeviceCalls = 0;
   final _tokenRefreshController = StreamController<String>.broadcast();
 
+  /// FCM Final Correction Task Finding 1 - when set, the NEXT
+  /// `requestPermission()` call hangs until [resolvePendingPermission] is
+  /// called, opening a real async race window for registration-race tests.
+  /// `requestPermission()` is only ever called from
+  /// `AuthController._registerDeviceIfPossible()` - never from `logout()`'s
+  /// own cleanup path - so delaying it (rather than `getToken()`, which
+  /// BOTH paths call) creates an unambiguous race window with no risk of
+  /// also stalling an unrelated caller.
+  ///
+  /// Two separate fields on purpose: `_pendingPermission` is the "armed for
+  /// the NEXT call" slot, claimed (and cleared) the moment a call actually
+  /// reads it - a LATER registration attempt (e.g. for a newly-signed-in
+  /// user) must resolve normally, not also hang on the same completer.
+  /// `_outstandingPermission` is whichever completer a caller is ACTUALLY
+  /// awaiting right now, which [resolvePendingPermission] targets - it
+  /// must NOT be the same field as the armed slot, since that gets cleared
+  /// (by design) the instant it's claimed, before the test gets a chance
+  /// to resolve it.
+  Completer<bool>? _pendingPermission;
+  Completer<bool>? _outstandingPermission;
+
+  void delayNextPermissionCheck() => _pendingPermission = Completer<bool>();
+
+  void resolvePendingPermission() {
+    final outstanding = _outstandingPermission;
+    _outstandingPermission = null;
+    outstanding?.complete(permissionGranted);
+  }
+
   @override
   bool get isAvailable => true;
 
@@ -49,7 +99,15 @@ class _FakePushService implements PushNotificationService {
   Future<void> initialize() async => initializeCalls++;
 
   @override
-  Future<bool> requestPermission() async => permissionGranted;
+  Future<bool> requestPermission() {
+    final pending = _pendingPermission;
+    if (pending != null) {
+      _pendingPermission = null; // single-use claim
+      _outstandingPermission = pending;
+      return pending.future;
+    }
+    return Future.value(permissionGranted);
+  }
 
   @override
   Future<String?> getToken() async => token;
@@ -90,7 +148,18 @@ class _FakeDeviceRepository implements DeviceRepository {
   }
 }
 
-Future<void> pumpMicrotasks() => Future<void>.delayed(Duration.zero);
+/// Drains pending async chains. A single `Future.delayed(Duration.zero)`
+/// only flushes ONE event-loop turn's worth of microtasks; the
+/// registration-race tests below chain several real `await` hops
+/// (`initialize()` → `requestPermission()` → `getToken()` →
+/// `registerDevice()`), each its own turn once resumed from a completer -
+/// looping a few turns reliably lets a resumed chain run all the way to
+/// completion within one `await pumpMicrotasks()` call.
+Future<void> pumpMicrotasks() async {
+  for (var i = 0; i < 5; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
 
 void main() {
   test('logging in as a real (non-guest) user registers the device once a push token is available', () async {
@@ -231,5 +300,107 @@ void main() {
     // guard, which this fake does not model) - this asserts the call
     // pattern AuthController produces stays exactly as designed.
     expect(push.initializeCalls, 2);
+  });
+
+  group('FCM Final Correction Task Finding 1 - registration race after login/logout', () {
+    test('logout while a registration is still in flight does not register the stale (already-signed-out) user', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-race-a', email: 'race-a@example.com');
+      final push = _FakePushService()..delayNextPermissionCheck();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+
+      await controller.login('race-a@example.com', 'password'); // registration starts, gets stuck awaiting getToken()
+      await controller.logout(); // must complete fully without waiting on the stuck registration
+
+      expect(devices.registeredUserId, isNull); // still stuck - not registered yet
+
+      push.resolvePendingPermission(); // let the stuck registration finally resolve
+      await pumpMicrotasks();
+
+      expect(devices.registeredUserId, isNull); // and STILL never registered - correctly abandoned as stale
+    });
+
+    test('an external session change to a different user while a registration is still in flight does not register the stale user', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-race-a', email: 'race-a@example.com');
+      final push = _FakePushService()..delayNextPermissionCheck();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+
+      await controller.login('race-a@example.com', 'password'); // stuck awaiting getToken()
+      auth.emitExternalSessionChange(const UserProfile(id: 'user-race-b', email: 'race-b@example.com'));
+      await pumpMicrotasks();
+      await pumpMicrotasks();
+
+      push.resolvePendingPermission(); // let User A's stale registration finally resolve
+      await pumpMicrotasks();
+
+      expect(devices.registeredUserId, 'user-race-b'); // User B's own registration won, never overwritten back to A
+    });
+  });
+
+  group('FCM Final Correction Task Finding 2 - external session loss cleans up the push device', () {
+    test('authenticated -> session revoked externally -> device deactivated', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-lost-1', email: 'lost1@example.com');
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('lost1@example.com', 'password');
+      await pumpMicrotasks();
+
+      auth.emitExternalSessionChange(null); // e.g. a revoked/expired Supabase refresh token
+      await pumpMicrotasks();
+
+      expect(devices.deactivatedToken, 'fake-fcm-token');
+    });
+
+    test('authenticated -> session revoked externally -> transport-level token is also revoked', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-lost-2', email: 'lost2@example.com');
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('lost2@example.com', 'password');
+      await pumpMicrotasks();
+
+      auth.emitExternalSessionChange(null);
+      await pumpMicrotasks();
+
+      expect(push.unregisterDeviceCalls, 1);
+    });
+
+    test('guest -> session (already null) -> no push cleanup is attempted', () async {
+      final auth = _FakeAuthService(); // never authenticated - starts and stays guest
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository();
+      AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+
+      auth.emitExternalSessionChange(null);
+      await pumpMicrotasks();
+
+      expect(devices.deactivatedToken, isNull);
+      expect(push.unregisterDeviceCalls, 0);
+    });
+
+    test('a stale registration cannot re-register after the session it belonged to is lost externally', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-lost-3', email: 'lost3@example.com');
+      final push = _FakePushService()..delayNextPermissionCheck();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+
+      await controller.login('lost3@example.com', 'password'); // stuck awaiting getToken()
+      auth.emitExternalSessionChange(null); // session revoked while registration is still in flight
+      await pumpMicrotasks();
+
+      push.resolvePendingPermission(); // let the stuck (now-stale) registration finally resolve
+      await pumpMicrotasks();
+
+      expect(devices.registeredUserId, isNull); // never registered - correctly abandoned as stale
+      expect(devices.deactivatedToken, 'fake-fcm-token'); // cleanup itself still happened normally
+    });
   });
 }

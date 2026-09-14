@@ -11,21 +11,6 @@ import 'core/deeplink/windows_uri_scheme_registrar.dart';
 import 'core/persistence/app_local_store.dart';
 import 'features/push/data/firebase_push_notification_service.dart';
 
-/// TEMPORARY diagnostic for the "Invalid API key" report — debug builds
-/// only, never the actual key value. Remove once the runtime config is
-/// confirmed correct on the reporter's machine.
-void _debugPrintSupabaseConfig() {
-  if (!kDebugMode) return;
-  final config = SupabaseConfig.instance;
-  final host = config.url.isEmpty ? '(empty)' : (Uri.tryParse(config.url)?.host ?? '(unparseable: check for stray quotes/spaces)');
-  final keyLen = config.anonKey.length;
-  final keyPrefix = config.anonKey.substring(0, keyLen < 20 ? keyLen : 20);
-  debugPrint(
-    '[MKR][supabase-diagnostic] host=$host isConfigured=${config.isConfigured} '
-    'keyLen=$keyLen keyPrefix="$keyPrefix"',
-  );
-}
-
 /// Safe, idempotent Firebase Cloud Messaging bootstrap (MKR Firebase FCM
 /// Integration Task). Android-only — `firebase_core` has no Windows/web
 /// native implementation in this project, and this task's scope is
@@ -55,7 +40,6 @@ Future<void> _initializeFirebase() async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final store = await AppLocalStore.create();
-  _debugPrintSupabaseConfig();
   await _initializeFirebase();
   // Dev/test-machine registration only (Windows has no manifest-based
   // intent-filter equivalent) — no-op on every other platform. A packaged
