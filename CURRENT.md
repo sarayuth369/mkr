@@ -2,55 +2,64 @@ PROJECT: MKR
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: Firebase FCM Correction Task (see D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_FIREBASE_FCM_CORRECTION_TASK.md)
-TITLE: Fix 3 correctness gaps - restored-session registration, idempotent
-       permission request, stale push docs
+TASK: Firebase FCM Final Correction Task
+TITLE: Fix registration race, external session-loss cleanup, remove debug
+       key-prefix log
 STATUS: WAITING_FOR_GPT_REVIEW
 
-GPT COMMAND:
-D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_FIREBASE_FCM_CORRECTION_TASK.md
-
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_FIREBASE_FCM_CORRECTION_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_FIREBASE_FCM_FINAL_CORRECTION_REPORT.md
 
 FULL REPORT:
-D:\FlutterProjects\Docs\report\MKR_FIREBASE_FCM_CORRECTION_REPORT.md
+D:\FlutterProjects\gpt-claude\MKR_FIREBASE_FCM_FINAL_CORRECTION_REPORT.md
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
 PREVIOUS STATE:
-Firebase FCM Integration Task - completed, was WAITING_FOR_GPT_REVIEW.
-Mac reviewed the actual code: architecture PASS, 3 correctness gaps found,
-issued as this correction task.
+Firebase FCM Correction Task - completed, was WAITING_FOR_GPT_REVIEW. Mac
+reviewed the actual code: architecture + prior corrections PASS, found 3
+more production correctness/security cleanup findings, issued as this
+final correction task.
 
 THIS PASS:
-- Fixed Finding 1: AuthController._restore() now triggers
-  _registerDeviceIfPossible() after a real (non-guest) restored session -
-  previously a fresh install/reinstall with a still-valid Supabase session
-  could mint a new FCM token yet never register it. Guest-safe,
-  best-effort, never blocks startup. Verified via revert (new test fails
-  against pre-fix code, passes with the fix).
-- Fixed Finding 2: FirebaseMessagingPushService.requestPermission() is now
-  idempotent using the platform's own live getNotificationSettings() state
-  (no invented persistence) - only genuinely-unresolved statuses still
-  call the real native request.
-- Fixed Finding 3: corrected doc comments in push_notification_service.dart,
-  noop_push_notification_service.dart, supabase_device_repository.dart,
-  and auth_controller.dart that still claimed Noop was the only shipped
-  implementation - narrowly scoped, no broader cleanup.
-- Tests: flutter test 149/149 passing (was 147, +2 new). flutter analyze:
+- Fixed Finding 1 (registration race): AuthController's in-flight device
+  registration (initialize() -> requestPermission() -> getToken() ->
+  registerDevice(), all real async work) could still write to Supabase
+  after the session that started it had already logged out or changed to
+  a different user. Fixed with a _sessionEpoch counter, bumped before
+  every identity-changing _profile reassignment (login/register/logout/
+  external session change or loss), checked (epoch + value-equality
+  profile check) immediately before the write - a stale attempt is
+  silently abandoned.
+- Fixed Finding 2 (external session-loss cleanup): an authenticated
+  session lost externally (revoked/expired token, via authStateChanges
+  without logout()) fell back to guest but never deactivated the device
+  row or revoked the transport token, unlike explicit logout(). Fixed by
+  sharing logout()'s cleanup logic (_cleanupDevice(), best-effort, never
+  throws) with this path, gated on "was actually authenticated" and
+  preceded by the same epoch invalidation so a stale registration can't
+  race the cleanup and re-register afterward.
+- Fixed Finding 3: removed _debugPrintSupabaseConfig() (main.dart), its
+  call site, and the "TEMPORARY diagnostic" comment - it logged a
+  Supabase host/key-length/key-prefix, no production purpose.
+- Tests: flutter test 155/155 passing (was 149, +6 new). flutter analyze:
   0 issues. flutter build apk --debug: succeeds.
+- Every new test verified via revert - 5 of 6 fail against the pre-fix
+  code with the exact expected symptom (the 6th, guest-safety, correctly
+  passes either way, was never broken). Verification itself caught and
+  fixed a real bug in the test harness's own delay-completer bookkeeping -
+  reported transparently in the full report.
 - No Android/Gradle files, google-services.json, pubspec, or backend
   files touched - exactly the three findings.
-- Committed (d71f3b7) and pushed to origin/main. Working tree clean.
+- Committed (030da14) and pushed to origin/main. Working tree clean.
 
-UNCHANGED FROM PRIOR REPORT (not re-verified, no live-device changes this pass):
+UNCHANGED FROM PRIOR REPORTS (not re-verified, no live-device changes this pass):
 - Backend FCM secrets (FCM_PROJECT_ID/FCM_CLIENT_EMAIL/FCM_PRIVATE_KEY)
   remain unconfigured in production.
 - Real end-to-end token delivery still requires a physical device or a
   Play-Store-enabled AVD to verify.
 
 NEXT:
-Claude has completed the Firebase FCM Correction Task and stopped, per
-its own instruction. Waiting for GPT/M review. No further task started.
+Claude has completed the Firebase FCM Final Correction Task and stopped,
+per its own instruction. Waiting for GPT/M review. No further task started.
