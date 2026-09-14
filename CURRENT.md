@@ -2,50 +2,57 @@ PROJECT: MKR
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: Firebase FCM Final Cleanup
-TITLE: Make _cleanupDevice()'s deactivate/unregister operations independent
+TASK: Firebase FCM Token-Refresh Session Race Fix
+TITLE: Extend session-epoch protection to _onTokenRefresh()
 STATUS: WAITING_FOR_GPT_REVIEW
 
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_FIREBASE_FCM_FINAL_CLEANUP_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_FIREBASE_FCM_TOKEN_REFRESH_RACE_REPORT.md
 
 FULL REPORT:
-D:\FlutterProjects\gpt-claude\MKR_FIREBASE_FCM_FINAL_CLEANUP_REPORT.md
+D:\FlutterProjects\gpt-claude\MKR_FIREBASE_FCM_TOKEN_REFRESH_RACE_REPORT.md
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
 PREVIOUS STATE:
-Firebase FCM Final Correction Task - completed, was WAITING_FOR_GPT_REVIEW.
-Mac reviewed the actual code: Findings 1-3 from that task PASS, overall
-Firebase FCM architecture PASS. Found 1 additional production correctness
-issue in the cleanup path, issued as this final cleanup task.
+Firebase FCM Final Cleanup - completed, was WAITING_FOR_GPT_REVIEW. Mac
+reviewed the actual code: architecture + all prior findings PASS. Found 1
+remaining token-refresh/session race, issued as this final correction.
 
 THIS PASS:
-- Fixed: AuthController._cleanupDevice() wrapped deactivateDevice()
-  (Supabase) and unregisterDevice() (FCM token revocation) in a single
-  shared try/catch - a deactivateDevice() failure skipped
-  unregisterDevice() entirely, meaning a Supabase outage during cleanup
-  could leave a signed-out FCM token un-revoked.
-- Rewrote _cleanupDevice() with three independent try/catch blocks
-  (getToken, deactivateDevice, unregisterDevice) - a failure in any one
-  never prevents the others from being attempted. unregisterDevice() is
-  now unconditionally attempted regardless of whether a token was even
-  obtained (it takes no token argument).
-- Analyzed concurrency/idempotency (logout() + external session-loss
-  firing close together) and documented (no code change needed) why it's
-  already safe: the session-epoch mechanism from the prior correction
-  pass prevents stale re-registration on any cleanup-triggering path, and
-  every cleanup operation is now independently safe to repeat. No lock/
-  queue/dependency added.
-- Tests: flutter test 160/160 passing (was 155, +5 new). flutter analyze:
-  0 issues. flutter build apk --debug: succeeds.
-- 4 of 5 new tests verified via revert to fail against the pre-fix
-  shared-try/catch code with the exact expected symptom; the 5th
-  correctly passes either way (that specific behavior was never broken).
+- Fixed: _onTokenRefresh() was not protected by the session-epoch
+  mechanism _registerDeviceIfPossible already uses -
+  DeviceRepository.registerDevice() (a real network write) could still be
+  in flight when logout()/a session change happened, and the old code used
+  a captured profile unconditionally once it resolved.
+- IMPORTANT finding during implementation, verified empirically (not just
+  by reading the code): a bare "capture epoch+profile, check right before
+  the write" is a NO-OP for _onTokenRefresh's structure, because there is
+  no await between capture and write for a concurrent change to land in
+  (unlike _registerDeviceIfPossible, which has real async work -
+  initialize/requestPermission/getToken - before ITS check). Confirmed via
+  a diagnostic completer + full call-log: the stale write WAS genuinely
+  issued and resolved in the naive version, just silently overwritten
+  afterward by a later, correct write.
+- Fixed properly by ALSO calling _pushService.initialize() before the
+  check - the SAME idempotent call _registerDeviceIfPossible already
+  makes (a documented no-op once already initialized), not a new/
+  artificial synchronization primitive. This gives the epoch/profile
+  check a genuine window to observe a concurrent session change before
+  the write is ever issued. Re-verified empirically: stale write no
+  longer issued at all.
+- Reviewed _onTokenRefresh() for any other stale-session issue - none
+  found, nothing else changed.
+- Tests: flutter test 164/164 passing (was 160, +4 new: scenarios A/B/C/D
+  exactly as specified). flutter analyze: 0 issues. flutter build apk
+  --debug: succeeds.
+- Tests A and D verified via revert to fail against the pre-fix code with
+  the exact stale-write symptom; B and C correctly pass either way (never
+  broken).
 - No Android/Gradle files, google-services.json, pubspec, or backend
-  files touched - exactly the one finding.
-- Committed (e30700c) and pushed to origin/main. Working tree clean.
+  files touched - exactly this one finding.
+- Committed (c0896b3) and pushed to origin/main. Working tree clean.
 
 UNCHANGED FROM PRIOR REPORTS (not re-verified, no live-device changes this pass):
 - Backend FCM secrets (FCM_PROJECT_ID/FCM_CLIENT_EMAIL/FCM_PRIVATE_KEY)
@@ -53,6 +60,14 @@ UNCHANGED FROM PRIOR REPORTS (not re-verified, no live-device changes this pass)
 - Real end-to-end token delivery still requires a physical device or a
   Play-Store-enabled AVD to verify.
 
+RESIDUAL, INHERENT LIMITATION (documented, not fixable without forbidden
+cancellation infrastructure):
+- Once registerDevice()'s call has genuinely been issued (epoch check
+  already passed), a session change during THAT specific write's own
+  network latency cannot retroactively abort it. This fix closes the gap
+  at the earliest point staleness is knowable, not via mid-flight
+  cancellation.
+
 NEXT:
-Claude has completed the Firebase FCM Final Cleanup task and stopped, per
+Claude has completed this token-refresh session-race fix and stopped, per
 its own instruction. Waiting for GPT/M review. No further task started.
