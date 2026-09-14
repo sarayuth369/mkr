@@ -1,4 +1,4 @@
-import { cachedFetch, cacheKey, getCached, putCached } from '../cache/cache-service';
+import { cachedFetch, cacheKey, coalesced, getCached, putCached } from '../cache/cache-service';
 import { getConfig } from '../config/config-service';
 import { ApiError, jsonResponse } from '../errors';
 import { logError, logInfo } from '../logging';
@@ -100,7 +100,14 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
         const row = rowBySymbol.get(mkrSymbol);
         return row ? mapSymbolFromRows([row], mkrSymbol, id) : null;
       };
-      const { result } = await manager.getBatchQuotes(uncached, providerSymbolFor);
+      // Single-flight: concurrent requests that land on the exact same
+      // uncached-symbol set (the common case - same catalog, same cache
+      // state, arriving within the same isolate near-simultaneously) share
+      // one upstream call instead of each independently calling the
+      // provider. This is what getCached/putCached above bypassed - see
+      // coalesced()'s doc comment in cache-service.ts.
+      const coalesceKey = `batch-quotes:${[...uncached].sort().join(',')}`;
+      const { result } = await coalesced(coalesceKey, () => manager.getBatchQuotes(uncached, providerSymbolFor));
 
       await Promise.all(
         uncached.map(async (symbol) => {
