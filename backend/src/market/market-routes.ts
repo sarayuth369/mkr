@@ -27,13 +27,18 @@ export async function handleQuote(request: Request, env: Env, requestId: string)
 
   const start = Date.now();
   try {
+    // Caches the bare NormalizedQuote (Task 4 fix) - the exact same shape
+    // handleQuotes below caches under this exact same key, so the two
+    // routes now safely share one cache entry per symbol instead of
+    // competing with incompatible shapes. `source` is already a field on
+    // NormalizedQuote, so nothing is lost by dropping the old wrapper.
     const { value } = await cachedFetch(env.MKR_CACHE, cacheKey('quote', symbol), ttl, async () => {
       const manager = await managerFor(env, config);
-      const { result, source } = await manager.getQuote(symbol, symbolFor);
-      return { quote: result, source };
+      const { result } = await manager.getQuote(symbol, symbolFor);
+      return result;
     });
-    logInfo('quote served', { requestId, route: 'quote', symbol, provider: value.source ?? undefined, latencyMs: Date.now() - start });
-    return jsonResponse(value.quote);
+    logInfo('quote served', { requestId, route: 'quote', symbol, provider: value?.source, latencyMs: Date.now() - start });
+    return jsonResponse(value);
   } catch (err) {
     const apiError = mapProviderError(err);
     logError('quote failed', {
@@ -56,6 +61,12 @@ export async function handleQuote(request: Request, env: Env, requestId: string)
  * Twelve Data Free's rate limit almost immediately). Also resolves the
  * whole symbol catalog from D1 in ONE query rather than one `SELECT` per
  * requested symbol.
+ *
+ * Caches/reads the bare NormalizedQuote under `cacheKey('quote', symbol)` -
+ * the exact same key and shape handleQuote above uses (Task 4 fix), so a
+ * `/quote` call and a `/quotes` call for the same symbol now safely share
+ * one cache entry instead of racing to overwrite each other with
+ * incompatible shapes.
  */
 export async function handleQuotes(request: Request, env: Env, requestId: string): Promise<Response> {
   const url = new URL(request.url);

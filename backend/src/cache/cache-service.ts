@@ -95,8 +95,24 @@ export async function coalesced<T>(key: string, fetcher: () => Promise<T>): Prom
   }
 }
 
+// The 'quote' key was versioned to 'quote:v2' as part of the Task 4 cache-
+// correctness fix: handleQuote used to cache `{quote, source}` under plain
+// `quote:<SYMBOL>` while handleQuotes cached/read a bare NormalizedQuote
+// under the exact same key - whichever route wrote last "poisoned" the
+// other's read within the TTL window (reproduced live in the Task 3 audit).
+// Both routes now cache the identical bare-NormalizedQuote shape (source is
+// already a field on NormalizedQuote itself, so nothing was lost), which
+// makes them safely shareable rather than merely non-colliding - a `/quote`
+// call and a `/quotes` call for the same symbol now reuse one cache entry
+// instead of each needing its own. The version bump guarantees zero
+// old-shape reads immediately after deploy: any entry still sitting under
+// the old unversioned `quote:<SYMBOL>` key is simply never read again and
+// ages out on its own TTL (cache is ephemeral - no active migration
+// needed). candles/status keys are untouched; only 'quote' ever had this
+// collision.
 export function cacheKey(kind: 'quote' | 'candles' | 'status', symbol: string, extra = ''): string {
-  return `${kind}:${symbol}${extra ? `:${extra}` : ''}`;
+  const prefix = kind === 'quote' ? 'quote:v2' : kind;
+  return `${prefix}:${symbol}${extra ? `:${extra}` : ''}`;
 }
 
 /** Read-only cache lookup, for callers doing their own batched fetch on a miss (see handleQuotes). */
