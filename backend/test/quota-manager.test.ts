@@ -141,6 +141,23 @@ describe('concurrency - sequential recordProviderRequest calls never lose a coun
     expect(allowedCount).toBe(20);
     expect(admitProviderRequest('twelve_data', 'P1', policy, DAY).usedCount).toBe(20);
   });
+
+  it('genuinely concurrent recordProviderRequest calls (Promise.all, matching how Twelve Data\'s chunk fan-out actually invokes it) never lose an increment', async () => {
+    // recordProviderRequest itself has no `await` inside it, so even
+    // though these 12 calls are all "in flight" concurrently (the way
+    // TwelveDataProvider.getBatchQuotes' Promise.allSettled chunk fan-out
+    // really invokes it - each chunk's own request() call records before
+    // its network round-trip), each individual call still runs to
+    // completion atomically under JS's single-threaded semantics.
+    await Promise.all(
+      Array.from({ length: 12 }, () =>
+        Promise.resolve().then(() => {
+          recordProviderRequest('twelve_data', DAY);
+        }),
+      ),
+    );
+    expect(admitProviderRequest('twelve_data', 'P1', { dailyRequestBudget: 1000 }, DAY).usedCount).toBe(12);
+  });
 });
 
 describe('budgetSnapshot - read-only observability, never mutates state', () => {

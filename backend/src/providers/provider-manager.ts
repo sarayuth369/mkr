@@ -1,5 +1,5 @@
 import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, NormalizedQuote, ProviderHealth, ProviderId } from '../types';
-import { admitProviderRequest, recordProviderRequest, type ProviderBudgetPolicy, type RequestPriority } from './quota-manager';
+import { admitProviderRequest, type ProviderBudgetPolicy, type RequestPriority } from './quota-manager';
 import { ProviderError, type MarketDataProvider } from './types';
 
 interface InMemoryHealth {
@@ -71,6 +71,20 @@ function budgetErrorFor(tier: string): ProviderError {
  * secondary, if any, which has its own independent budget) - it is never
  * marked unhealthy for a budget denial, since the provider itself was
  * never even contacted.
+ *
+ * Task 6 review correction: this manager only CHECKS admission
+ * (`admitProviderRequest`) - it deliberately does NOT record usage
+ * itself anymore. A single manager-level call (e.g. getBatchQuotes) can
+ * fan out into an arbitrary number of REAL upstream REST requests inside
+ * the provider implementation (Twelve Data chunks into groups of 8;
+ * Alpaca issues one request per symbol) - recording once per manager
+ * call undercounted those. Each concrete provider (twelve-data-provider.ts,
+ * alpaca-provider.ts) now records its OWN usage at its one true low-level
+ * `request()` choke point, so the count always matches the real number of
+ * HTTP requests made, however many that turns out to be. The admission
+ * decision stays centralized here (still the one place a caller cannot
+ * bypass); only the recording of ground truth moved to where that truth
+ * actually lives.
  */
 export class MarketProviderManager {
   constructor(
@@ -84,11 +98,15 @@ export class MarketProviderManager {
     return id === 'twelve_data' ? this.budgets.twelveData : this.budgets.alpaca;
   }
 
-  /** Admits + records one attempt against `id`'s budget, or returns the denial decision without ever touching the network. */
+  /**
+   * Admission CHECK only - never records usage itself (see class doc's
+   * Task 6 review correction). A denied decision means the caller must
+   * not touch the network at all; an allowed decision is a green light to
+   * proceed, and whatever real REST calls that ends up making will record
+   * themselves at their own source.
+   */
   private admit(id: ProviderId, priority: RequestPriority) {
-    const decision = admitProviderRequest(id, priority, this.budgetFor(id));
-    if (decision.allowed) recordProviderRequest(id);
-    return decision;
+    return admitProviderRequest(id, priority, this.budgetFor(id));
   }
 
   private async withFailover<T>(

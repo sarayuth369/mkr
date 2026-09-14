@@ -1,4 +1,5 @@
 import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, NormalizedQuote } from '../../types';
+import { recordProviderRequest } from '../quota-manager';
 import { ProviderError, type MarketDataProvider } from '../types';
 import { alpacaMarketStatusUnavailable, alpacaTimeframe, parseAlpacaBars, parseAlpacaSnapshot } from './alpaca-parser';
 
@@ -32,7 +33,17 @@ export class AlpacaProvider implements MarketDataProvider {
     return { 'APCA-API-KEY-ID': this.keyId, 'APCA-API-SECRET-KEY': this.secretKey };
   }
 
+  /**
+   * The one true choke point for "a real Alpaca REST request just
+   * happened" - see the identical comment/fix in twelve-data-provider.ts.
+   * getBatchQuotes fans out to N calls of getQuote, each of which reaches
+   * here once - recording here (not at the manager's one-per-batch-call
+   * admission) is what makes usage accounting correct. getMarketStatus
+   * makes no HTTP call at all (Alpaca has no market-status endpoint used
+   * here) and correctly records nothing, for the same reason.
+   */
   private async request(path: string, timeoutMs = 8000): Promise<Record<string, unknown>> {
+    recordProviderRequest(this.id);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;

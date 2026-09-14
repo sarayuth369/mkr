@@ -1,4 +1,5 @@
 import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, NormalizedQuote } from '../../types';
+import { recordProviderRequest } from '../quota-manager';
 import { ProviderError, type MarketDataProvider } from '../types';
 import {
   isTwelveDataError,
@@ -35,7 +36,19 @@ export class TwelveDataProvider implements MarketDataProvider {
     return `${BASE_URL}${path}?${query.toString()}`;
   }
 
+  /**
+   * The one true choke point for "a real Twelve Data REST request just
+   * happened" - every public method funnels through here, including every
+   * individual chunk inside getBatchQuotes' fan-out. Task 6's review found
+   * that recording usage once per manager-level admission undercounted a
+   * batch call that internally issues multiple real HTTP requests; fixed
+   * by recording HERE, where ground truth actually lives, instead of
+   * guessing a count one level up. Records unconditionally, before the
+   * fetch is attempted - a failed request still consumed real provider
+   * quota (network error, timeout, 429, whatever) and must still count.
+   */
   private async request(path: string, params: Record<string, string>, timeoutMs = 8000): Promise<Record<string, unknown>> {
+    recordProviderRequest(this.id);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;

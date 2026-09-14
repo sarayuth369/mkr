@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MarketProviderManager, _resetHealthForTests, type ProviderBudgets } from '../src/providers/provider-manager';
-import { _resetQuotaUsageForTests } from '../src/providers/quota-manager';
+import { _resetQuotaUsageForTests, recordProviderRequest } from '../src/providers/quota-manager';
 import { ProviderError, type MarketDataProvider } from '../src/providers/types';
 import type { NormalizedQuote, ProviderId } from '../src/types';
 
 // Unconfigured (dailyRequestBudget: 0) for both providers - reproduces the
 // exact pre-Task-6 behavior (guard always allows) for every test in this
-// file that isn't specifically exercising the quota guard itself (see
-// provider-manager-quota.test.ts for those).
+// file that isn't specifically exercising the quota guard itself (see the
+// "Task 6" describe block below, and quota-manager.test.ts for the pure
+// policy logic, and twelve-data-provider-quota.test.ts /
+// alpaca-provider-quota.test.ts for real multi-chunk/multi-symbol
+// REST-call-counting accuracy against the actual provider implementations).
 const UNCONFIGURED_BUDGETS: ProviderBudgets = { twelveData: { dailyRequestBudget: 0 }, alpaca: { dailyRequestBudget: 0 } };
 
 function quote(price: number): NormalizedQuote {
@@ -41,14 +44,23 @@ class FakeProvider implements MarketDataProvider {
   quoteCalls = 0;
   batchCalls = 0;
 
+  // Task 6 review correction: real providers record their own usage at
+  // their one true low-level request() choke point (see the contract
+  // documented on MarketDataProvider in providers/types.ts) - this fake
+  // honors that same contract (1 record per simulated "real request") so
+  // the quota-guard integration tests below remain meaningful. Exact
+  // multi-chunk/multi-symbol counting fidelity is proven separately,
+  // directly against the real TwelveDataProvider/AlpacaProvider classes.
   async getQuote(): Promise<NormalizedQuote | null> {
     this.quoteCalls++;
+    recordProviderRequest(this.id);
     if (this.opts.throwKind) throw new ProviderError(`${this.id} failed`, this.opts.throwKind);
     return this.opts.quoteResult ?? null;
   }
 
   async getBatchQuotes(providerToMkr: Record<string, string>): Promise<Record<string, NormalizedQuote | null>> {
     this.batchCalls++;
+    recordProviderRequest(this.id);
     if (this.opts.throwKind) throw new ProviderError(`${this.id} failed`, this.opts.throwKind);
     const result: Record<string, NormalizedQuote | null> = {};
     for (const mkrSymbol of Object.values(providerToMkr)) result[mkrSymbol] = this.opts.quoteResult ?? null;
@@ -64,6 +76,7 @@ class FakeProvider implements MarketDataProvider {
   }
 
   async healthCheck() {
+    recordProviderRequest(this.id);
     return { healthy: this.opts.healthy ?? true, latencyMs: 10 };
   }
 }

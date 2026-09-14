@@ -8,6 +8,20 @@ import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, Normalized
  * (see src/providers/provider-manager.ts) - this is what makes adding a
  * future provider (Tiingo, Polygon, a licensed SET feed, ...) a matter of
  * implementing this interface and registering it, not rewriting routes.
+ *
+ * Quota accounting contract (Task 6, corrected after review): implementers
+ * are responsible for calling `recordProviderRequest(this.id)` (see
+ * quota-manager.ts) exactly once per REAL upstream HTTP request they
+ * actually make - not once per public method call. A method that fans out
+ * into N real requests (e.g. Twelve Data's getBatchQuotes chunking, or
+ * Alpaca's getBatchQuotes issuing one request per symbol) must record N
+ * times; a method that makes no real request at all (e.g. Alpaca's
+ * getMarketStatus, which has no such endpoint here) must record zero.
+ * `MarketProviderManager` only checks admission before calling in - it
+ * does not and cannot know how many real requests a given call will turn
+ * into, so it deliberately leaves recording to the implementation that
+ * actually knows. See twelve-data-provider.ts / alpaca-provider.ts's own
+ * `request()` methods for the reference implementation of this contract.
  */
 export interface MarketDataProvider {
   readonly id: ProviderId;
