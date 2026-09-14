@@ -33,6 +33,13 @@ abstract class PushNotificationService {
 
   /// Fires when the user taps a notification (from background/terminated).
   Stream<PushMessage> get onNotificationTap;
+
+  /// Fires whenever the transport mints a new token for this install
+  /// (rotation, app reinstall, cleared data, etc.) — the caller (see
+  /// [AuthController]) must re-register it against [DeviceRepository] for
+  /// the currently signed-in user, exactly like the initial [getToken]
+  /// result. Empty for a transport that never rotates tokens on its own.
+  Stream<String> get onTokenRefresh;
 }
 
 class PushMessage {

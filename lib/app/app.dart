@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
@@ -53,6 +54,7 @@ import '../features/onboarding/presentation/screens/onboarding_screen.dart';
 import '../features/portfolio/application/portfolio_controller.dart';
 import '../features/portfolio/data/mock_portfolio_repository.dart';
 import '../features/portfolio/domain/portfolio_repository.dart';
+import '../features/push/data/firebase_push_notification_service.dart';
 import '../features/push/data/noop_push_notification_service.dart';
 import '../features/push/data/supabase_device_repository.dart';
 import '../features/push/data/supabase_notification_history_service.dart';
@@ -86,6 +88,16 @@ MarketService _buildMarketService() {
   return ProviderBackedMarketService(manager);
 }
 
+/// Real Firebase-backed push only once `main.dart`'s `_initializeFirebase()`
+/// actually succeeded (i.e. `Firebase.apps` is non-empty — mirrors exactly
+/// how `SupabaseConfig.instance.isConfigured` branches Supabase-backed
+/// providers below). Falls back to the existing Noop implementation
+/// otherwise, so an install without a Firebase project keeps behaving
+/// exactly as it did before this task.
+PushNotificationService _buildPushNotificationService() {
+  return Firebase.apps.isNotEmpty ? FirebaseMessagingPushService() : const NoopPushNotificationService();
+}
+
 class MkrApp extends StatelessWidget {
   const MkrApp({super.key, required this.store});
 
@@ -111,7 +123,7 @@ class MkrApp extends StatelessWidget {
         Provider<AdAnalytics>(create: (_) => const NoopAdAnalytics()),
         Provider<AdConfig>(create: (_) => AdConfig.fromEnvironment()),
         Provider<AdService>(create: (ctx) => MockAdService(analytics: ctx.read<AdAnalytics>())),
-        Provider<PushNotificationService>(create: (_) => const NoopPushNotificationService()),
+        Provider<PushNotificationService>(create: (_) => _buildPushNotificationService()),
 
         // User-data seam (Phase 2.2): Supabase-backed when configured (see
         // SupabaseConfig/main.dart), MockAuthService/MockWatchlistRepository

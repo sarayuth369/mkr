@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Firebase Cloud Messaging (MKR Firebase FCM Integration Task) -
+         runtime-requested on Android 13+ via FirebaseMessaging.requestPermission()
+         (see lib/features/push/data/firebase_push_notification_service.dart);
+         a no-op declaration on older Android versions, where notifications
+         are allowed by default. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Market Radar"
         android:name="${applicationName}"

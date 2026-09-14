@@ -24,12 +24,14 @@ class AuthController extends ChangeNotifier {
         _deviceRepository = deviceRepository {
     _restore();
     _authStateSubscription = _service.authStateChanges?.listen((_) => _syncFromService());
+    _tokenRefreshSubscription = _pushService.onTokenRefresh.listen(_onTokenRefresh);
   }
 
   final AuthService _service;
   final PushNotificationService _pushService;
   final DeviceRepository _deviceRepository;
   StreamSubscription<void>? _authStateSubscription;
+  StreamSubscription<String>? _tokenRefreshSubscription;
 
   UserProfile? _profile;
   UserProfile? get profile => _profile;
@@ -93,10 +95,31 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// Re-registers a rotated token (app reinstall, cleared data, periodic
+  /// FCM rotation, etc.) against whichever user is CURRENTLY signed in at
+  /// the moment the rotation fires — never the user who was signed in when
+  /// the stream was first subscribed, since that could be stale by the
+  /// time a real rotation happens. Silently ignored for a guest session,
+  /// same guard as [_registerDeviceIfPossible].
+  Future<void> _onTokenRefresh(String token) async {
+    final profile = _profile;
+    if (profile == null || profile.isGuest) return;
+    try {
+      await _deviceRepository.registerDevice(userId: profile.id, token: token, platform: 'android', appVersion: appVersion);
+    } catch (_) {
+      // Best-effort - must never surface to the caller.
+    }
+  }
+
   Future<void> logout() async {
     try {
       final token = await _pushService.getToken();
       if (token != null) await _deviceRepository.deactivateDevice(token);
+      // Revokes the token itself (a real FCM implementation deletes it
+      // outright), not just the Supabase row above - the strongest
+      // available guarantee that a signed-out token is never mistaken for
+      // one still belonging to this user (spec 2.3's sign-out requirement).
+      await _pushService.unregisterDevice();
     } catch (_) {
       // Best-effort - must never block logout.
     }
@@ -108,6 +131,7 @@ class AuthController extends ChangeNotifier {
   @override
   void dispose() {
     _authStateSubscription?.cancel();
+    _tokenRefreshSubscription?.cancel();
     super.dispose();
   }
 }

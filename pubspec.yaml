@@ -22,6 +22,8 @@ dependencies:
   web_socket_channel: ^3.0.1
   supabase_flutter: ^2.8.0
   win32_registry: ^3.0.3
+  firebase_core: ^4.14.0
+  firebase_messaging: ^16.6.0
 
 dev_dependencies:
   flutter_test:

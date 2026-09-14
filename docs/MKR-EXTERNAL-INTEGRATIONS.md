@@ -135,40 +135,59 @@ Alert Engine's `triggerAlert` and Admin Web's Push page (test send /
 announcement) start actually delivering pushes — still gated by the
 `pushNotificationsEnabled` feature flag, which defaults to `false`.
 
-### 2.4 What is intentionally NOT done on the Flutter side yet
+### 2.4 Flutter side — DONE (MKR Firebase FCM Integration Task)
 
-`lib/features/push/domain/push_notification_service.dart` and
-`device_repository.dart` are fully-designed interfaces with a `Noop*`
-implementation wired into the app today
-(`lib/features/push/data/noop_push_notification_service.dart`). No
-`firebase_messaging` package has been added to `pubspec.yaml` — doing so
-requires native Android Gradle changes (Google Services plugin) that would
-be unsafe to make without `google-services.json` actually present, and
-could break the build for every developer who doesn't have it yet.
+`google-services.json` exists (`android/app/google-services.json`, project
+`mkr---market-radar`, package `com.mlabs.mkr`), and the Flutter/Android
+integration described below this line used to be a future TODO — it is now
+implemented:
 
-**To finish this integration once `google-services.json` exists:**
+1. `firebase_core` and `firebase_messaging` are in `pubspec.yaml`.
+2. The Google Services Gradle plugin is applied: declared in
+   `android/settings.gradle.kts`'s `plugins {}` block, applied in
+   `android/app/build.gradle.kts`.
+3. `FirebaseMessagingPushService implements PushNotificationService`
+   (`lib/features/push/data/firebase_push_notification_service.dart`) —
+   real `FirebaseMessaging.instance` calls for every interface method,
+   plus a top-level `firebaseMessagingBackgroundHandler` registered via
+   `FirebaseMessaging.onBackgroundMessage` in `main.dart`.
+4. `lib/app/app.dart`'s `Provider<PushNotificationService>` now branches on
+   `Firebase.apps.isNotEmpty` (set by `main.dart`'s `_initializeFirebase()`,
+   which wraps `Firebase.initializeApp()` in a try/catch — a missing/
+   misconfigured `google-services.json` degrades to `NoopPushNotificationService`,
+   exactly like an unconfigured Supabase project already does; never
+   crashes startup).
+5. `PushNotificationService` gained one addition, `onTokenRefresh` — an
+   `AuthController` now subscribes to it and re-registers a rotated token
+   for whichever user is currently signed in (guests never trigger it,
+   same guard as the existing login-time registration). `AuthController.logout()`
+   now also calls `unregisterDevice()` (Firebase: `deleteToken()`), on top
+   of the existing Supabase-side deactivation, so a signed-out token can
+   never be mistaken for one still belonging to that user.
+6. `android/app/src/main/AndroidManifest.xml` declares
+   `android.permission.POST_NOTIFICATIONS` (Android 13+ runtime
+   permission, requested via `FirebaseMessagingPushService.requestPermission()`).
 
-1. Add `firebase_core` and `firebase_messaging` to `pubspec.yaml`.
-2. Add the Google Services Gradle plugin per
-   [Firebase's official Flutter setup guide](https://firebase.google.com/docs/flutter/setup) —
-   at time of writing this is `id "com.google.gms.google-services"` in
-   `android/app/build.gradle` plus the classpath in the project-level
-   `android/build.gradle`.
-3. Implement `FirebaseMessagingPushService implements PushNotificationService`
-   in `lib/features/push/data/`, calling `FirebaseMessaging.instance`'s
-   real APIs for each of the interface's methods (`getToken()`,
-   `requestPermission()`, the two message streams).
-4. Swap the `Provider<PushNotificationService>` registration in
-   `lib/app/app.dart` from `NoopPushNotificationService` to the new class
-   (mirroring exactly how `SupabaseConfig.instance.isConfigured` already
-   branches `AuthService`/`WatchlistRepository` — a Firebase-configured
-   check should branch this the same way, e.g. checking that
-   `google-services.json` produced a non-empty `Firebase.apps` list at
-   startup).
+No other call site changed — `AuthController` already called
+`getToken()`/`registerDevice()`/`deactivateDevice()` around login/logout
+against whatever `PushNotificationService`/`DeviceRepository` were
+registered; this task only replaced *which* implementation those calls
+resolve to.
 
-No other call site needs to change — `AuthController` already calls
-`registerDevice()`/`deactivateDevice()` around login/logout against
-whatever `PushNotificationService`/`DeviceRepository` are registered.
+**Verified**: `flutter analyze` clean, `flutter test` all passing (147),
+`flutter build apk --debug` succeeds (confirms Gradle correctly parsed
+`google-services.json` — a package/project mismatch would fail the build
+outright), and a real run on an Android 14 emulator logged
+`FirebaseApp: Device unlocked: initializing all Firebase APIs for app [DEFAULT]`
+/ `FirebaseInitProvider: FirebaseApp initialization successful` with no
+app crash. **Not verified**: actual `getToken()`/FCM delivery end-to-end —
+the available emulator image's Google Play Services build is outdated
+(`Requires 261200000 but found 231818047`, visible in logcat), which is an
+emulator-image limitation, not a code defect. Verify real token
+acquisition and delivery on a physical device or a Play Store-enabled AVD
+image before shipping. See
+`D:\FlutterProjects\Docs\report\MKR_FIREBASE_FCM_INTEGRATION_REPORT.md`
+for the full verification record.
 
 ## 3. Google Cloud
 

@@ -31,4 +31,7 @@ class NoopPushNotificationService implements PushNotificationService {
 
   @override
   Stream<PushMessage> get onNotificationTap => const Stream.empty();
+
+  @override
+  Stream<String> get onTokenRefresh => const Stream.empty();
 }
