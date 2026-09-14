@@ -167,13 +167,34 @@ class AuthController extends ChangeNotifier {
   /// the moment the rotation fires — never the user who was signed in when
   /// the stream was first subscribed, since that could be stale by the
   /// time a real rotation happens. Silently ignored for a guest session,
-  /// same guard as [_registerDeviceIfPossible]. No epoch check needed here:
-  /// [_profile] is read fresh at invocation and there is no `await` before
-  /// the write below for a concurrent identity change to race against.
+  /// same guard as [_registerDeviceIfPossible].
+  ///
+  /// Token-refresh session-race fix: [DeviceRepository.registerDevice] is a
+  /// real network write - it can still be in flight when [logout] or a
+  /// session change happens. This now uses the SAME session-epoch
+  /// protection [_registerDeviceIfPossible] already does: capture
+  /// [_sessionEpoch] alongside [_profile], then re-validate both
+  /// immediately before issuing the write.
+  ///
+  /// That check only has teeth if something genuinely asynchronous happens
+  /// between the capture and the write for a concurrent [logout]/session
+  /// change to land in - unlike [_registerDeviceIfPossible] (which already
+  /// has real work here: `initialize()` → `requestPermission()` →
+  /// `getToken()`), this handler previously had none, so a same-tick
+  /// check-then-call could never observe a change that hadn't happened
+  /// yet. `initialize()` is that real step, reused rather than invented:
+  /// it's the SAME idempotent call [_registerDeviceIfPossible] already
+  /// makes (a genuinely no-op await once already initialized, per
+  /// [PushNotificationService.initialize]'s own contract), so this stays
+  /// consistent with the existing registration path instead of adding a
+  /// bespoke synchronization primitive.
   Future<void> _onTokenRefresh(String token) async {
     final profile = _profile;
     if (profile == null || profile.isGuest) return;
+    final epoch = _sessionEpoch;
     try {
+      await _pushService.initialize();
+      if (epoch != _sessionEpoch || profile != _profile) return;
       await _deviceRepository.registerDevice(userId: profile.id, token: token, platform: 'android', appVersion: appVersion);
     } catch (_) {
       // Best-effort - must never surface to the caller.

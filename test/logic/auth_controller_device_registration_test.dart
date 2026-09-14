@@ -92,11 +92,38 @@ class _FakePushService implements PushNotificationService {
     outstanding?.complete(permissionGranted);
   }
 
+  /// Token-refresh session-race fix - when set, the NEXT `initialize()`
+  /// call hangs until [resolvePendingInitialize] is called. `initialize()`
+  /// is called by BOTH `_registerDeviceIfPossible` and `_onTokenRefresh`,
+  /// but only ever needs delaying for `_onTokenRefresh`'s own race tests -
+  /// arm it AFTER any earlier login-triggered registration has already
+  /// completed, so it only ever intercepts the call under test. Same
+  /// "armed vs. outstanding" split as [_pendingPermission], for the same
+  /// reason.
+  Completer<void>? _pendingInitialize;
+  Completer<void>? _outstandingInitialize;
+
+  void delayNextInitialize() => _pendingInitialize = Completer<void>();
+
+  void resolvePendingInitialize() {
+    final outstanding = _outstandingInitialize;
+    _outstandingInitialize = null;
+    outstanding?.complete();
+  }
+
   @override
   bool get isAvailable => true;
 
   @override
-  Future<void> initialize() async => initializeCalls++;
+  Future<void> initialize() async {
+    initializeCalls++;
+    final pending = _pendingInitialize;
+    if (pending != null) {
+      _pendingInitialize = null; // single-use claim
+      _outstandingInitialize = pending;
+      await pending.future;
+    }
+  }
 
   @override
   Future<bool> requestPermission() {
@@ -160,10 +187,45 @@ class _FakeDeviceRepository implements DeviceRepository {
   /// [deactivatedToken] (since the operation itself did not succeed).
   bool throwOnDeactivateDevice = false;
 
+  /// Token-refresh session-race fix - when set, the NEXT `registerDevice()`
+  /// call hangs until [resolvePendingRegisterDevice] is called, opening a
+  /// real (not artificial-timer-based) async race window: the write is
+  /// GENUINELY in flight, held by a completer the test controls
+  /// deterministically. Same "armed vs. outstanding" two-field split as
+  /// `_FakePushService`'s permission delay, for the same reason: the armed
+  /// slot is claimed (and cleared) the moment a call reads it, so a LATER
+  /// call doesn't also hang on it, while `resolvePendingRegisterDevice`
+  /// still needs to find the completer that's actually outstanding.
+  ///
+  /// Records `registeredUserId`/`registeredToken` only AFTER the (possibly
+  /// delayed) write resolves - matching a real network call, where the
+  /// effect only becomes observable once the request completes, not the
+  /// moment it's issued.
+  Completer<void>? _pendingRegisterDevice;
+  Completer<void>? _outstandingRegisterDevice;
+
+  void delayNextRegisterDevice() => _pendingRegisterDevice = Completer<void>();
+
+  void resolvePendingRegisterDevice() {
+    final outstanding = _outstandingRegisterDevice;
+    _outstandingRegisterDevice = null;
+    outstanding?.complete();
+  }
+
+  final List<String> registerDeviceCallLog = [];
+
   @override
   Future<void> registerDevice({required String userId, required String token, required String platform, required String appVersion}) async {
+    registerDeviceCallLog.add('CALLED($userId,$token)');
+    final pending = _pendingRegisterDevice;
+    if (pending != null) {
+      _pendingRegisterDevice = null; // single-use claim
+      _outstandingRegisterDevice = pending;
+      await pending.future;
+    }
     registeredUserId = userId;
     registeredToken = token;
+    registerDeviceCallLog.add('RESOLVED($userId,$token)');
   }
 
   @override
@@ -510,6 +572,90 @@ void main() {
       expect(controller.profile?.isGuest, true);
       expect(devices.deactivateDeviceCalls, 1);
       expect(push.unregisterDeviceCalls, 1);
+    });
+  });
+
+  group('Token-refresh session-race fix - _onTokenRefresh uses the same session-epoch protection as _registerDeviceIfPossible', () {
+    test('A: a stale token-refresh registration is abandoned when logout happens while it is still in flight', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-tr-a', email: 'tr-a@example.com');
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('tr-a@example.com', 'password');
+      await pumpMicrotasks();
+
+      push.delayNextInitialize();
+      push.emitTokenRefresh('token-a-refreshed'); // starts _onTokenRefresh, which captures profile=A/epoch and gets stuck at initialize()
+      await pumpMicrotasks();
+
+      await controller.logout(); // fully completes (epoch bumped, device cleaned up, profile -> guest) while the token-refresh registration is still pending
+
+      push.resolvePendingInitialize(); // let the stuck _onTokenRefresh proceed to its now-stale epoch/profile check
+      await pumpMicrotasks();
+
+      // The stale write was never even issued - devices.registeredToken still
+      // reflects login's OWN original registration, not the refreshed token.
+      expect(devices.registeredToken, isNot('token-a-refreshed'));
+      expect(devices.registerDeviceCallLog, isNot(contains('CALLED(user-tr-a,token-a-refreshed)')));
+    });
+
+    test('B: a token refresh while User A remains current still registers normally', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-tr-b1', email: 'tr-b1@example.com');
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('tr-b1@example.com', 'password');
+      await pumpMicrotasks();
+
+      push.emitTokenRefresh('rotated-token'); // no delay armed - nothing stale to race against
+      await pumpMicrotasks();
+
+      expect(devices.registeredUserId, 'user-tr-b1');
+      expect(devices.registeredToken, 'rotated-token');
+    });
+
+    test('C: a token refresh while only a guest session is active never registers a device', () async {
+      final auth = _FakeAuthService(); // never authenticated - starts and stays guest
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository();
+      AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+
+      push.emitTokenRefresh('guest-token');
+      await pumpMicrotasks();
+
+      expect(devices.registeredUserId, isNull);
+      expect(devices.registerDeviceCallLog, isEmpty);
+    });
+
+    test('D: a stale User A token refresh never overwrites User B after a session change, and User B\'s own registration still works', () async {
+      final auth = _FakeAuthService()..nextLoginResult = const UserProfile(id: 'user-tr-d-a', email: 'tr-d-a@example.com');
+      final push = _FakePushService();
+      final devices = _FakeDeviceRepository();
+      final controller = AuthController(auth, pushService: push, deviceRepository: devices);
+      await pumpMicrotasks();
+      await controller.login('tr-d-a@example.com', 'password');
+      await pumpMicrotasks();
+
+      push.delayNextInitialize();
+      push.emitTokenRefresh('token-a-stale'); // starts, gets stuck at initialize()
+      await pumpMicrotasks();
+
+      // User B becomes current via an external session change WHILE User A's
+      // token-refresh registration is still stuck - User B's own
+      // registration (via _registerDeviceIfPossible, not delayed) proceeds
+      // and completes normally in the meantime.
+      auth.emitExternalSessionChange(const UserProfile(id: 'user-tr-d-b', email: 'tr-d-b@example.com'));
+      await pumpMicrotasks();
+
+      push.resolvePendingInitialize(); // let User A's stale token-refresh finally reach its (now-stale) check
+      await pumpMicrotasks();
+
+      expect(devices.registeredUserId, 'user-tr-d-b'); // User B's registration won - never overwritten back to A
+      expect(devices.registeredToken, 'fake-fcm-token'); // User B's OWN token, not the stale User A one
+      expect(devices.registerDeviceCallLog, isNot(contains('CALLED(user-tr-d-a,token-a-stale)'))); // the stale write was never even issued
     });
   });
 }
