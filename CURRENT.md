@@ -2,57 +2,50 @@ PROJECT: MKR
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: Firebase FCM Final Correction Task
-TITLE: Fix registration race, external session-loss cleanup, remove debug
-       key-prefix log
+TASK: Firebase FCM Final Cleanup
+TITLE: Make _cleanupDevice()'s deactivate/unregister operations independent
 STATUS: WAITING_FOR_GPT_REVIEW
 
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_FIREBASE_FCM_FINAL_CORRECTION_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_FIREBASE_FCM_FINAL_CLEANUP_REPORT.md
 
 FULL REPORT:
-D:\FlutterProjects\gpt-claude\MKR_FIREBASE_FCM_FINAL_CORRECTION_REPORT.md
+D:\FlutterProjects\gpt-claude\MKR_FIREBASE_FCM_FINAL_CLEANUP_REPORT.md
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
 PREVIOUS STATE:
-Firebase FCM Correction Task - completed, was WAITING_FOR_GPT_REVIEW. Mac
-reviewed the actual code: architecture + prior corrections PASS, found 3
-more production correctness/security cleanup findings, issued as this
-final correction task.
+Firebase FCM Final Correction Task - completed, was WAITING_FOR_GPT_REVIEW.
+Mac reviewed the actual code: Findings 1-3 from that task PASS, overall
+Firebase FCM architecture PASS. Found 1 additional production correctness
+issue in the cleanup path, issued as this final cleanup task.
 
 THIS PASS:
-- Fixed Finding 1 (registration race): AuthController's in-flight device
-  registration (initialize() -> requestPermission() -> getToken() ->
-  registerDevice(), all real async work) could still write to Supabase
-  after the session that started it had already logged out or changed to
-  a different user. Fixed with a _sessionEpoch counter, bumped before
-  every identity-changing _profile reassignment (login/register/logout/
-  external session change or loss), checked (epoch + value-equality
-  profile check) immediately before the write - a stale attempt is
-  silently abandoned.
-- Fixed Finding 2 (external session-loss cleanup): an authenticated
-  session lost externally (revoked/expired token, via authStateChanges
-  without logout()) fell back to guest but never deactivated the device
-  row or revoked the transport token, unlike explicit logout(). Fixed by
-  sharing logout()'s cleanup logic (_cleanupDevice(), best-effort, never
-  throws) with this path, gated on "was actually authenticated" and
-  preceded by the same epoch invalidation so a stale registration can't
-  race the cleanup and re-register afterward.
-- Fixed Finding 3: removed _debugPrintSupabaseConfig() (main.dart), its
-  call site, and the "TEMPORARY diagnostic" comment - it logged a
-  Supabase host/key-length/key-prefix, no production purpose.
-- Tests: flutter test 155/155 passing (was 149, +6 new). flutter analyze:
+- Fixed: AuthController._cleanupDevice() wrapped deactivateDevice()
+  (Supabase) and unregisterDevice() (FCM token revocation) in a single
+  shared try/catch - a deactivateDevice() failure skipped
+  unregisterDevice() entirely, meaning a Supabase outage during cleanup
+  could leave a signed-out FCM token un-revoked.
+- Rewrote _cleanupDevice() with three independent try/catch blocks
+  (getToken, deactivateDevice, unregisterDevice) - a failure in any one
+  never prevents the others from being attempted. unregisterDevice() is
+  now unconditionally attempted regardless of whether a token was even
+  obtained (it takes no token argument).
+- Analyzed concurrency/idempotency (logout() + external session-loss
+  firing close together) and documented (no code change needed) why it's
+  already safe: the session-epoch mechanism from the prior correction
+  pass prevents stale re-registration on any cleanup-triggering path, and
+  every cleanup operation is now independently safe to repeat. No lock/
+  queue/dependency added.
+- Tests: flutter test 160/160 passing (was 155, +5 new). flutter analyze:
   0 issues. flutter build apk --debug: succeeds.
-- Every new test verified via revert - 5 of 6 fail against the pre-fix
-  code with the exact expected symptom (the 6th, guest-safety, correctly
-  passes either way, was never broken). Verification itself caught and
-  fixed a real bug in the test harness's own delay-completer bookkeeping -
-  reported transparently in the full report.
+- 4 of 5 new tests verified via revert to fail against the pre-fix
+  shared-try/catch code with the exact expected symptom; the 5th
+  correctly passes either way (that specific behavior was never broken).
 - No Android/Gradle files, google-services.json, pubspec, or backend
-  files touched - exactly the three findings.
-- Committed (030da14) and pushed to origin/main. Working tree clean.
+  files touched - exactly the one finding.
+- Committed (e30700c) and pushed to origin/main. Working tree clean.
 
 UNCHANGED FROM PRIOR REPORTS (not re-verified, no live-device changes this pass):
 - Backend FCM secrets (FCM_PROJECT_ID/FCM_CLIENT_EMAIL/FCM_PRIVATE_KEY)
@@ -61,5 +54,5 @@ UNCHANGED FROM PRIOR REPORTS (not re-verified, no live-device changes this pass)
   Play-Store-enabled AVD to verify.
 
 NEXT:
-Claude has completed the Firebase FCM Final Correction Task and stopped,
-per its own instruction. Waiting for GPT/M review. No further task started.
+Claude has completed the Firebase FCM Final Cleanup task and stopped, per
+its own instruction. Waiting for GPT/M review. No further task started.
