@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { _resetCircuitsForTests, circuitStatus } from '../src/providers/circuit-breaker';
+import { _resetCircuitsForTests, admitCircuitRequest, circuitSnapshot, circuitStatus, recordCircuitFailure, recordCircuitSuccess } from '../src/providers/circuit-breaker';
 import { MarketProviderManager, _resetHealthForTests, type ProviderBudgets } from '../src/providers/provider-manager';
 import { _resetQuotaUsageForTests, budgetSnapshot, recordProviderRequest } from '../src/providers/quota-manager';
 import { ProviderError, type MarketDataProvider } from '../src/providers/types';
@@ -636,6 +636,124 @@ describe('MarketProviderManager', () => {
 
       expect(hc.calls()).toBe(1); // unconfigured budget fails open, same as every other admission check in this codebase
       expect(circuitStatus('twelve_data')).toBe('open');
+    });
+  });
+
+  describe('Final Edit Task 3 - healthSnapshot() must not report an in-flight half-open trial as confirmed unhealthy', () => {
+    const T0 = Date.UTC(2026, 8, 14, 12, 0, 0);
+
+    it('an actually-open circuit (still within backoff) still reports "unhealthy" without probing', async () => {
+      const primary = new FakeProvider('twelve_data', { healthy: true });
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+      const hc = countHealthChecks(primary);
+
+      recordCircuitFailure('twelve_data', T0); // trip it, genuinely open, well within backoff
+      const realNow = Date.now;
+      try {
+        Date.now = () => T0 + 5_000; // 5s in - nowhere near nextProbeAt (15-30s out)
+        const snapshot = await manager.healthSnapshot();
+
+        expect(snapshot.primary?.status).toBe('unhealthy'); // unchanged - a genuinely open circuit is an already-confirmed verdict
+        expect(snapshot.primary?.circuit).toBe('open');
+        expect(hc.calls()).toBe(0); // no probe attempted
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it('a half-open circuit whose single probe is already claimed by another caller reports "unknown", not "unhealthy"', async () => {
+      const primary = new FakeProvider('twelve_data', { healthy: true });
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+      const hc = countHealthChecks(primary);
+
+      recordCircuitFailure('twelve_data', T0);
+      const past = T0 + 31_000; // past the 30s max initial backoff - unambiguously half-open
+      const realNow = Date.now;
+      try {
+        Date.now = () => past;
+
+        // Simulate a concurrent caller (e.g. real live traffic) already
+        // claiming the single half-open recovery trial before this
+        // healthSnapshot() call runs.
+        const claimed = admitCircuitRequest('twelve_data', past);
+        expect(claimed).toEqual({ allowed: true, isProbe: true });
+
+        const snapshot = await manager.healthSnapshot();
+
+        expect(snapshot.primary?.circuit).toBe('half_open'); // an accurate reflection of reality - a trial genuinely is in flight
+        expect(snapshot.primary?.status).toBe('unknown'); // NOT 'unhealthy' - the trial hasn't resolved yet, nothing is confirmed
+        expect(hc.calls()).toBe(0); // healthSnapshot made zero extra provider calls - it never probed
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it('makes zero extra provider healthCheck/network calls when the probe is already claimed - re-confirmed via the quota usage counter, not just the call-count wrapper', async () => {
+      const primary = new FakeProvider('twelve_data', { healthy: true });
+      const budgets: ProviderBudgets = { twelveData: { dailyRequestBudget: 100 }, alpaca: { dailyRequestBudget: 0 } };
+      const manager = new MarketProviderManager(primary, null, false, budgets);
+
+      recordCircuitFailure('twelve_data', T0);
+      const past = T0 + 31_000;
+      const realNow = Date.now;
+      try {
+        Date.now = () => past;
+        admitCircuitRequest('twelve_data', past); // another caller claims the trial
+
+        const before = usedCount('twelve_data', 100);
+        await manager.healthSnapshot();
+        const after = usedCount('twelve_data', 100);
+
+        expect(after).toBe(before); // zero real requests recorded - healthSnapshot truly never touched the provider
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it('the probe owner (a real caller) can still resolve the circuit normally - healthSnapshot\'s denial branch does not interfere with the claim', async () => {
+      const primary = new FakeProvider('twelve_data', { healthy: true });
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      recordCircuitFailure('twelve_data', T0);
+      const past = T0 + 31_000;
+      const realNow = Date.now;
+      try {
+        Date.now = () => past;
+        admitCircuitRequest('twelve_data', past); // the "owner" of the trial
+
+        const snapshot = await manager.healthSnapshot(); // a concurrent, unrelated healthSnapshot call while the trial is in flight
+        expect(snapshot.primary?.status).toBe('unknown');
+
+        // The owner's trial now resolves successfully - the circuit must
+        // fully close, exactly as if healthSnapshot had never been called
+        // in between.
+        recordCircuitSuccess('twelve_data');
+        expect(circuitStatus('twelve_data', past)).toBe('closed');
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    it('the probe owner failing still reopens the circuit with the next backoff, unaffected by a concurrent healthSnapshot call', async () => {
+      const primary = new FakeProvider('twelve_data', { healthy: true });
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      recordCircuitFailure('twelve_data', T0);
+      const firstNextProbeAt = circuitSnapshot('twelve_data', T0).nextProbeAt!;
+      const realNow = Date.now;
+      try {
+        Date.now = () => firstNextProbeAt;
+        admitCircuitRequest('twelve_data', firstNextProbeAt); // the owner claims the trial
+
+        await manager.healthSnapshot(); // concurrent, unrelated call - must not disturb the claim
+
+        recordCircuitFailure('twelve_data', firstNextProbeAt); // the trial itself failed
+        const snap = circuitSnapshot('twelve_data', firstNextProbeAt);
+        expect(snap.status).toBe('open'); // reopened
+        expect(snap.nextProbeAt!).toBeGreaterThan(firstNextProbeAt); // backoff grew - a normal second trip, not disrupted
+      } finally {
+        Date.now = realNow;
+      }
     });
   });
 });

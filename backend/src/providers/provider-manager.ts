@@ -421,13 +421,28 @@ export class MarketProviderManager {
 
       const admission = admitCircuitRequest(provider.id);
       if (!admission.allowed) {
-        // Either still genuinely open, or half-open but another caller
-        // (live traffic, or a concurrent admin call) already holds the
-        // one trial slot - either way, do not probe, report unhealthy.
+        // Denied for one of two genuinely different reasons - do not probe
+        // either way, but they must not be reported identically:
         const circuit = circuitSnapshot(provider.id);
+        // Final Edit Task 3: `circuit.status === 'open'` means still
+        // genuinely inside the confirmed backoff window - `unhealthy` is
+        // an accurate, already-confirmed verdict, unchanged from before.
+        // But `circuit.status === 'half_open'` here means the ONLY reason
+        // admission was denied is that another caller (live traffic, or a
+        // concurrent admin call) already claimed the single recovery
+        // probe - a real trial is actively in flight, and its outcome
+        // isn't known yet. Reporting `unhealthy` in that case would
+        // fabricate a health verdict the system hasn't actually confirmed
+        // (the same "never fabricate health data" principle this class
+        // already applies to a budget-denied probe, reported `unknown`
+        // rather than guessed). This never touches admitCircuitRequest,
+        // `probing`, or the probe owner's own resolution of the trial -
+        // purely a read of already-existing state for a more accurate
+        // observability label.
+        const status = circuit.status === 'half_open' ? 'unknown' : 'unhealthy';
         return {
           provider: provider.id,
-          status: 'unhealthy',
+          status,
           latencyMs: null,
           lastSuccessAt: mem.lastSuccessAt,
           lastErrorAt: mem.lastErrorAt,
