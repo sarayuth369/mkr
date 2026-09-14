@@ -388,4 +388,103 @@ describe('MarketProviderManager', () => {
       expect(healthCheckCalls).toBe(1); // healthSnapshot did NOT spend a second probe - it already knew the answer
     });
   });
+
+  describe('Final Edit Task - Finding 1: half-open recovery trial is claimed exactly once', () => {
+    it('two concurrent getQuote calls during the half-open window: only ONE reaches the primary, the other falls straight to secondary', async () => {
+      const opts = { throwKind: 'network' as const, healthy: false };
+      const primary = new FakeProvider('twelve_data', opts);
+      const secondary = new FakeProvider('alpaca', { quoteResult: quote(50) });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      await manager.getQuote('AAPL', symbolFor, 'P1'); // trips the primary's breaker
+      expect(primary.quoteCalls).toBe(1);
+
+      // Recovery: the provider starts succeeding again, and the backoff window elapses.
+      opts.throwKind = undefined as unknown as 'network';
+      (primary as unknown as { opts: { quoteResult: unknown } }).opts.quoteResult = quote(200);
+      const realNow = Date.now;
+      try {
+        Date.now = () => realNow() + 31_000; // past the 30s max initial backoff - half-open
+
+        // Two "concurrent" calls issued back-to-back with no await between
+        // them - both observe the same half-open window before either one
+        // resolves, simulating two simultaneous production requests.
+        const [a, b] = await Promise.all([manager.getQuote('AAPL', symbolFor, 'P1'), manager.getQuote('AAPL', symbolFor, 'P1')]);
+
+        // Exactly one of the two calls actually claimed the trial and
+        // reached the primary a second time; the other must have been
+        // denied the primary (admitCircuitRequest is synchronous/atomic)
+        // and gone straight to secondary instead.
+        expect(primary.quoteCalls).toBe(2); // 1 from the initial trip + exactly 1 more (the trial), never 3
+        const sources = [a.source, b.source].sort();
+        expect(sources).toEqual(['alpaca', 'twelve_data']);
+      } finally {
+        Date.now = realNow;
+      }
+    });
+  });
+
+  describe('Final Edit Task - Finding 2: secondary failover is health-confirmed, same as the primary', () => {
+    it('a transient secondary error (healthCheck still healthy) does NOT trip the secondary circuit - the next call still tries it normally', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const secondary = new FakeProvider('alpaca', { throwKind: 'timeout', healthy: true });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      // First call: primary confirmed unhealthy, falls to secondary, secondary
+      // fails but its OWN healthCheck reports healthy - transient, propagate.
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow('alpaca failed');
+      expect(secondary.quoteCalls).toBe(1);
+
+      // Second call: primary's breaker is still open (skipped), and the
+      // secondary's circuit must NOT have tripped from the transient error -
+      // it gets contacted again normally, not silently skipped.
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow('alpaca failed');
+      expect(secondary.quoteCalls).toBe(2); // contacted again - circuit was never tripped by the transient failure
+    });
+
+    it('a confirmed secondary outage (healthCheck unhealthy) DOES trip its circuit - a later call skips it entirely', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const secondary = new FakeProvider('alpaca', { throwKind: 'network', healthy: false });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow('alpaca failed');
+      expect(secondary.quoteCalls).toBe(1);
+
+      // Both circuits are now open - a further call must not contact either provider.
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1')).rejects.toThrow('No healthy provider available');
+      expect(secondary.quoteCalls).toBe(1); // still 1 - secondary was skipped this time, not contacted again
+    });
+
+    it('getBatchQuotes applies the same confirmed-unhealthy rule to a transient secondary failure', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const secondary = new FakeProvider('alpaca', { throwKind: 'timeout', healthy: true });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+      const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
+
+      await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1')).rejects.toThrow('alpaca failed');
+      await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1')).rejects.toThrow('alpaca failed');
+
+      expect(secondary.batchCalls).toBe(2); // contacted both times - a transient error never trips the breaker
+    });
+
+    it('getBatchQuotes trips the secondary circuit on a confirmed outage, same as getQuote', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const secondary = new FakeProvider('alpaca', { throwKind: 'network', healthy: false });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+      const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
+
+      await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1')).rejects.toThrow('alpaca failed');
+      expect(secondary.batchCalls).toBe(1);
+
+      // Both circuits are now open - getBatchQuotes treats "no provider
+      // reachable" as a mapping outcome, not a fault (matches its
+      // pre-existing "no provider maps this symbol" behavior) - all-null,
+      // not a throw. The behavior under test is that secondary is SKIPPED,
+      // not contacted a second time.
+      const { result, source } = await manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1');
+      expect(source).toBeNull();
+      expect(result).toEqual({ AAPL: null });
+      expect(secondary.batchCalls).toBe(1); // skipped this time - confirmed-unhealthy trip carried over
+    });
+  });
 });

@@ -1,5 +1,5 @@
 import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, NormalizedQuote, ProviderHealth, ProviderId } from '../types';
-import { circuitSnapshot, isCircuitOpen, recordCircuitFailure, recordCircuitSuccess } from './circuit-breaker';
+import { admitCircuitRequest, circuitSnapshot, recordCircuitFailure, recordCircuitSuccess, releaseCircuitProbe } from './circuit-breaker';
 import { admitProviderRequest, type ProviderBudgetPolicy, type RequestPriority } from './quota-manager';
 import { ProviderError, type MarketDataProvider } from './types';
 
@@ -73,6 +73,22 @@ function budgetErrorFor(tier: string): ProviderError {
  * itself is unchanged - the breaker only takes over for what happens
  * AFTER that determination, never replaces it.
  *
+ * Final Edit Task (Finding 1): the breaker's half-open recovery window
+ * admits exactly ONE trial request, claimed atomically via
+ * `admitCircuitRequest` - every call site below checks `admission.allowed`
+ * before doing anything else, and a caller that claims the trial
+ * (`admission.isProbe`) but then aborts before actually contacting the
+ * provider (no symbol mapping, or a quota denial) must release the claim
+ * via `releaseCircuitProbe` so it isn't wasted.
+ *
+ * Final Edit Task (Finding 2): the secondary provider now gets the SAME
+ * confirmed-unhealthy treatment as the primary - a secondary request
+ * failure only trips its circuit once the secondary's own `healthCheck()`
+ * confirms it, or the failure was itself the half-open trial (which is
+ * its own confirmation). A transient secondary error still propagates
+ * (there is no further fallback), but no longer needlessly disables
+ * Alpaca for a one-off blip.
+ *
  * Task 6: every actual provider call in this class is now gated by the
  * centralized quota guard (quota-manager.ts) - this is the ONE place
  * that gate is enforced, so no caller can bypass it by going around this
@@ -126,50 +142,80 @@ export class MarketProviderManager {
   ): Promise<{ result: T; source: ProviderId }> {
     let budgetDeniedTier: string | null = null;
 
-    if (this.primary && !isCircuitOpen(this.primary.id)) {
-      const symbol = symbolFor(this.primary.id);
-      if (symbol) {
-        const decision = this.admit(this.primary.id, priority);
-        if (decision.allowed) {
-          try {
-            const result = await call(this.primary, symbol);
-            recordSuccess(this.primary.id);
-            recordCircuitSuccess(this.primary.id);
-            return { result, source: this.primary.id };
-          } catch (err) {
-            recordFailure(this.primary.id, (err as Error).message);
-            const probe = await this.primary.healthCheck();
-            if (probe.healthy) {
-              // Confirmed still reachable - a one-off/transient fault, not a
-              // genuine outage. Do not fail over; propagate the real error.
-              throw err;
+    if (this.primary) {
+      const admission = admitCircuitRequest(this.primary.id);
+      if (admission.allowed) {
+        const symbol = symbolFor(this.primary.id);
+        if (symbol) {
+          const decision = this.admit(this.primary.id, priority);
+          if (decision.allowed) {
+            try {
+              const result = await call(this.primary, symbol);
+              recordSuccess(this.primary.id);
+              recordCircuitSuccess(this.primary.id);
+              return { result, source: this.primary.id };
+            } catch (err) {
+              recordFailure(this.primary.id, (err as Error).message);
+              if (admission.isProbe) {
+                // The half-open trial's own outcome IS the confirmation -
+                // no separate healthCheck needed (would just double-spend
+                // quota to re-ask a question this attempt already answered).
+                recordCircuitFailure(this.primary.id);
+              } else {
+                const probe = await this.primary.healthCheck();
+                if (probe.healthy) {
+                  // Confirmed still reachable - a one-off/transient fault,
+                  // not a genuine outage. Do not fail over; propagate.
+                  throw err;
+                }
+                recordCircuitFailure(this.primary.id); // confirmed unhealthy - trip/extend the breaker
+              }
+              // Confirmed unhealthy either way - fall through to the secondary below.
             }
-            recordCircuitFailure(this.primary.id); // confirmed unhealthy - trip/extend the breaker
-            // Confirmed unhealthy - fall through to the secondary below.
+          } else {
+            if (admission.isProbe) releaseCircuitProbe(this.primary.id); // claimed but never attempted - free the slot
+            budgetDeniedTier = decision.tier; // never contacted primary at all - not a health event
           }
-        } else {
-          budgetDeniedTier = decision.tier; // never contacted primary at all - not a health event
+        } else if (admission.isProbe) {
+          releaseCircuitProbe(this.primary.id); // no symbol mapping - never attempted, free the slot
         }
       }
     }
 
-    if (this.secondaryEnabled && this.secondary && !isCircuitOpen(this.secondary.id)) {
-      const symbol = symbolFor(this.secondary.id);
-      if (symbol) {
-        const decision = this.admit(this.secondary.id, priority);
-        if (decision.allowed) {
-          try {
-            const result = await call(this.secondary, symbol);
-            recordSuccess(this.secondary.id);
-            recordCircuitSuccess(this.secondary.id);
-            return { result, source: this.secondary.id };
-          } catch (err) {
-            recordFailure(this.secondary.id, (err as Error).message);
-            recordCircuitFailure(this.secondary.id); // no further fallback - any confirmed failure trips it
-            throw err;
+    if (this.secondaryEnabled && this.secondary) {
+      const admission = admitCircuitRequest(this.secondary.id);
+      if (admission.allowed) {
+        const symbol = symbolFor(this.secondary.id);
+        if (symbol) {
+          const decision = this.admit(this.secondary.id, priority);
+          if (decision.allowed) {
+            try {
+              const result = await call(this.secondary, symbol);
+              recordSuccess(this.secondary.id);
+              recordCircuitSuccess(this.secondary.id);
+              return { result, source: this.secondary.id };
+            } catch (err) {
+              recordFailure(this.secondary.id, (err as Error).message);
+              // Finding 2: the secondary gets the SAME confirmed-unhealthy
+              // treatment as the primary - a transient error must not
+              // needlessly trip the circuit and disable Alpaca. There is no
+              // further fallback either way, so the real error always
+              // propagates - only whether the circuit trips differs.
+              if (admission.isProbe) {
+                recordCircuitFailure(this.secondary.id);
+              } else {
+                const probe = await this.secondary.healthCheck();
+                if (!probe.healthy) recordCircuitFailure(this.secondary.id);
+              }
+              throw err;
+            }
+          } else {
+            if (admission.isProbe) releaseCircuitProbe(this.secondary.id);
+            budgetDeniedTier = decision.tier;
           }
+        } else if (admission.isProbe) {
+          releaseCircuitProbe(this.secondary.id);
         }
-        budgetDeniedTier = decision.tier;
       }
     }
 
@@ -205,45 +251,68 @@ export class MarketProviderManager {
     };
     let budgetDeniedTier: string | null = null;
 
-    if (this.primary && !isCircuitOpen(this.primary.id)) {
-      const map = buildMap(this.primary.id);
-      if (Object.keys(map).length > 0) {
-        const decision = this.admit(this.primary.id, priority);
-        if (decision.allowed) {
-          try {
-            const result = await this.primary.getBatchQuotes(map);
-            recordSuccess(this.primary.id);
-            recordCircuitSuccess(this.primary.id);
-            return { result, source: this.primary.id };
-          } catch (err) {
-            recordFailure(this.primary.id, (err as Error).message);
-            const probe = await this.primary.healthCheck();
-            if (probe.healthy) throw err; // transient - propagate, don't fail over
-            recordCircuitFailure(this.primary.id);
+    if (this.primary) {
+      const admission = admitCircuitRequest(this.primary.id);
+      if (admission.allowed) {
+        const map = buildMap(this.primary.id);
+        if (Object.keys(map).length > 0) {
+          const decision = this.admit(this.primary.id, priority);
+          if (decision.allowed) {
+            try {
+              const result = await this.primary.getBatchQuotes(map);
+              recordSuccess(this.primary.id);
+              recordCircuitSuccess(this.primary.id);
+              return { result, source: this.primary.id };
+            } catch (err) {
+              recordFailure(this.primary.id, (err as Error).message);
+              if (admission.isProbe) {
+                recordCircuitFailure(this.primary.id); // the trial's own failure is the confirmation
+              } else {
+                const probe = await this.primary.healthCheck();
+                if (probe.healthy) throw err; // transient - propagate, don't fail over
+                recordCircuitFailure(this.primary.id);
+              }
+            }
+          } else {
+            if (admission.isProbe) releaseCircuitProbe(this.primary.id);
+            budgetDeniedTier = decision.tier;
           }
-        } else {
-          budgetDeniedTier = decision.tier;
+        } else if (admission.isProbe) {
+          releaseCircuitProbe(this.primary.id);
         }
       }
     }
 
-    if (this.secondaryEnabled && this.secondary && !isCircuitOpen(this.secondary.id)) {
-      const map = buildMap(this.secondary.id);
-      if (Object.keys(map).length > 0) {
-        const decision = this.admit(this.secondary.id, priority);
-        if (decision.allowed) {
-          try {
-            const result = await this.secondary.getBatchQuotes(map);
-            recordSuccess(this.secondary.id);
-            recordCircuitSuccess(this.secondary.id);
-            return { result, source: this.secondary.id };
-          } catch (err) {
-            recordFailure(this.secondary.id, (err as Error).message);
-            recordCircuitFailure(this.secondary.id);
-            throw err;
+    if (this.secondaryEnabled && this.secondary) {
+      const admission = admitCircuitRequest(this.secondary.id);
+      if (admission.allowed) {
+        const map = buildMap(this.secondary.id);
+        if (Object.keys(map).length > 0) {
+          const decision = this.admit(this.secondary.id, priority);
+          if (decision.allowed) {
+            try {
+              const result = await this.secondary.getBatchQuotes(map);
+              recordSuccess(this.secondary.id);
+              recordCircuitSuccess(this.secondary.id);
+              return { result, source: this.secondary.id };
+            } catch (err) {
+              recordFailure(this.secondary.id, (err as Error).message);
+              // Finding 2: same confirmed-unhealthy treatment as the primary.
+              if (admission.isProbe) {
+                recordCircuitFailure(this.secondary.id);
+              } else {
+                const probe = await this.secondary.healthCheck();
+                if (!probe.healthy) recordCircuitFailure(this.secondary.id);
+              }
+              throw err;
+            }
+          } else {
+            if (admission.isProbe) releaseCircuitProbe(this.secondary.id);
+            budgetDeniedTier = decision.tier;
           }
+        } else if (admission.isProbe) {
+          releaseCircuitProbe(this.secondary.id);
         }
-        budgetDeniedTier = decision.tier;
       }
     }
 
@@ -276,13 +345,23 @@ export class MarketProviderManager {
    * state - we already know the answer, so spending a second P4 request
    * (and its quota) to re-ask would be wasteful. Once the backoff window
    * elapses (half-open), a real probe runs again as the recovery trial.
+   *
+   * Final Edit Task (Finding 1): this probe now goes through the SAME
+   * `admitCircuitRequest` claim as live traffic, instead of its own
+   * separate `circuit.status === 'open'` check. That closes a real gap -
+   * without it, a concurrent admin `/admin/health` call could run its own
+   * live `healthCheck()` at the exact same half-open moment as a real
+   * market-data request's recovery trial, i.e. two independent "trials"
+   * racing each other, which is exactly the bug Finding 1 fixes. Routing
+   * both through one claim means there is only ever one recovery trial in
+   * flight for a given provider, regardless of which code path triggers it.
    */
   async healthSnapshot(): Promise<{ primary: ProviderHealth | null; secondary: ProviderHealth | null }> {
     const build = async (provider: MarketDataProvider | null, enabled: boolean): Promise<ProviderHealth | null> => {
       if (!provider) return null;
       const mem = healthEntry(provider.id);
-      const circuit = circuitSnapshot(provider.id);
       if (!enabled) {
+        const circuit = circuitSnapshot(provider.id);
         return {
           provider: provider.id,
           status: 'disabled',
@@ -296,7 +375,12 @@ export class MarketProviderManager {
         };
       }
 
-      if (circuit.status === 'open') {
+      const admission = admitCircuitRequest(provider.id);
+      if (!admission.allowed) {
+        // Either still genuinely open, or half-open but another caller
+        // (live traffic, or a concurrent admin call) already holds the
+        // one trial slot - either way, do not probe, report unhealthy.
+        const circuit = circuitSnapshot(provider.id);
         return {
           provider: provider.id,
           status: 'unhealthy',
@@ -312,6 +396,8 @@ export class MarketProviderManager {
 
       const decision = this.admit(provider.id, 'P4');
       if (!decision.allowed) {
+        if (admission.isProbe) releaseCircuitProbe(provider.id); // claimed the trial but budget denied it - never actually attempted, free the slot
+        const circuit = circuitSnapshot(provider.id);
         return {
           provider: provider.id,
           status: 'unknown',

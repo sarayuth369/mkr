@@ -139,13 +139,29 @@ export class TwelveDataProvider implements MarketDataProvider {
     return parseTwelveDataCandles(json, mkrSymbol, timeframe);
   }
 
+  /**
+   * Final Edit Task - Finding 3: this used to swallow EVERY error from
+   * `request()` - network failure, timeout, auth failure, rate limit, or
+   * an embedded API error - and convert all of them into a "successful"
+   * unavailable-status result via `parseTwelveDataMarketStatus(null, ...)`.
+   * That meant a genuine outage was never visible to
+   * `MarketProviderManager.withFailover` (which only reacts to a REJECTED
+   * promise) - failover and the circuit breaker could never trigger off a
+   * market-status call, no matter how badly Twelve Data was actually down.
+   *
+   * `request()` only ever throws for a REAL failure (network/timeout/auth/
+   * rate-limit/embedded-error - see its own doc comment); it never returns
+   * successfully with a body that itself represents a failure. So there is
+   * no legitimate "unavailable" case left to catch here - a genuinely
+   * unsupported/sparse market-status response (e.g. missing
+   * `is_market_open`) still resolves successfully with `json` populated,
+   * and `parseTwelveDataMarketStatus` already turns that into the correct
+   * non-fatal `session: 'unknown', isOpen: null` shape on its own, with no
+   * try/catch required. Every real error now simply propagates.
+   */
   async getMarketStatus(providerSymbol: string, mkrSymbol: string): Promise<NormalizedMarketStatus> {
-    try {
-      const json = await this.request('/quote', { symbol: providerSymbol });
-      return parseTwelveDataMarketStatus(json, mkrSymbol);
-    } catch {
-      return parseTwelveDataMarketStatus(null, mkrSymbol);
-    }
+    const json = await this.request('/quote', { symbol: providerSymbol });
+    return parseTwelveDataMarketStatus(json, mkrSymbol);
   }
 
   async healthCheck(): Promise<{ healthy: boolean; latencyMs: number; error?: string }> {

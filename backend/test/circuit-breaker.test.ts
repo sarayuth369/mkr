@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { _resetCircuitsForTests, circuitSnapshot, circuitStatus, isCircuitOpen, recordCircuitFailure, recordCircuitSuccess } from '../src/providers/circuit-breaker';
+import {
+  _resetCircuitsForTests,
+  admitCircuitRequest,
+  circuitSnapshot,
+  circuitStatus,
+  isCircuitOpen,
+  recordCircuitFailure,
+  recordCircuitSuccess,
+  releaseCircuitProbe,
+} from '../src/providers/circuit-breaker';
 
 const T0 = Date.UTC(2026, 8, 14, 12, 0, 0);
 
@@ -71,6 +80,119 @@ describe('circuit-breaker - provider isolation', () => {
     recordCircuitFailure('twelve_data', T0);
     expect(circuitStatus('twelve_data', T0)).toBe('open');
     expect(circuitStatus('alpaca', T0)).toBe('closed'); // untouched
+  });
+});
+
+describe('admitCircuitRequest - Final Edit Task Finding 1: race-safe single half-open probe admission', () => {
+  it('closed circuit allows normal calls (not a probe)', () => {
+    expect(admitCircuitRequest('twelve_data', T0)).toEqual({ allowed: true, isProbe: false });
+  });
+
+  it('open circuit blocks calls before nextProbeAt', () => {
+    recordCircuitFailure('twelve_data', T0);
+    const admission = admitCircuitRequest('twelve_data', T0 + 10_000); // 10s in - well within the 15-30s window
+    expect(admission).toEqual({ allowed: false, isProbe: false });
+  });
+
+  it('after nextProbeAt, exactly one caller can claim the half-open trial', () => {
+    recordCircuitFailure('twelve_data', T0);
+    const past = T0 + 31_000; // past the 30s max initial backoff - unambiguously half-open
+
+    const first = admitCircuitRequest('twelve_data', past);
+    expect(first).toEqual({ allowed: true, isProbe: true });
+  });
+
+  it('a second (concurrent) caller cannot claim another probe once the first has claimed it', () => {
+    recordCircuitFailure('twelve_data', T0);
+    const past = T0 + 31_000;
+
+    const first = admitCircuitRequest('twelve_data', past);
+    expect(first.isProbe).toBe(true);
+
+    // Simulates a second concurrent request arriving before the first
+    // trial has resolved (no recordCircuitSuccess/Failure call in between).
+    const second = admitCircuitRequest('twelve_data', past);
+    expect(second).toEqual({ allowed: false, isProbe: false });
+
+    const third = admitCircuitRequest('twelve_data', past + 1);
+    expect(third).toEqual({ allowed: false, isProbe: false });
+  });
+
+  it('a successful probe closes/resets the circuit - a subsequent call is ordinary (non-probe) traffic', () => {
+    recordCircuitFailure('twelve_data', T0);
+    const past = T0 + 31_000;
+    const admission = admitCircuitRequest('twelve_data', past);
+    expect(admission.isProbe).toBe(true);
+
+    recordCircuitSuccess('twelve_data');
+
+    expect(circuitStatus('twelve_data', past)).toBe('closed');
+    expect(admitCircuitRequest('twelve_data', past)).toEqual({ allowed: true, isProbe: false });
+  });
+
+  it('a failed probe reopens the circuit with the next exponential backoff, and clears the claim', () => {
+    recordCircuitFailure('twelve_data', T0);
+    const firstNextProbeAt = circuitSnapshot('twelve_data', T0).nextProbeAt!;
+    const admission = admitCircuitRequest('twelve_data', firstNextProbeAt);
+    expect(admission.isProbe).toBe(true);
+
+    recordCircuitFailure('twelve_data', firstNextProbeAt); // the trial itself failed
+
+    const snap = circuitSnapshot('twelve_data', firstNextProbeAt);
+    expect(snap.status).toBe('open'); // reopened, not stuck half-open or left claimed
+    expect(snap.nextProbeAt!).toBeGreaterThan(firstNextProbeAt); // backoff grew, not reset to the same window
+    // The claim was released as part of reopening - once THIS new backoff
+    // window elapses, a trial can be claimed again (proves `probing` isn't
+    // stuck `true` forever).
+    const secondNextProbeAt = snap.nextProbeAt!;
+    expect(admitCircuitRequest('twelve_data', secondNextProbeAt)).toEqual({ allowed: true, isProbe: true });
+  });
+
+  it('repeated failures cap backoff at 300s base before jitter, even across many claimed-and-failed trials', () => {
+    let now = T0;
+    recordCircuitFailure('twelve_data', now);
+    for (let i = 0; i < 10; i++) {
+      const snap = circuitSnapshot('twelve_data', now);
+      now = snap.nextProbeAt!;
+      const admission = admitCircuitRequest('twelve_data', now);
+      expect(admission.isProbe).toBe(true); // each cycle claims cleanly - never left stuck from the previous one
+      recordCircuitFailure('twelve_data', now);
+    }
+    const finalSnap = circuitSnapshot('twelve_data', now);
+    expect(finalSnap.nextProbeAt! - now).toBeLessThanOrEqual(300_000);
+  });
+
+  it('releaseCircuitProbe frees a claimed-but-never-attempted trial for a later caller in the SAME window', () => {
+    recordCircuitFailure('twelve_data', T0);
+    const past = T0 + 31_000;
+
+    const claimed = admitCircuitRequest('twelve_data', past);
+    expect(claimed.isProbe).toBe(true);
+
+    // The claimant aborts without ever actually contacting the provider
+    // (e.g. no symbol mapping, or a quota denial) - releases the slot.
+    releaseCircuitProbe('twelve_data');
+
+    // A later caller, still within the SAME half-open window, can now claim it.
+    const reclaimed = admitCircuitRequest('twelve_data', past + 1);
+    expect(reclaimed).toEqual({ allowed: true, isProbe: true });
+  });
+
+  it('releaseCircuitProbe on a provider with no state at all is a safe no-op', () => {
+    expect(() => releaseCircuitProbe('alpaca')).not.toThrow();
+  });
+
+  it('Twelve Data and Alpaca half-open claims are fully independent', () => {
+    recordCircuitFailure('twelve_data', T0);
+    recordCircuitFailure('alpaca', T0);
+    const past = T0 + 31_000;
+
+    const tdClaim = admitCircuitRequest('twelve_data', past);
+    expect(tdClaim.isProbe).toBe(true);
+
+    // Alpaca's own half-open slot is untouched by Twelve Data's claim.
+    const alpacaClaim = admitCircuitRequest('alpaca', past);
+    expect(alpacaClaim).toEqual({ allowed: true, isProbe: true });
   });
 });
 
