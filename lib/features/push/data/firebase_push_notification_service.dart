@@ -76,10 +76,40 @@ class FirebaseMessagingPushService implements PushNotificationService {
     if (initialMessage != null) _tapController.add(toPushMessage(initialMessage));
   }
 
+  /// FCM Correction Task Finding 2: `AuthController` calls this on every
+  /// login/restore/register (see `_registerDeviceIfPossible`), which would
+  /// otherwise mean re-invoking the native permission-request channel call
+  /// every single time even once the user has already answered. Idempotent
+  /// using the PLATFORM's own live authorization state
+  /// (`getNotificationSettings()`) rather than any app-persisted flag -
+  /// no custom persistence invented, and it can never go stale (unlike a
+  /// cached bool, a system-settings change - e.g. the user later grants
+  /// notifications from Android Settings - is reflected immediately since
+  /// this queries fresh every call).
+  ///
+  /// Only `notDetermined` (never asked) and `denied` genuinely still call
+  /// the real `requestPermission()` - per the platform interface's own
+  /// documented semantics, a plain `denied` result "may still show another
+  /// permission prompt" on Android and its own docs say to prefer calling
+  /// `requestPermission()` again over sending the user to system settings.
+  /// `authorized`/`provisional` are already resolved positively (nothing
+  /// to gain by asking again) and `deniedPermanently` means the OS will
+  /// never show another prompt at all (Android 13+: the user must grant it
+  /// from system settings themselves) - both skip the native call outright.
   @override
   Future<bool> requestPermission() async {
-    final settings = await _messaging.requestPermission();
-    return settings.authorizationStatus == AuthorizationStatus.authorized || settings.authorizationStatus == AuthorizationStatus.provisional;
+    final current = await _messaging.getNotificationSettings();
+    switch (current.authorizationStatus) {
+      case AuthorizationStatus.authorized:
+      case AuthorizationStatus.provisional:
+        return true;
+      case AuthorizationStatus.deniedPermanently:
+        return false;
+      case AuthorizationStatus.denied:
+      case AuthorizationStatus.notDetermined:
+        final settings = await _messaging.requestPermission();
+        return settings.authorizationStatus == AuthorizationStatus.authorized || settings.authorizationStatus == AuthorizationStatus.provisional;
+    }
   }
 
   @override

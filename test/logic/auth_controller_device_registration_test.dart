@@ -10,11 +10,17 @@ import 'package:mkr/features/push/domain/push_notification_service.dart';
 class _FakeAuthService implements AuthService {
   UserProfile? nextLoginResult;
 
+  /// Simulates a session already restored from persisted storage at
+  /// startup (e.g. a fresh install/reinstall with a still-valid Supabase
+  /// refresh token) - distinct from `nextLoginResult`, which only feeds
+  /// an explicit `login()`/`register()` call.
+  UserProfile? restoredSession;
+
   @override
   Stream<void>? get authStateChanges => null;
 
   @override
-  Future<UserProfile?> currentSession() async => null;
+  Future<UserProfile?> currentSession() async => restoredSession;
 
   @override
   Future<UserProfile> continueAsGuest() async => const UserProfile(id: 'guest', email: '', isGuest: true);
@@ -100,6 +106,29 @@ void main() {
     expect(devices.registeredUserId, 'user-1');
     expect(devices.registeredToken, 'fake-fcm-token');
     expect(push.initializeCalls, 1);
+  });
+
+  test('FCM Correction Task Finding 1: a session restored at startup (e.g. a fresh install with an already-valid Supabase session) registers the device without an explicit login() call', () async {
+    final auth = _FakeAuthService()..restoredSession = const UserProfile(id: 'restored-user', email: 'restored@example.com');
+    final push = _FakePushService();
+    final devices = _FakeDeviceRepository();
+    AuthController(auth, pushService: push, deviceRepository: devices);
+    await pumpMicrotasks();
+
+    expect(devices.registeredUserId, 'restored-user');
+    expect(devices.registeredToken, 'fake-fcm-token');
+    expect(push.initializeCalls, 1);
+  });
+
+  test('a restored guest session (no persisted session at all) never triggers device registration', () async {
+    final auth = _FakeAuthService(); // restoredSession stays null -> continueAsGuest()
+    final push = _FakePushService();
+    final devices = _FakeDeviceRepository();
+    AuthController(auth, pushService: push, deviceRepository: devices);
+    await pumpMicrotasks();
+
+    expect(devices.registeredUserId, isNull);
+    expect(push.initializeCalls, 0);
   });
 
   test('a guest session never triggers device registration', () async {

@@ -9,12 +9,14 @@ import '../../push/domain/push_notification_service.dart';
 import '../domain/auth_service.dart';
 import '../domain/user_profile.dart';
 
-/// Registers/deactivates the device's push token around login/logout (spec
-/// 2.3-J). Both dependencies default to their Noop implementations, so this
-/// is a genuine no-op end to end until a real [PushNotificationService] (one
-/// that can actually mint an FCM token) replaces [NoopPushNotificationService]
-/// - see docs/MKR-EXTERNAL-INTEGRATIONS.md. Never throws into the caller:
-/// device registration is a best-effort enhancement, not a login requirement.
+/// Registers/deactivates the device's push token around login/logout/restore
+/// (spec 2.3-J). Both dependencies default to their Noop implementations
+/// (a genuine no-op end to end, e.g. in tests or before a Firebase project
+/// is provisioned) but the app itself now wires in the real
+/// [PushNotificationService]/[DeviceRepository] implementations - see
+/// lib/app/app.dart and docs/MKR-EXTERNAL-INTEGRATIONS.md. Never throws
+/// into the caller: device registration is a best-effort enhancement, not
+/// a login requirement.
 class AuthController extends ChangeNotifier {
   AuthController(
     this._service, {
@@ -46,6 +48,15 @@ class AuthController extends ChangeNotifier {
     _profile ??= await _service.continueAsGuest();
     _loading = false;
     notifyListeners();
+    // FCM Correction Task Finding 1: a fresh install/reinstall (or any
+    // cold start) can restore an already-authenticated Supabase session
+    // while this device has never registered its current FCM token -
+    // login()/register() aren't called on this path, so without this the
+    // device would go unregistered until an unrelated token-refresh event
+    // happened to fire later. Guest-safe (same guard as every other call
+    // site) and best-effort - never blocks/delays startup, since
+    // notifyListeners() above has already unblocked the UI.
+    if (_profile?.isGuest == false) unawaited(_registerDeviceIfPossible());
   }
 
   /// Re-syncs [profile] from [AuthService.currentSession] in response to an

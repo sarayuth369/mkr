@@ -4,9 +4,11 @@ import '../domain/device_repository.dart';
 
 /// Real Supabase-backed [DeviceRepository] (`devices` table — see
 /// supabase/migrations/20260913000000_initial_schema.sql). Only ever
-/// reached with a non-null token today if a future
-/// `firebase_messaging`-backed [PushNotificationService] replaces
-/// [NoopPushNotificationService] — see docs/MKR-EXTERNAL-INTEGRATIONS.md.
+/// reached with a non-null token from the real, `firebase_messaging`-backed
+/// `FirebaseMessagingPushService` (lib/app/app.dart wires it in whenever
+/// Firebase is actually configured — see docs/MKR-EXTERNAL-INTEGRATIONS.md);
+/// [NoopPushNotificationService]'s `getToken()` always returns `null`, so
+/// this repository is never reached with a fabricated one.
 /// Takes no AuthController dependency (the caller already knows it's
 /// dealing with a real, non-guest session and passes [userId] directly),
 /// which also sidesteps a constructor cycle since AuthController itself

@@ -1,15 +1,16 @@
 /// Push transport abstraction (spec 2.3-G/H) — Firebase Cloud Messaging is
-/// the intended implementation for Android, but nothing in this interface
-/// names FCM specifically, so a different transport could implement it
-/// later without touching call sites.
+/// the implementation for Android (`FirebaseMessagingPushService`,
+/// lib/features/push/data/firebase_push_notification_service.dart), but
+/// nothing in this interface names FCM specifically, so a different
+/// transport could implement it later without touching call sites.
 ///
-/// [NoopPushNotificationService] is the only implementation shipped today:
-/// adding a real `firebase_messaging`-backed one requires
-/// `android/app/google-services.json` and a Firebase project, which this
-/// codebase must never fabricate (see docs/MKR-EXTERNAL-INTEGRATIONS.md for
-/// exactly what the product owner needs to supply). Every method here is
-/// safe to call in that not-yet-configured state — it just does nothing
-/// and reports itself as unavailable, never fakes success.
+/// [NoopPushNotificationService] is the fallback whenever Firebase isn't
+/// actually configured (no `android/app/google-services.json`/Firebase
+/// project, or `Firebase.initializeApp()` failed at startup — see
+/// lib/app/app.dart) — every method here is safe to call in that state, it
+/// just does nothing and reports itself as unavailable, never fakes
+/// success. See docs/MKR-EXTERNAL-INTEGRATIONS.md for what's required to
+/// provision Firebase in the first place.
 abstract class PushNotificationService {
   /// Whether this implementation can actually deliver push (i.e. Firebase
   /// is really configured) — UI must check this before claiming push is on.

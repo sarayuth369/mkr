@@ -1,10 +1,13 @@
 import '../domain/push_notification_service.dart';
 
-/// Default [PushNotificationService] — used whenever Firebase isn't
-/// configured (always, until `google-services.json` + a Firebase project
-/// exist). Every operation is a safe no-op; [getToken] always returns
-/// `null` so nothing downstream (device registration, Settings UI) can
-/// mistake this for a working push transport.
+/// Fallback [PushNotificationService] — used whenever Firebase isn't
+/// actually configured at runtime (`Firebase.apps` empty: no
+/// `google-services.json`/Firebase project, or `Firebase.initializeApp()`
+/// failed — see lib/app/app.dart, which otherwise wires in the real
+/// `FirebaseMessagingPushService`). Every operation is a safe no-op;
+/// [getToken] always returns `null` so nothing downstream (device
+/// registration, Settings UI) can mistake this for a working push
+/// transport.
 class NoopPushNotificationService implements PushNotificationService {
   const NoopPushNotificationService();
 
