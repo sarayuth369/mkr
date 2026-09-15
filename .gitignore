@@ -71,3 +71,7 @@ admin/.wrangler/
 # pins) - machine-local, never committed, mirrors backend/.wrangler/ above.
 supabase/.temp/
 supabase/.branches/
+
+# Claude Code personal/local permission overrides - machine-local, never
+# committed (shared settings would belong in .claude/settings.json instead).
+.claude/settings.local.json

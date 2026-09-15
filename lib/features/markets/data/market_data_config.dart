@@ -10,11 +10,11 @@ enum MarketDataProviderId { twelveData, alpaca }
 /// read from `--dart-define` build-time values. Never holds an API key —
 /// keys live only on the backend proxy, never in this app.
 ///
-/// Defaults to demo mode: flipping [mode] to [MarketDataRunMode.real] today
-/// would leave every screen offline/provider-error since [backendBaseUrl]
-/// doesn't resolve to a live MKR proxy yet (see the architecture plan's
-/// "Explicitly deferred" section). Switching the default is a one-line
-/// change once the backend team adds those routes.
+/// Defaults to real mode against the deployed MKR Cloudflare Worker
+/// (`mkr-backend.biz2success.workers.dev`), which is live and proxying
+/// real Twelve Data quotes/candles — demo mode is now the opt-in path
+/// (`--dart-define=MARKET_DATA_MODE=demo`), used only for local UI work
+/// without a network connection.
 class MarketDataConfig {
   const MarketDataConfig({
     required this.mode,
@@ -34,10 +34,13 @@ class MarketDataConfig {
   /// "do not expose Alpaca data unless licensing is confirmed" rule.
   final bool secondaryEnabled;
 
-  static const _modeDefine = String.fromEnvironment('MARKET_DATA_MODE', defaultValue: 'demo');
+  static const _modeDefine = String.fromEnvironment('MARKET_DATA_MODE', defaultValue: 'real');
   static const _primaryDefine = String.fromEnvironment('MARKET_PRIMARY_PROVIDER', defaultValue: 'twelvedata');
   static const _secondaryDefine = String.fromEnvironment('MARKET_SECONDARY_PROVIDER', defaultValue: 'alpaca');
-  static const _backendUrlDefine = String.fromEnvironment('MARKET_BACKEND_BASE_URL', defaultValue: '');
+  static const _backendUrlDefine = String.fromEnvironment(
+    'MARKET_BACKEND_BASE_URL',
+    defaultValue: 'https://mkr-backend.biz2success.workers.dev',
+  );
   static const _secondaryEnabledDefine = bool.fromEnvironment('MARKET_SECONDARY_ENABLED', defaultValue: false);
 
   static MarketDataConfig fromEnvironment() => parse(

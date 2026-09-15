@@ -11,6 +11,7 @@ export type ErrorCode =
   | 'ADMIN_FORBIDDEN'
   | 'RATE_LIMITED'
   | 'NOT_FOUND'
+  | 'FEATURE_DISABLED'
   | 'INTERNAL_ERROR';
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
@@ -26,6 +27,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   ADMIN_FORBIDDEN: 403,
   RATE_LIMITED: 429,
   NOT_FOUND: 404,
+  FEATURE_DISABLED: 503,
   INTERNAL_ERROR: 500,
 };
 

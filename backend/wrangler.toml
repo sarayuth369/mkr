@@ -99,6 +99,15 @@ new_sqlite_classes = ["MarketStreamRoom"]
 tag = "v2"
 new_sqlite_classes = ["RateLimiterRoom"]
 
+# ── Workers AI: AI Market Brief / AI Ask (src/ai/) ───────────────────────
+# Cloudflare-native binding, no external API key/account needed - runs on
+# the same Cloudflare account this Worker is already deployed under, billed
+# under Cloudflare's standard Workers AI free/usage tier. Gated behind the
+# `aiBriefEnabled` feature flag (off by default, like every other Phase 2
+# surface here - an admin opts in via Admin Web once verified).
+[ai]
+binding = "AI"
+
 # ── Secrets (never committed - set with `wrangler secret put <NAME>`) ───
 # TWELVE_DATA_API_KEY            (required for live data; existing key the
 #                                  product owner already owns - reuse it,

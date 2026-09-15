@@ -1,4 +1,5 @@
 import { refreshAlertIndex } from './alerts/alert-index';
+import { handleAiAsk, handleAiAssetInsight, handleAiBrief, handleAiEventImpact, handleAiNewsSummary } from './ai/ai-routes';
 import {
   handleAdminCacheGet,
   handleAdminCacheUpdate,
@@ -123,6 +124,23 @@ async function routeMarket(request: Request, env: Env, path: string, id: string)
   throw new ApiError('NOT_FOUND', `No market route for ${request.method} ${path}`);
 }
 
+async function routeAi(request: Request, env: Env, path: string, id: string): Promise<Response> {
+  // Same public rate limit bucket as market routes - AI calls are heavier
+  // per-request (LLM inference) but the abuse surface is identical (any
+  // client, no auth), so there is no reason to give it a separate budget.
+  const { limit } = rateLimitEnv(env, 'public');
+  const rl = await checkRateLimit(env.RATE_LIMITER, `public:${clientKeyFromRequest(request)}`, limit, 60);
+  if (!rl.allowed) return rateLimitedResponse(rl);
+
+  if (path === '/api/mkr/ai/brief' && request.method === 'POST') return handleAiBrief(request, env, id);
+  if (path === '/api/mkr/ai/asset-insight' && request.method === 'POST') return handleAiAssetInsight(request, env, id);
+  if (path === '/api/mkr/ai/news-summary' && request.method === 'POST') return handleAiNewsSummary(request, env, id);
+  if (path === '/api/mkr/ai/event-impact' && request.method === 'POST') return handleAiEventImpact(request, env, id);
+  if (path === '/api/mkr/ai/ask' && request.method === 'POST') return handleAiAsk(request, env, id);
+
+  throw new ApiError('NOT_FOUND', `No AI route for ${request.method} ${path}`);
+}
+
 export default {
   /** Refreshes the Alert Engine's KV-cached alert index (see alerts/alert-index.ts)
    * every minute (see wrangler.toml [triggers]) - a no-op when Supabase isn't
@@ -163,6 +181,7 @@ export default {
       if (path === '/api/mkr/health') response = handleHealth();
       else if (path === '/api/mkr/version') response = handleVersion();
       else if (path.startsWith('/api/mkr/market/')) response = await routeMarket(request, env, path, id);
+      else if (path.startsWith('/api/mkr/ai/')) response = await routeAi(request, env, path, id);
       else if (isAdminRoute) response = await routeAdmin(request, env, path, id);
       else throw new ApiError('NOT_FOUND', `No route for ${request.method} ${path}`);
 

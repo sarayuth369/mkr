@@ -8,7 +8,7 @@ import type { Env, ProviderId } from '../types';
 import { candleTtlFor, mapProviderError, parseTimeframe } from './normalize';
 import { managerFor } from './provider-manager-factory';
 
-async function requireSymbolRow(env: Env, symbol: string): Promise<SymbolRow> {
+export async function requireSymbolRow(env: Env, symbol: string): Promise<SymbolRow> {
   if (!isValidMkrSymbolFormat(symbol)) throw new ApiError('INVALID_SYMBOL', `Invalid symbol format: ${symbol}`);
   const row = await catalogFor(env).get(symbol);
   if (!row || row.enabled === 0) throw new ApiError('INVALID_SYMBOL', `Unknown or disabled symbol: ${symbol}`);

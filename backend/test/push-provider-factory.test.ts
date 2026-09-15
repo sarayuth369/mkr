@@ -11,6 +11,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     MKR_DB: {} as never,
     MARKET_STREAM: {} as never,
     RATE_LIMITER: {} as never,
+    AI: {} as never,
     MARKET_PRIMARY_PROVIDER: 'twelve_data',
     MARKET_SECONDARY_PROVIDER: 'alpaca',
     MARKET_SECONDARY_ENABLED: 'false',

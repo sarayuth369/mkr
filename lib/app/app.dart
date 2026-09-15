@@ -16,6 +16,7 @@ import '../features/ads/domain/ad_analytics.dart';
 import '../features/ads/domain/ad_config.dart';
 import '../features/ads/domain/ad_service.dart';
 import '../features/ads/presentation/widgets/app_open_ad_host.dart';
+import '../features/ai/data/cloudflare_market_ai_service.dart';
 import '../features/ai/data/mock_market_ai_service.dart';
 import '../features/ai/domain/market_ai_service.dart';
 import '../features/ai_ask/application/ai_ask_controller.dart';
@@ -69,12 +70,10 @@ import '../l10n/generated/app_localizations.dart';
 import 'app_shell.dart';
 
 /// Picks the real [ProviderBackedMarketService] (Twelve Data primary,
-/// Alpaca standby) when built with `--dart-define=MARKET_DATA_MODE=real`,
-/// otherwise the existing [MockMarketService] demo path — the default.
-/// Real mode currently has no live backend proxy to call (see the
-/// architecture plan's "Explicitly deferred" section): every screen will
-/// honestly show offline/provider-error rather than fabricate data until
-/// `auc-backend` grows the `/api/mkr/*` routes this expects.
+/// Alpaca standby, proxied through the deployed MKR Cloudflare Worker) —
+/// the default since `MarketDataConfig`'s real mode is now the default.
+/// Falls back to [MockMarketService] only when explicitly built with
+/// `--dart-define=MARKET_DATA_MODE=demo`.
 MarketService _buildMarketService() {
   final config = MarketDataConfig.fromEnvironment();
   if (config.mode == MarketDataRunMode.demo) return MockMarketService();
@@ -86,6 +85,21 @@ MarketService _buildMarketService() {
   );
   unawaited(manager.connect());
   return ProviderBackedMarketService(manager);
+}
+
+/// Real [CloudflareMarketAIService] (Cloudflare Workers AI, proxied through
+/// the same deployed MKR Worker as market data) whenever real mode is on —
+/// otherwise [MockMarketAIService]. Reuses [MarketDataConfig]'s real/demo
+/// signal and backend URL rather than a separate dart-define: it is the
+/// same backend deployment either way, and the AI routes are gated
+/// independently server-side by the `aiBriefEnabled` feature flag (off
+/// until an admin verifies it in Admin Web → Feature Flags), so a real-mode
+/// build with the flag still off simply surfaces a clear "not enabled"
+/// error through the existing AI Ask/Brief error-state UI, never a crash.
+MarketAIService _buildMarketAIService() {
+  final config = MarketDataConfig.fromEnvironment();
+  if (config.mode == MarketDataRunMode.demo) return MockMarketAIService();
+  return CloudflareMarketAIService(backendBaseUrl: config.backendBaseUrl);
 }
 
 /// Real Firebase-backed push only once `main.dart`'s `_initializeFirebase()`
@@ -114,7 +128,7 @@ class MkrApp extends StatelessWidget {
         // Backend-abstraction seams — swap Mock* for real implementations
         // behind these same interfaces in Phase 2.
         Provider<MarketService>(create: (_) => _buildMarketService()),
-        Provider<MarketAIService>(create: (_) => MockMarketAIService()),
+        Provider<MarketAIService>(create: (_) => _buildMarketAIService()),
         Provider<NewsService>(create: (_) => MockNewsService()),
         Provider<EconomicCalendarService>(create: (_) => MockEconomicCalendarService()),
         Provider<NotificationService>(create: (_) => MockNotificationService()),
@@ -250,6 +264,22 @@ class _AppViewState extends State<_AppView> with WidgetsBindingObserver {
         GlobalCupertinoLocalizations.delegate,
       ],
       supportedLocales: AppLocalizations.supportedLocales,
+      // Several cards/sections below assume a bounded height for compact
+      // number/label rows (MarketCard's Market Pulse row, GlobalMarketsBanner's
+      // headline/subtitle pair, etc). An unclamped system font-size setting
+      // (very common on Android - many OEMs default above 1.0, and
+      // accessibility settings can go well past 2.0) can push those rows
+      // taller than their fixed height, overflowing by a few pixels. Clamping
+      // to a reasonable max keeps every fixed-height row safe app-wide while
+      // still honoring most of the user's accessibility preference (unlike
+      // ignoring text scaling entirely, which a max of 1.0 would do).
+      builder: (context, child) {
+        final mediaQuery = MediaQuery.of(context);
+        return MediaQuery(
+          data: mediaQuery.copyWith(textScaler: mediaQuery.textScaler.clamp(maxScaleFactor: 1.3)),
+          child: child!,
+        );
+      },
       home: store.isOnboardingComplete
           ? const AppOpenAdHost(child: AppShell())
           : _OnboardingGate(store: store),

@@ -5,6 +5,9 @@ export interface Env {
   MKR_DB: D1Database;
   MARKET_STREAM: DurableObjectNamespace;
   RATE_LIMITER: DurableObjectNamespace;
+  /** Workers AI - AI Market Brief / AI Ask (src/ai/). Cloudflare-native
+   * binding, no external API key. */
+  AI: Ai;
 
   MARKET_PRIMARY_PROVIDER: string;
   MARKET_SECONDARY_PROVIDER: string;
