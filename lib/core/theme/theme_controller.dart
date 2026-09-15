@@ -8,7 +8,12 @@ class ThemeController extends ChangeNotifier {
     _mode = switch (saved) {
       'light' => ThemeMode.light,
       'dark' => ThemeMode.dark,
-      _ => ThemeMode.system,
+      'system' => ThemeMode.system,
+      // Default (no saved preference yet, i.e. first run) is dark rather
+      // than following the system setting - a deliberate product choice,
+      // not a fallback. A user who has explicitly picked Light or System in
+      // Settings keeps that choice untouched.
+      _ => ThemeMode.dark,
     };
   }
 
