@@ -93,8 +93,8 @@ class MarketDetailController extends ChangeNotifier {
     await loadSeries(_timeframe);
 
     try {
-      final events = await _calendarService.getEvents();
-      _relatedEvents = events.take(3).toList();
+      final result = await _calendarService.getEvents();
+      _relatedEvents = result.events.take(3).toList();
     } catch (_) {
       _relatedEvents = const [];
     }

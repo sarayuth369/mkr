@@ -59,15 +59,17 @@ class EconomicEventCard extends StatelessWidget {
     );
   }
 
+  // Missing values render as "—" rather than hiding the stat entirely -
+  // an absent previous/forecast/actual is meaningful information (the
+  // source genuinely has no value), not a reason to omit the label.
   Widget _stat(ThemeData theme, String label, String? value) {
-    if (value == null) return const SizedBox.shrink();
     return RichText(
       text: TextSpan(
         style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         children: [
           TextSpan(text: '$label '),
           TextSpan(
-            text: value,
+            text: value ?? '—',
             style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.w600),
           ),
         ],

@@ -82,9 +82,9 @@ class AlertsController extends ChangeNotifier {
     };
     List<String> eventTitles = const [];
     try {
-      final events = await _calendarService.getEvents();
+      final result = await _calendarService.getEvents();
       final today = DateTime.now();
-      eventTitles = events
+      eventTitles = result.events
           .where((e) =>
               e.dateTime.year == today.year &&
               e.dateTime.month == today.month &&

@@ -17,6 +17,15 @@ class CalendarController extends ChangeNotifier {
   ApiState<List<EconomicEvent>> _state = const ApiState.loading();
   ApiState<List<EconomicEvent>> get state => _state;
 
+  CalendarFreshness _freshness = CalendarFreshness.offline;
+  CalendarFreshness get freshness => _freshness;
+
+  DateTime? _lastUpdatedAt;
+  DateTime? get lastUpdatedAt => _lastUpdatedAt;
+
+  CalendarRange _range = CalendarRange.today;
+  CalendarRange get range => _range;
+
   ImpactLevel? _impactFilter;
   ImpactLevel? get impactFilter => _impactFilter;
 
@@ -29,13 +38,21 @@ class CalendarController extends ChangeNotifier {
     _state = const ApiState.loading();
     notifyListeners();
     try {
-      final events = await _service.getEvents()
-        ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
+      final result = await _service.getEvents(range: _range);
+      final events = [...result.events]..sort((a, b) => a.dateTime.compareTo(b.dateTime));
+      _freshness = result.freshness;
+      _lastUpdatedAt = result.lastUpdatedAt;
       _state = events.isEmpty ? const ApiState.empty() : ApiState.success(events);
     } catch (e) {
       _state = ApiState.error(e.toString());
     }
     notifyListeners();
+  }
+
+  Future<void> setRange(CalendarRange range) async {
+    if (range == _range) return;
+    _range = range;
+    await refresh();
   }
 
   void setImpactFilter(ImpactLevel? level) {

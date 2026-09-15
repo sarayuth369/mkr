@@ -30,6 +30,45 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_symbols_category ON symbols (category);
 
+-- Economic Calendar (2026-09-15 hybrid-architecture task) - D1 is the
+-- canonical store; MKR_CACHE (KV) only ever caches a read of this table,
+-- never authoritative on its own (see src/calendar/).
+CREATE TABLE IF NOT EXISTS economic_events (
+  id TEXT PRIMARY KEY,               -- deterministic: `${source}:${sourceEventId}` - see src/calendar/types.ts
+  source TEXT NOT NULL,
+  source_event_id TEXT NOT NULL,
+  country TEXT NOT NULL,
+  currency TEXT,
+  title TEXT NOT NULL,
+  category TEXT NOT NULL,            -- MKR-owned classification, never a copied provider label
+  event_time_utc INTEGER NOT NULL,   -- epoch ms
+  importance TEXT NOT NULL,          -- high | medium | low | unknown
+  previous REAL,                     -- NULL = source did not supply a value - never fabricated
+  consensus REAL,
+  actual REAL,
+  unit TEXT,
+  status TEXT NOT NULL DEFAULT 'unknown', -- scheduled | released | cancelled | unknown
+  related_assets TEXT NOT NULL DEFAULT '[]', -- JSON array of MKR symbols
+  source_url TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_economic_events_time ON economic_events (event_time_utc);
+CREATE INDEX IF NOT EXISTS idx_economic_events_country ON economic_events (country);
+CREATE INDEX IF NOT EXISTS idx_economic_events_source ON economic_events (source);
+
+-- One row per collector/provider - last success/failure + event count, for
+-- the calendar freshness policy (src/calendar/freshness.ts) and minimal
+-- admin observability (GET /api/mkr/admin/calendar).
+CREATE TABLE IF NOT EXISTS calendar_source_state (
+  source TEXT PRIMARY KEY,
+  last_success_at INTEGER,
+  last_failure_at INTEGER,
+  last_error_message TEXT,
+  last_event_count INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+
 -- Seed the Phase 1 catalog so Admin Web has something to manage on day one.
 INSERT OR IGNORE INTO symbols (symbol, display_name, category, enabled, featured, sort_order, twelve_data_symbol, alpaca_symbol, default_timeframe, updated_at) VALUES
   ('XAU/USD', 'Gold Spot', 'gold', 1, 1, 0, 'XAU/USD', NULL, 'd1', strftime('%s','now')),

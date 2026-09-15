@@ -203,6 +203,27 @@ class AppLocalizationsTh extends AppLocalizations {
   String get calendarActual => 'ผลจริง';
 
   @override
+  String get calendarRangeToday => 'วันนี้';
+
+  @override
+  String get calendarRangeTomorrow => 'พรุ่งนี้';
+
+  @override
+  String get calendarRangeWeek => 'สัปดาห์นี้';
+
+  @override
+  String get calendarFreshnessLive => 'อัปเดตล่าสุด';
+
+  @override
+  String get calendarFreshnessStale => 'ข้อมูลเก่า';
+
+  @override
+  String get calendarFreshnessDegraded => 'ข้อมูลไม่สมบูรณ์';
+
+  @override
+  String get calendarFreshnessOffline => 'ออฟไลน์';
+
+  @override
   String get newsTitle => 'เรดาร์ข่าว';
 
   @override

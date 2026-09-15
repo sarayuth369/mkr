@@ -11,6 +11,7 @@ import '../../../../domain/impact_level.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../ads/presentation/widgets/mkr_ad_slot.dart';
 import '../../application/calendar_controller.dart';
+import '../../domain/economic_calendar_service.dart';
 import '../../domain/economic_event.dart';
 
 class CalendarScreen extends StatelessWidget {
@@ -37,6 +38,10 @@ class CalendarScreen extends StatelessWidget {
                       const MockDataBanner(),
                       const SizedBox(height: 12),
                     ],
+                    _RangeRow(controller: controller),
+                    const SizedBox(height: 8),
+                    _FreshnessRow(controller: controller),
+                    const SizedBox(height: 8),
                     _FilterRow<ImpactLevel?>(
                       selected: controller.impactFilter,
                       options: [
@@ -120,6 +125,58 @@ class _EventList extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _RangeRow extends StatelessWidget {
+  const _RangeRow({required this.controller});
+
+  final CalendarController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return _FilterRow<CalendarRange>(
+      selected: controller.range,
+      options: [
+        MapEntry(l10n.calendarRangeToday, CalendarRange.today),
+        MapEntry(l10n.calendarRangeTomorrow, CalendarRange.tomorrow),
+        MapEntry(l10n.calendarRangeWeek, CalendarRange.week),
+      ],
+      onSelected: controller.setRange,
+    );
+  }
+}
+
+/// Task requirement: "Show freshness/source status" - never implies the
+/// data is LIVE merely because a list of events is showing (matches the
+/// backend's own freshness.ts discipline).
+class _FreshnessRow extends StatelessWidget {
+  const _FreshnessRow({required this.controller});
+
+  final CalendarController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final (label, color) = switch (controller.freshness) {
+      CalendarFreshness.live => (l10n.calendarFreshnessLive, Colors.green),
+      CalendarFreshness.stale => (l10n.calendarFreshnessStale, Colors.orange),
+      CalendarFreshness.degraded => (l10n.calendarFreshnessDegraded, Colors.orange),
+      CalendarFreshness.offline => (l10n.calendarFreshnessOffline, theme.colorScheme.error),
+    };
+    return Row(
+      children: [
+        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 6),
+        Text(label, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        if (controller.lastUpdatedAt != null) ...[
+          const SizedBox(width: 6),
+          Text('· ${Formatters.relative(controller.lastUpdatedAt!)}', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        ],
+      ],
     );
   }
 }

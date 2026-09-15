@@ -203,6 +203,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get calendarActual => 'Actual';
 
   @override
+  String get calendarRangeToday => 'Today';
+
+  @override
+  String get calendarRangeTomorrow => 'Tomorrow';
+
+  @override
+  String get calendarRangeWeek => 'This Week';
+
+  @override
+  String get calendarFreshnessLive => 'Live';
+
+  @override
+  String get calendarFreshnessStale => 'Stale';
+
+  @override
+  String get calendarFreshnessDegraded => 'Degraded';
+
+  @override
+  String get calendarFreshnessOffline => 'Offline';
+
+  @override
   String get newsTitle => 'News Radar';
 
   @override

@@ -118,9 +118,9 @@ class HomeController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final events = await _calendarService.getEvents();
+      final result = await _calendarService.getEvents();
       final today = DateTime.now();
-      final todays = events.where((e) =>
+      final todays = result.events.where((e) =>
           e.dateTime.year == today.year && e.dateTime.month == today.month && e.dateTime.day == today.day);
       final items = todays
           .map((e) => RadarItem(title: e.title, time: e.dateTime, impact: e.impact, subtitle: e.country))

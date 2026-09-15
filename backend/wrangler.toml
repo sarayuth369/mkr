@@ -45,12 +45,18 @@ PROVIDER_ALPACA_DAILY_BUDGET = "0"
 [observability]
 enabled = true
 
-# ── Cron Trigger: Alert Engine index refresh ────────────────────────────
-# Refreshes the KV-cached active-alert index every minute (see
-# src/alerts/alert-index.ts) - a no-op until SUPABASE_URL/
-# SUPABASE_SERVICE_ROLE_KEY are configured below.
+# ── Cron Triggers ─────────────────────────────────────────────────────
+# Two independent schedules, one handler (see src/index.ts's `scheduled`,
+# dispatched on `event.cron`):
+#   */1 * * * *  - Alert Engine index refresh (src/alerts/alert-index.ts) -
+#                  a no-op until SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY are
+#                  configured below.
+#   0 */6 * * *  - Economic Calendar ingestion (src/calendar/ingestion.ts) -
+#                  cheap/idempotent; the always-on curated provider does no
+#                  network I/O at all, so this cadence costs nothing beyond
+#                  one D1 batch upsert every 6 hours.
 [triggers]
-crons = ["*/1 * * * *"]
+crons = ["*/1 * * * *", "0 */6 * * *"]
 
 # ── KV: fast runtime config + response caching ──────────────────────────
 # Create with:
@@ -132,5 +138,12 @@ binding = "AI"
 # FCM_PRIVATE_KEY                 (Phase 2.3 - service-account private_key,
 #                                   PEM format; all three FCM_* required
 #                                   together or push stays disabled)
+# FINNHUB_API_KEY                  (News Radar - src/news/)
+# FMP_API_KEY                      (2026-09-15 - Economic Calendar's FUTURE,
+#                                   NOT-YET-ACTIVE commercial provider only -
+#                                   see src/calendar/providers/fmp-provider.ts.
+#                                   The primary calendar provider (official-
+#                                   source curated schedule) needs NO key at
+#                                   all; leave this unset for closed testing.)
 # See docs/MKR-EXTERNAL-INTEGRATIONS.md for exactly how to obtain each of
 # these and what to run once they're supplied.

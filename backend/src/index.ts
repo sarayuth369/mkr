@@ -28,12 +28,15 @@ import {
   handleAdminUserUnsuspend,
   handleAdminUserUpdate,
 } from './admin/admin-users-routes';
+import { handleAdminCalendar } from './admin/admin-calendar-routes';
+import { handleCalendarEvents, handleCalendarToday, handleCalendarWeek } from './calendar/calendar-routes';
+import { runCalendarIngestion } from './calendar/ingestion';
 import { adminCorsHeaders, publicCorsHeaders } from './cors';
 import { ApiError, errorResponse } from './errors';
 import { handleHealth, handleVersion } from './health';
 import { logError } from './logging';
 import { handleCandles, handleMarketHealth, handleMarketStatus, handleQuote, handleQuotes } from './market/market-routes';
-import { handleCalendarEvents, handleNews, handleNewsRelated } from './news/news-routes';
+import { handleNews, handleNewsRelated } from './news/news-routes';
 import { checkRateLimit, clientKeyFromRequest, rateLimitedResponse, rateLimitEnv } from './ratelimit';
 import type { Env } from './types';
 import { fetchPoolStatus, triggerAlertRefSync } from './ws/market-stream-do';
@@ -41,6 +44,8 @@ import { handleMarketStream } from './ws/ws-routes';
 
 export { MarketStreamRoom } from './ws/market-stream-do';
 export { RateLimiterRoom } from './ratelimit-do';
+
+const CALENDAR_INGESTION_CRON = '0 */6 * * *';
 
 function requestId(): string {
   return crypto.randomUUID();
@@ -106,7 +111,24 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
     return new Response(JSON.stringify({ success: true, data: status }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
+  // Economic Calendar observability (2026-09-15 hybrid-architecture task) -
+  // source status, last success/failure, event counts - minimal, reusing
+  // the existing admin auth/routing rather than a separate subsystem.
+  if (path === '/api/mkr/admin/calendar' && request.method === 'GET') return handleAdminCalendar(request, env);
+
   throw new ApiError('NOT_FOUND', `No admin route for ${request.method} ${path}`);
+}
+
+async function routeCalendar(request: Request, env: Env, path: string): Promise<Response> {
+  const { limit } = rateLimitEnv(env, 'public');
+  const rl = await checkRateLimit(env.RATE_LIMITER, `public:${clientKeyFromRequest(request)}`, limit, 60);
+  if (!rl.allowed) return rateLimitedResponse(rl);
+
+  if (path === '/api/mkr/calendar/events' && request.method === 'GET') return handleCalendarEvents(request, env);
+  if (path === '/api/mkr/calendar/today' && request.method === 'GET') return handleCalendarToday(request, env);
+  if (path === '/api/mkr/calendar/week' && request.method === 'GET') return handleCalendarWeek(request, env);
+
+  throw new ApiError('NOT_FOUND', `No calendar route for ${request.method} ${path}`);
 }
 
 async function routeMarket(request: Request, env: Env, path: string, id: string): Promise<Response> {
@@ -149,17 +171,29 @@ async function routeNews(request: Request, env: Env, path: string): Promise<Resp
 
   if (path === '/api/mkr/news' && request.method === 'GET') return handleNews(request, env);
   if (path === '/api/mkr/news/related' && request.method === 'GET') return handleNewsRelated(request, env);
-  if (path === '/api/mkr/calendar/events' && request.method === 'GET') return handleCalendarEvents(request, env);
 
-  throw new ApiError('NOT_FOUND', `No news/calendar route for ${request.method} ${path}`);
+  throw new ApiError('NOT_FOUND', `No news route for ${request.method} ${path}`);
 }
 
 export default {
-  /** Refreshes the Alert Engine's KV-cached alert index (see alerts/alert-index.ts)
-   * every minute (see wrangler.toml [triggers]) - a no-op when Supabase isn't
-   * configured. This keeps tick evaluation in market-stream-do.ts reading
-   * only KV, never querying Supabase per tick. */
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+  /** Two independent cron schedules share this one handler (wrangler.toml
+   * [triggers]), distinguished by `event.cron`:
+   * - every minute: refreshes the Alert Engine's KV-cached alert index
+   *   (alerts/alert-index.ts) - a no-op when Supabase isn't configured.
+   *   Keeps tick evaluation in market-stream-do.ts reading only KV, never
+   *   querying Supabase per tick.
+   * - every 6 hours: re-runs Economic Calendar ingestion
+   *   (calendar/ingestion.ts) - cheap (the curated provider does no
+   *   network I/O at all) and idempotent, so this just keeps D1 in sync
+   *   with the curated dataset/any future live provider without a
+   *   per-request cost. */
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (event.cron === CALENDAR_INGESTION_CRON) {
+      ctx.waitUntil(
+        runCalendarIngestion(env, []).catch((err) => logError('calendar ingestion cron failed', { message: (err as Error).message })),
+      );
+      return;
+    }
     ctx.waitUntil(
       refreshAlertIndex(env)
         .then(() => triggerAlertRefSync(env))
@@ -195,8 +229,8 @@ export default {
       else if (path === '/api/mkr/version') response = handleVersion();
       else if (path.startsWith('/api/mkr/market/')) response = await routeMarket(request, env, path, id);
       else if (path.startsWith('/api/mkr/ai/')) response = await routeAi(request, env, path, id);
-      else if (path === '/api/mkr/news' || path === '/api/mkr/news/related' || path === '/api/mkr/calendar/events')
-        response = await routeNews(request, env, path);
+      else if (path === '/api/mkr/news' || path === '/api/mkr/news/related') response = await routeNews(request, env, path);
+      else if (path.startsWith('/api/mkr/calendar/')) response = await routeCalendar(request, env, path);
       else if (isAdminRoute) response = await routeAdmin(request, env, path, id);
       else throw new ApiError('NOT_FOUND', `No route for ${request.method} ${path}`);
 

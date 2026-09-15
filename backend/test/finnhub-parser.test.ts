@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFinnhubEconomicCalendar, parseFinnhubNews } from '../src/news/finnhub-parser';
+import { parseFinnhubNews } from '../src/news/finnhub-parser';
 
 describe('parseFinnhubNews', () => {
   it('parses a well-formed news array', () => {
@@ -65,65 +65,5 @@ describe('parseFinnhubNews', () => {
       { headline: 'Also good', summary: 'S2', datetime: 2 },
     ]);
     expect(articles.map((a) => a.headline)).toEqual(['Good one', 'Also good']);
-  });
-});
-
-describe('parseFinnhubEconomicCalendar', () => {
-  it('parses a well-formed { economicCalendar: [...] } response', () => {
-    const events = parseFinnhubEconomicCalendar({
-      economicCalendar: [
-        { country: 'US', event: 'CPI (YoY)', impact: 'high', prev: 3.1, estimate: 2.9, actual: null, time: '2026-01-15 19:30:00', unit: '%' },
-      ],
-    });
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      id: 'US-CPI (YoY)-2026-01-15 19:30:00',
-      country: 'US',
-      title: 'CPI (YoY)',
-      impact: 'high',
-      previous: '3.1%',
-      forecast: '2.9%',
-      actual: null,
-    });
-    expect(events[0]?.dateTime).toBe(Date.parse('2026-01-15T19:30:00Z'));
-  });
-
-  it('also accepts a bare array response, defensively', () => {
-    const events = parseFinnhubEconomicCalendar([
-      { country: 'EU', event: 'ECB Rate Decision', impact: 'high', time: '2026-01-15 15:30:00' },
-    ]);
-    expect(events).toHaveLength(1);
-  });
-
-  it('maps impact case-insensitively and defaults an unrecognized shape to low, never fabricating high', () => {
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ country: 'US', event: 'X', time: '2026-01-01 00:00:00', impact: 'HIGH' }] })[0]?.impact).toBe('high');
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ country: 'US', event: 'X', time: '2026-01-01 00:00:00', impact: 'Medium' }] })[0]?.impact).toBe('medium');
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ country: 'US', event: 'X', time: '2026-01-01 00:00:00', impact: 'weird' }] })[0]?.impact).toBe('low');
-  });
-
-  it('maps a numeric impact severity (0-3) as a fallback shape', () => {
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ country: 'US', event: 'X', time: '2026-01-01 00:00:00', impact: 3 }] })[0]?.impact).toBe('high');
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ country: 'US', event: 'X', time: '2026-01-01 00:00:00', impact: 2 }] })[0]?.impact).toBe('medium');
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ country: 'US', event: 'X', time: '2026-01-01 00:00:00', impact: 1 }] })[0]?.impact).toBe('low');
-  });
-
-  it('leaves previous/forecast/actual null when Finnhub omits them, never a fabricated 0', () => {
-    const events = parseFinnhubEconomicCalendar({ economicCalendar: [{ country: 'US', event: 'X', time: '2026-01-01 00:00:00' }] });
-    expect(events[0]).toMatchObject({ previous: null, forecast: null, actual: null });
-  });
-
-  it('skips an entry missing event, country, or time rather than fabricating placeholders', () => {
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ country: 'US', time: '2026-01-01 00:00:00' }] })).toHaveLength(0);
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ event: 'X', time: '2026-01-01 00:00:00' }] })).toHaveLength(0);
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ event: 'X', country: 'US' }] })).toHaveLength(0);
-  });
-
-  it('skips an entry with an unparseable time string', () => {
-    expect(parseFinnhubEconomicCalendar({ economicCalendar: [{ event: 'X', country: 'US', time: 'not-a-date' }] })).toHaveLength(0);
-  });
-
-  it('returns empty for a completely unexpected response shape', () => {
-    expect(parseFinnhubEconomicCalendar({ error: 'unauthorized' })).toEqual([]);
-    expect(parseFinnhubEconomicCalendar(null)).toEqual([]);
   });
 });

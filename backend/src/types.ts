@@ -49,12 +49,21 @@ export interface Env {
   FCM_CLIENT_EMAIL?: string;
   FCM_PRIVATE_KEY?: string;
 
-  // News Radar / Economic Calendar (src/news/, src/calendar-events/) - both
-  // gated by their own feature flag (newsEnabled/economicCalendarEnabled)
-  // AND this secret; missing either means MockNewsService/
-  // MockEconomicCalendarService stay in use client-side (see
-  // MKR-EXTERNAL-INTEGRATIONS.md).
+  // News Radar (src/news/) - gated by newsEnabled AND this secret; missing
+  // either means MockNewsService stays in use client-side.
   FINNHUB_API_KEY?: string;
+
+  // Economic Calendar (src/calendar/) - the PRIMARY provider (curated
+  // official-source schedule, src/calendar/providers/curated-provider.ts)
+  // needs NO secret/key at all and is always active once
+  // economicCalendarEnabled is on. FMP_API_KEY is for the FUTURE,
+  // NOT-YET-ACTIVE commercial provider (src/calendar/providers/fmp-provider.ts) -
+  // confirmed live 2026-09-15 that FMP's free tier actually returns HTTP
+  // 402 Payment Required despite marketing "Free Plan Access", so setting
+  // this key alone does not make FMP usable; it also needs an explicit,
+  // separate activation this task deliberately does not perform (no paid
+  // provider this task - see provider-manager.ts's `activeProviderIds`).
+  FMP_API_KEY?: string;
 }
 
 /** Which upstream actually produced a quote/candle. */

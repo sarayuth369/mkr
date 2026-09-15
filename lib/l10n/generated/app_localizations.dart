@@ -482,6 +482,48 @@ abstract class AppLocalizations {
   /// **'Actual'**
   String get calendarActual;
 
+  /// No description provided for @calendarRangeToday.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get calendarRangeToday;
+
+  /// No description provided for @calendarRangeTomorrow.
+  ///
+  /// In en, this message translates to:
+  /// **'Tomorrow'**
+  String get calendarRangeTomorrow;
+
+  /// No description provided for @calendarRangeWeek.
+  ///
+  /// In en, this message translates to:
+  /// **'This Week'**
+  String get calendarRangeWeek;
+
+  /// No description provided for @calendarFreshnessLive.
+  ///
+  /// In en, this message translates to:
+  /// **'Live'**
+  String get calendarFreshnessLive;
+
+  /// No description provided for @calendarFreshnessStale.
+  ///
+  /// In en, this message translates to:
+  /// **'Stale'**
+  String get calendarFreshnessStale;
+
+  /// No description provided for @calendarFreshnessDegraded.
+  ///
+  /// In en, this message translates to:
+  /// **'Degraded'**
+  String get calendarFreshnessDegraded;
+
+  /// No description provided for @calendarFreshnessOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get calendarFreshnessOffline;
+
   /// No description provided for @newsTitle.
   ///
   /// In en, this message translates to:

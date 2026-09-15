@@ -60,8 +60,8 @@ class GoldRadarController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final events = await _calendarService.getEvents();
-      _importantEvents = events.where((e) => e.impact != ImpactLevel.low).take(4).toList();
+      final result = await _calendarService.getEvents();
+      _importantEvents = result.events.where((e) => e.impact != ImpactLevel.low).take(4).toList();
     } catch (_) {
       _importantEvents = const [];
     }

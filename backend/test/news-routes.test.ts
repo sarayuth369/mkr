@@ -1,17 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { _resetInFlightForTests } from '../src/cache/cache-service';
-import { handleCalendarEvents, handleNews, handleNewsRelated } from '../src/news/news-routes';
+import { handleNews, handleNewsRelated } from '../src/news/news-routes';
 import type { Env } from '../src/types';
 import { createFakeKv } from './fakes';
 
-function makeEnv(overrides: { newsEnabled?: boolean; calendarEnabled?: boolean; apiKey?: string | null } = {}): Env {
+function makeEnv(overrides: { newsEnabled?: boolean; apiKey?: string | null } = {}): Env {
   const config = createFakeKv();
   void config.put(
     'runtime-config',
     JSON.stringify({
       featureFlags: {
         newsEnabled: overrides.newsEnabled ?? true,
-        economicCalendarEnabled: overrides.calendarEnabled ?? true,
       },
     }),
   );
@@ -114,50 +113,5 @@ describe('handleNewsRelated', () => {
     await handleNewsRelated(new Request('https://x/api/mkr/news/related?symbol=gold'), env);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('handleCalendarEvents', () => {
-  it('throws FEATURE_DISABLED when economicCalendarEnabled is off', async () => {
-    const env = makeEnv({ calendarEnabled: false });
-    await expect(handleCalendarEvents(new Request('https://x/api/mkr/calendar/events'), env)).rejects.toMatchObject({ code: 'FEATURE_DISABLED' });
-  });
-
-  it('throws FEATURE_DISABLED when the flag is on but FINNHUB_API_KEY is missing', async () => {
-    const env = makeEnv({ calendarEnabled: true, apiKey: null });
-    await expect(handleCalendarEvents(new Request('https://x/api/mkr/calendar/events'), env)).rejects.toMatchObject({ code: 'FEATURE_DISABLED' });
-  });
-
-  it('returns parsed, normalized events on success', async () => {
-    const fetchSpy = jsonFetch({
-      economicCalendar: [{ country: 'US', event: 'CPI (YoY)', impact: 'high', time: '2026-01-15 19:30:00', prev: 3.1, estimate: 2.9 }],
-    });
-    vi.stubGlobal('fetch', fetchSpy);
-    const env = makeEnv();
-
-    const res = await handleCalendarEvents(new Request('https://x/api/mkr/calendar/events'), env);
-    const body = (await res.json()) as { success: boolean; data: { title: string; impact: string }[] };
-
-    expect(body.success).toBe(true);
-    expect(body.data).toHaveLength(1);
-    expect(body.data[0]).toMatchObject({ title: 'CPI (YoY)', impact: 'high' });
-  });
-
-  it('is a cache hit on the second call within the TTL - fetch runs once', async () => {
-    const fetchSpy = jsonFetch({ economicCalendar: [] });
-    vi.stubGlobal('fetch', fetchSpy);
-    const env = makeEnv();
-
-    await handleCalendarEvents(new Request('https://x/api/mkr/calendar/events'), env);
-    await handleCalendarEvents(new Request('https://x/api/mkr/calendar/events'), env);
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('propagates PROVIDER_UNAVAILABLE on a non-2xx Finnhub response rather than crashing', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('unauthorized', { status: 401 })));
-    const env = makeEnv();
-
-    await expect(handleCalendarEvents(new Request('https://x/api/mkr/calendar/events'), env)).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
   });
 });
