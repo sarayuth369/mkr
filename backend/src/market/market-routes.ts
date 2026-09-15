@@ -115,6 +115,23 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
 
       await Promise.all(
         uncached.map(async (symbol) => {
+          // Both providers' getBatchQuotes only ever set `result[symbol]`
+          // (possibly to `null`) for a symbol whose chunk/request actually
+          // completed - a symbol whose chunk failed transiently (network/
+          // timeout/rate_limit) is left OUT of `result` entirely, never
+          // set to `null` (see TwelveDataProvider/AlpacaProvider.getBatchQuotes).
+          // Collapsing that distinction via `result[symbol] ?? null` meant a
+          // transient per-chunk failure was cached identically to a
+          // provider-confirmed "no data for this symbol" - negative-caching
+          // a transient fault for the full TTL (violates Decision 15: never
+          // negative-cache a transient failure). Only cache/report success
+          // for a symbol the provider actually resolved; a never-resolved
+          // symbol is reported as an error and left uncached so a retry
+          // within the TTL window can actually succeed.
+          if (!(symbol in result)) {
+            errors.push({ symbol, code: 'PROVIDER_UNAVAILABLE', message: 'Market data provider is currently unavailable.' });
+            return;
+          }
           const quote = result[symbol] ?? null;
           const row = rowBySymbol.get(symbol)!;
           const ttl = row.cache_ttl_seconds ?? config.cacheTtls.quoteSeconds;

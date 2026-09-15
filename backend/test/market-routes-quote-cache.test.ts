@@ -274,4 +274,67 @@ describe('handleQuote / handleQuotes - cache correctness (Task 4)', () => {
     expect(quoteResponse.status).toBe(200);
     expect(batchResponse.status).toBe(200);
   });
+
+  describe('O. a transient per-chunk provider failure does not poison the cache (2026-09-15 review)', () => {
+    // TwelveDataProvider.getBatchQuotes chunks into groups of 8 and only
+    // ever sets `result[symbol]` (possibly to `null`) for a symbol whose
+    // chunk actually completed - a symbol in a chunk that threw (network/
+    // timeout/rate_limit) is left OUT of `result` entirely, distinct from a
+    // provider-confirmed "no data" (`result[symbol] === null`). 9 symbols
+    // forces exactly 2 chunks so one can fail while the other succeeds -
+    // the previous `result[symbol] ?? null` in handleQuotes collapsed that
+    // distinction and cached the transient failure as if it were confirmed
+    // "no data", for the full TTL (violates Decision 15: never negative-
+    // cache a transient failure).
+    const NINE = Array.from({ length: 9 }, (_, i) => ({ ...AAPL, symbol: `SYM${i}`, twelve_data_symbol: `SYM${i}`, alpaca_symbol: `SYM${i}` }));
+
+    function fetchStubOneChunkFails(failingSymbol: string) {
+      return vi.fn(async (url: string) => {
+        const u = new URL(String(url));
+        const requested = (u.searchParams.get('symbol') ?? '').split(',').filter(Boolean);
+        if (requested.includes(failingSymbol)) throw new TypeError('network blip');
+        const multi: Record<string, unknown> = {};
+        for (const s of requested) multi[s] = twelveDataQuote(100);
+        return new Response(JSON.stringify(multi), { status: 200 });
+      });
+    }
+
+    it('the failed symbol is reported as an error, not silently dropped', async () => {
+      vi.stubGlobal('fetch', fetchStubOneChunkFails('SYM8'));
+      const env = makeEnv({ MKR_DB: fakeSymbolsD1(NINE) });
+
+      const response = await handleQuotes(new Request(`https://x/api/mkr/market/quotes?symbols=${NINE.map((r) => r.symbol).join(',')}`), env, 'r1');
+      const body = (await response.json()) as { data: { items: { symbol: string }[]; errors: { symbol: string; code: string }[] } };
+
+      expect(body.data.items).toHaveLength(8); // the 8 symbols in the successful chunk
+      expect(body.data.errors).toEqual([{ symbol: 'SYM8', code: 'PROVIDER_UNAVAILABLE', message: expect.any(String) }]);
+    });
+
+    it('the failed symbol is NOT cached, so a later request retries it instead of being served a poisoned negative-cache entry', async () => {
+      const fetchSpy = fetchStubOneChunkFails('SYM8');
+      vi.stubGlobal('fetch', fetchSpy);
+      const env = makeEnv({ MKR_DB: fakeSymbolsD1(NINE) });
+
+      await handleQuotes(new Request(`https://x/api/mkr/market/quotes?symbols=${NINE.map((r) => r.symbol).join(',')}`), env, 'r1');
+      const cachedAfterFailure = await env.MKR_CACHE.get('quote:v2:SYM8', 'json');
+      expect(cachedAfterFailure).toBeNull(); // nothing written - the old bug wrote {v:null} here
+
+      const callsAfterFirstRequest = fetchSpy.mock.calls.length;
+      await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=SYM8'), env, 'r2');
+
+      expect(fetchSpy.mock.calls.length).toBeGreaterThan(callsAfterFirstRequest); // genuinely retried, not served from cache
+    });
+
+    it('a symbol the provider explicitly resolves to no data IS still cached (confirmed no-data is not a transient failure)', async () => {
+      const fetchSpy = fetchStub({ AAPL: twelveDataQuote(150) }); // MSFT absent from the fixture -> provider responds, just with no MSFT entry
+      vi.stubGlobal('fetch', fetchSpy);
+      const env = makeEnv();
+
+      await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=AAPL,MSFT'), env, 'r1');
+      const cachedMsft = await env.MKR_CACHE.get('quote:v2:MSFT', 'json');
+
+      expect(cachedMsft).toEqual({ v: null }); // confirmed no-data IS cached - unchanged, correct behavior
+      expect(fetchSpy).toHaveBeenCalledTimes(1); // the single successful chunk covering both symbols
+    });
+  });
 });

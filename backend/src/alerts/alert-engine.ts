@@ -1,4 +1,5 @@
 import { getConfig } from '../config/config-service';
+import { logError } from '../logging';
 import { getPushProvider } from '../push/provider-factory';
 import type { Env } from '../types';
 import { fetchActiveDevices, logNotification, persistLastTriggered } from './alert-store';
@@ -54,7 +55,23 @@ export async function evaluateTick(env: Env, symbol: string, price: number): Pro
       if (triggering.has(row.id)) continue;
 
       triggering.add(row.id);
-      void triggerAlert(env, row, price, now).finally(() => triggering.delete(row.id));
+      // 2026-09-15 review: every OTHER call inside triggerAlert is
+      // individually `.catch()`-guarded, but triggerAlert's own body
+      // (specifically its unprotected `getConfig` call) had no such guard
+      // at all - an exception there (e.g. a real KV backend error, not
+      // just a Supabase hiccup) would have become an unhandled promise
+      // rejection off this fire-and-forget call. A device/push-path
+      // failure must never affect tick fan-out (already true - fan-out in
+      // handleUpstreamMessage completes synchronously before this ever
+      // runs) or the alert engine's own future retries (see `.finally`
+      // below), so this is caught and logged the same way evaluateTick's
+      // own outer try/catch already treats every other failure in this
+      // path.
+      void triggerAlert(env, row, price, now)
+        .catch((err) => {
+          logError('alert trigger failed', { alertId: row.id, symbol: row.symbol, message: (err as Error).message });
+        })
+        .finally(() => triggering.delete(row.id));
     }
   } catch {
     // Alert evaluation must never take down tick fan-out to connected
