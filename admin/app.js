@@ -447,8 +447,19 @@ async function renderUserDetail(id) {
       ${
         devices.length === 0
           ? '<p class="muted">None.</p>'
-          : `<table><thead><tr><th>Platform</th><th>Active</th><th>Updated</th></tr></thead><tbody>${devices
-              .map((d) => `<tr><td>${escapeHtml(d.platform)}</td><td>${statusBadge(d.active ? 'healthy' : 'disabled')}</td><td>${new Date(d.updated_at).toLocaleString()}</td></tr>`)
+          : `<table><thead><tr><th>Platform</th><th>Active</th><th>Updated</th><th>Device ID</th><th></th></tr></thead><tbody>${devices
+              .map(
+                (d) => `<tr data-id="${escapeHtml(d.id)}">
+                <td>${escapeHtml(d.platform)}</td>
+                <td>${statusBadge(d.active ? 'healthy' : 'disabled')}</td>
+                <td>${new Date(d.updated_at).toLocaleString()}</td>
+                <td><code>${escapeHtml(d.id)}</code></td>
+                <td>
+                  <button class="secondary device-test-push" data-id="${escapeHtml(d.id)}">Send test push</button>
+                  <span class="save-msg device-test-msg" data-id="${escapeHtml(d.id)}" hidden></span>
+                </td>
+              </tr>`,
+              )
               .join('')}</tbody></table>`
       }
     </div>
@@ -534,6 +545,35 @@ async function renderUserDetail(id) {
       msg.hidden = false;
     }
   });
+
+  for (const btn of content.querySelectorAll('.device-test-push')) {
+    btn.addEventListener('click', async () => {
+      const deviceId = btn.dataset.id;
+      const msg = content.querySelector(`.device-test-msg[data-id="${deviceId}"]`);
+      btn.disabled = true;
+      msg.hidden = false;
+      msg.classList.remove('error');
+      msg.textContent = 'Sending…';
+      try {
+        const result = await api.pushTest({ deviceId, title: 'MKR test notification', body: 'This is a test push sent from the MKR admin console.' });
+        if (result.configured === false) {
+          msg.classList.add('error');
+          msg.textContent = result.reason === 'feature_flag_disabled' ? 'Push is disabled (Feature Flags).' : 'FCM credentials are not configured.';
+        } else if (result.success) {
+          msg.textContent = 'Sent.';
+          setTimeout(() => (msg.hidden = true), 3000);
+        } else {
+          msg.classList.add('error');
+          msg.textContent = result.error || 'Send failed.';
+        }
+      } catch (err) {
+        msg.classList.add('error');
+        msg.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
 }
 
 // ---- Alerts (Phase 2.4 - user-created price alerts, not admin config) --

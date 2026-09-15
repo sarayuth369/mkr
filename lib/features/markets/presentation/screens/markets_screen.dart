@@ -65,7 +65,10 @@ class _MarketsScreenState extends State<MarketsScreen> {
             ),
           ),
           SizedBox(
-            height: 40,
+            // Headroom above ChoiceChip's natural height at 1.0x text scale,
+            // so the app-wide text-scale clamp (see MaterialApp's builder in
+            // app.dart) never pushes a chip past this fixed height.
+            height: 48,
             child: ListView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -73,10 +76,12 @@ class _MarketsScreenState extends State<MarketsScreen> {
                 for (final entry in _categories(l10n))
                   Padding(
                     padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                      label: Text(entry.key),
-                      selected: controller.category == entry.value,
-                      onSelected: (_) => controller.setCategory(entry.value),
+                    child: Center(
+                      child: ChoiceChip(
+                        label: Text(entry.key),
+                        selected: controller.category == entry.value,
+                        onSelected: (_) => controller.setCategory(entry.value),
+                      ),
                     ),
                   ),
               ],

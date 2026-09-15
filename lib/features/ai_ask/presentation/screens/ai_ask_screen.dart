@@ -114,15 +114,20 @@ class _AiAskScreenState extends State<AiAskScreen> {
               ),
             ),
           SizedBox(
-            height: 40,
+            // Headroom above ActionChip's natural height at 1.0x text scale,
+            // so the app-wide text-scale clamp (see MaterialApp's builder in
+            // app.dart) never pushes a chip past this fixed height.
+            height: 48,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12),
               itemCount: suggestedPrompts.length,
               separatorBuilder: (_, __) => const SizedBox(width: 6),
-              itemBuilder: (context, index) => ActionChip(
-                label: Text(suggestedPrompts[index]),
-                onPressed: controller.isResponding ? null : () => _sendPrompt(suggestedPrompts[index]),
+              itemBuilder: (context, index) => Center(
+                child: ActionChip(
+                  label: Text(suggestedPrompts[index]),
+                  onPressed: controller.isResponding ? null : () => _sendPrompt(suggestedPrompts[index]),
+                ),
               ),
             ),
           ),

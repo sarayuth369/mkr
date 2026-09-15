@@ -227,13 +227,17 @@ class _PulseSectionState extends State<_PulseSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          height: 128,
+          // Headroom above MarketCard(featured: true)'s natural content
+          // height at 1.0x text scale (label + price + change row +
+          // sparkline), so the app-wide text-scale clamp (see MaterialApp's
+          // builder in app.dart) never pushes it past this fixed height.
+          height: 144,
           child: widget.controller.pulseState.when(
             loading: () => ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: 3,
               separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (_, __) => const LoadingSkeleton(width: 156, height: 120, borderRadius: 16),
+              itemBuilder: (_, __) => const LoadingSkeleton(width: 156, height: 136, borderRadius: 16),
             ),
             error: (message) => ErrorState(message: message, onRetry: widget.controller.refresh),
             empty: () => const SizedBox.shrink(),
@@ -247,11 +251,13 @@ class _PulseSectionState extends State<_PulseSection> {
                 separatorBuilder: (_, __) => const SizedBox(width: 10),
                 itemBuilder: (context, index) {
                   final quote = quotes[index];
-                  return MarketCard(
-                    quote: quote,
-                    featured: true,
-                    sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 14),
-                    onTap: () => _selectSymbol(quote.symbol),
+                  return Center(
+                    child: MarketCard(
+                      quote: quote,
+                      featured: true,
+                      sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 14),
+                      onTap: () => _selectSymbol(quote.symbol),
+                    ),
                   );
                 },
               );

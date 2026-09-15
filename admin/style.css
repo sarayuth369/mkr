@@ -113,4 +113,5 @@ button.danger:hover { opacity: 0.9; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .toggle-row:last-child { border-bottom: none; }
 .save-msg { font-size: 13px; color: var(--gain); margin-left: 10px; }
+.save-msg.error { color: var(--loss); }
 .warn-text { color: var(--warn); font-size: 13px; }

@@ -136,7 +136,10 @@ class _FilterRow<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 34,
+      // Headroom above ChoiceChip's natural height at 1.0x text scale, so
+      // the app-wide text-scale clamp (see MaterialApp's builder in
+      // app.dart) never pushes a chip past this fixed height.
+      height: 44,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: options.length,
@@ -144,10 +147,12 @@ class _FilterRow<T> extends StatelessWidget {
         itemBuilder: (context, index) {
           final option = options[index];
           final isSelected = option.value == selected;
-          return ChoiceChip(
-            label: Text(option.key),
-            selected: isSelected,
-            onSelected: (_) => onSelected(option.value),
+          return Center(
+            child: ChoiceChip(
+              label: Text(option.key),
+              selected: isSelected,
+              onSelected: (_) => onSelected(option.value),
+            ),
           );
         },
       ),

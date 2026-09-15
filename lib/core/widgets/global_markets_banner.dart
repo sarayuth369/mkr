@@ -61,7 +61,11 @@ class _GlobalMarketsBannerState extends State<GlobalMarketsBanner> {
           ),
           const SizedBox(height: 8),
           SizedBox(
-            height: 54,
+            // Headroom above the headline+subtitle pair's natural height at
+            // 1.0x text scale, so the app-wide text-scale clamp (see
+            // MaterialApp's builder in app.dart) never pushes this past the
+            // fixed height and overflows.
+            height: 64,
             child: PageView.builder(
               controller: _controller,
               itemCount: widget.pages.length,
