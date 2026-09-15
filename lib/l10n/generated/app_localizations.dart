@@ -680,6 +680,12 @@ abstract class AppLocalizations {
   /// **'No holdings yet'**
   String get portfolioEmpty;
 
+  /// No description provided for @portfolioPartialData.
+  ///
+  /// In en, this message translates to:
+  /// **'Some holdings\' prices are temporarily unavailable'**
+  String get portfolioPartialData;
+
   /// No description provided for @premiumTitle.
   ///
   /// In en, this message translates to:

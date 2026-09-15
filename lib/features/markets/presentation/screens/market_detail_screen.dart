@@ -258,6 +258,20 @@ class _ChartSectionState extends State<_ChartSection> {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const LoadingSkeleton(height: 220, width: double.infinity, borderRadius: 12);
               }
+              if (snapshot.hasError) {
+                // A genuine provider/network fault, never indistinguishable
+                // from "no candles yet" (2026-09-15 FINAL FINAL correction
+                // task, Defect 3).
+                return SizedBox(
+                  height: 220,
+                  child: Center(
+                    child: TextButton(
+                      onPressed: () => setState(_subscribeCandles),
+                      child: Text(l10n.chartSeriesUnavailable),
+                    ),
+                  ),
+                );
+              }
               final candles = snapshot.data ?? const <MarketCandle>[];
               if (candles.length < 2) {
                 return SizedBox(

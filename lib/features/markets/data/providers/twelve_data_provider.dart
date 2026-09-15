@@ -134,20 +134,34 @@ class TwelveDataProvider implements MarketDataProvider {
     return TwelveDataParser.parseQuotesBatchResult(json: json, assetClassFor: _assetClassFor);
   }
 
+  /// 2026-09-15 FINAL FINAL correction task (Defect 3): matches [getQuote]'s
+  /// contract exactly — throws [MarketFetchException] for a real fetch
+  /// fault instead of silently swallowing it into `[]`, which was
+  /// previously indistinguishable from a genuine "no history" outcome.
   @override
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async {
+    final http.Response response;
     try {
-      final response = await _http.get(_restUri('/api/mkr/market/candles', {
+      response = await _http.get(_restUri('/api/mkr/market/candles', {
         'symbol': symbol,
         'interval': timeframe.name,
       }));
-      if (response.statusCode != 200) return const [];
-      final json = jsonDecode(response.body);
-      if (json is! Map<String, dynamic>) return const [];
-      return TwelveDataParser.parseCandles(json);
     } catch (_) {
-      return const [];
+      throw const MarketFetchException(MarketFetchFailureKind.offline, 'Could not reach the market data service.');
     }
+    if (response.statusCode != 200) {
+      throw MarketFetchException(MarketFetchFailureKind.providerError, 'Market data request failed (HTTP ${response.statusCode}).');
+    }
+    final dynamic json;
+    try {
+      json = jsonDecode(response.body);
+    } catch (_) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    if (json is! Map<String, dynamic>) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    return TwelveDataParser.parseCandles(json);
   }
 
   @override

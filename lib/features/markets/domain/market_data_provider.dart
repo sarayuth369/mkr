@@ -31,6 +31,13 @@ abstract class MarketDataProvider {
   /// every call site.
   Future<MarketFetchResult> getQuotes(List<String> symbols);
 
+  /// Returns an empty list only for a genuine "no history for this symbol"
+  /// outcome (an unsupported symbol, or a healthy-but-empty backend
+  /// response). Throws [MarketFetchException] for a real fetch fault (HTTP
+  /// non-200, malformed response, a provider error envelope, or a
+  /// connection failure) — 2026-09-15 FINAL FINAL correction task (Defect
+  /// 3): matches [getQuote]'s exact contract, so a real failure fetching
+  /// candle history is never silently indistinguishable from "no history".
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe);
 
   /// Live per-symbol ticks for [symbols] over this provider's single shared

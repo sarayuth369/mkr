@@ -52,6 +52,10 @@ class _RecordingProvider implements MarketDataProvider {
   Timeframe? lastCandlesTimeframe;
   List<MarketCandle> candlesResult = const [];
 
+  /// Thrown by [getHistoricalCandles] when set - simulates a real fetch
+  /// fault (2026-09-15 FINAL FINAL correction task, Defect 3).
+  Object? candlesException;
+
   List<String>? lastWatchQuotesSymbols;
   Stream<MarketQuote> watchQuotesResult = const Stream.empty();
 
@@ -84,6 +88,7 @@ class _RecordingProvider implements MarketDataProvider {
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async {
     lastCandlesSymbol = symbol;
     lastCandlesTimeframe = timeframe;
+    if (candlesException != null) throw candlesException!;
     return candlesResult;
   }
 
@@ -350,6 +355,23 @@ void main() {
       );
       expect(provider.lastCandlesSymbol, isNull);
     });
+
+    test('getPriceSeries also fails honestly (throws) when the PROVIDER itself faults, never a silently-valid empty chart - FINAL FINAL Defect 3', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL']));
+      final provider = _RecordingProvider()..candlesException = const MarketFetchException(MarketFetchFailureKind.providerError, 'HTTP 500');
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      // Catalog-load failure was already covered above; this proves the
+      // OTHER half of Defect 3 - a genuine PROVIDER fault (not just a
+      // catalog outage) fetching history also surfaces honestly instead of
+      // being swallowed into an empty series indistinguishable from "this
+      // symbol just has no history".
+      await expectLater(
+        () => service.getPriceSeries('AAPL', ChartTimeframe.d1),
+        throwsA(isA<MarketFetchException>()),
+      );
+    });
   });
 
   group('2026-09-15 correction task 2 — watchQuotes never bypasses the catalog (Defect C)', () {
@@ -459,6 +481,43 @@ void main() {
 
       expect(provider.lastCandlesSymbol, isNull);
       expect(provider.lastWatchCandlesSymbol, isNull);
+    });
+  });
+
+  group('2026-09-15 FINAL FINAL correction task — watchCandles surfaces a real failure distinctly (Defect 3)', () {
+    test('a genuine provider fault fetching history is surfaced as a stream error, never silently indistinguishable from empty', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL']));
+      final provider = _RecordingProvider()..candlesException = const MarketFetchException(MarketFetchFailureKind.providerError, 'boom');
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      Object? receivedError;
+      final updates = <List<MarketCandle>>[];
+      final sub = service.watchCandles('AAPL', Timeframe.h1).listen(updates.add, onError: (Object e) => receivedError = e);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(receivedError, isA<MarketFetchException>());
+      expect(updates, isEmpty); // never a fabricated/empty success event alongside the error
+    });
+
+    test('a genuinely empty history is delivered as a normal empty event, never an error', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL']));
+      final provider = _RecordingProvider()..candlesResult = const [];
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      Object? receivedError;
+      final updates = <List<MarketCandle>>[];
+      final sub = service.watchCandles('AAPL', Timeframe.h1).listen(updates.add, onError: (Object e) => receivedError = e);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(receivedError, isNull);
+      expect(updates, isNotEmpty);
+      expect(updates.first, isEmpty);
     });
   });
 }

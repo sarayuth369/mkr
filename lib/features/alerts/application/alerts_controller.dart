@@ -101,64 +101,87 @@ class AlertsController extends ChangeNotifier {
   /// `MockNotificationService`) rather than disappearing silently.
   /// Test-only seam: runs one evaluation cycle immediately instead of
   /// waiting for the 30-second [Timer] - production code never calls this.
+  /// Respects the same in-flight guard as the real timer tick (it calls
+  /// [_evaluate] directly, so a concurrent [evaluateNow] call during a
+  /// still-running cycle is skipped exactly like an overlapping timer tick
+  /// would be).
   @visibleForTesting
   Future<void> evaluateNow() => _evaluate();
 
+  /// 2026-09-15 FINAL FINAL correction task (Defect 2): in-flight guard -
+  /// at most one [_evaluate] body may run at a time. Without this, a cycle
+  /// that takes longer than the 30s tick interval (a slow market-service
+  /// fetch, a slow calendar fetch) could overlap with the next timer tick:
+  /// two concurrent batch fetches, two concurrent [AlertEvaluator.evaluate]
+  /// passes against possibly-different quote snapshots, and a real race on
+  /// `_persist`/notifications despite the 5-minute cooldown (each overlapping
+  /// call captures its own `_alerts` snapshot before the other's write
+  /// lands). A timer tick that arrives while a cycle is still running is
+  /// simply skipped/coalesced - the next tick 30s later evaluates fresh
+  /// state instead.
+  bool _evaluating = false;
+
   Future<void> _evaluate() async {
-    if (_alerts.isEmpty) return;
-
-    final priceSymbols = {
-      for (final a in _alerts)
-        if (a.isEnabled && (a.type == AlertType.price || a.type == AlertType.percentage)) a.symbol,
-    }.toList();
-
-    var quotes = const <String, MarketQuote>{};
-    if (priceSymbols.isNotEmpty) {
-      final quotesResult = await _marketService.getQuotesFor(priceSymbols);
-      if (quotesResult is MarketFetchFailure) {
-        debugPrint('[MKR alerts] market data unavailable this cycle (${quotesResult.message}) - preserving last known alert state');
-      }
-      quotes = {for (final q in quotesResult.quotes) q.symbol: q};
-    }
-
-    List<String> eventTitles = const [];
+    if (_evaluating) return;
+    _evaluating = true;
     try {
-      final result = await _calendarService.getEvents();
-      final today = DateTime.now();
-      eventTitles = result.events
-          .where((e) =>
-              e.dateTime.year == today.year &&
-              e.dateTime.month == today.month &&
-              e.dateTime.day == today.day)
-          .map((e) => e.title)
-          .toList();
-    } catch (_) {
-      eventTitles = const [];
-    }
+      if (_alerts.isEmpty) return;
 
-    final triggeredIds = AlertEvaluator.evaluate(
-      alerts: _alerts,
-      quotes: quotes,
-      todaysEventTitles: eventTitles,
-    );
+      final priceSymbols = {
+        for (final a in _alerts)
+          if (a.isEnabled && (a.type == AlertType.price || a.type == AlertType.percentage)) a.symbol,
+      }.toList();
 
-    if (triggeredIds.isEmpty) return;
-
-    final now = DateTime.now();
-    final updated = <Alert>[];
-    for (final alert in _alerts) {
-      if (triggeredIds.contains(alert.id) &&
-          (alert.lastTriggeredAt == null || now.difference(alert.lastTriggeredAt!).inMinutes > 5)) {
-        await _notificationService.notify(
-          title: 'MKR Alert',
-          body: alert.summary,
-        );
-        updated.add(alert.copyWith(lastTriggeredAt: now));
-      } else {
-        updated.add(alert);
+      var quotes = const <String, MarketQuote>{};
+      if (priceSymbols.isNotEmpty) {
+        final quotesResult = await _marketService.getQuotesFor(priceSymbols);
+        if (quotesResult is MarketFetchFailure) {
+          debugPrint('[MKR alerts] market data unavailable this cycle (${quotesResult.message}) - preserving last known alert state');
+        }
+        quotes = {for (final q in quotesResult.quotes) q.symbol: q};
       }
+
+      List<String> eventTitles = const [];
+      try {
+        final result = await _calendarService.getEvents();
+        final today = DateTime.now();
+        eventTitles = result.events
+            .where((e) =>
+                e.dateTime.year == today.year &&
+                e.dateTime.month == today.month &&
+                e.dateTime.day == today.day)
+            .map((e) => e.title)
+            .toList();
+      } catch (_) {
+        eventTitles = const [];
+      }
+
+      final triggeredIds = AlertEvaluator.evaluate(
+        alerts: _alerts,
+        quotes: quotes,
+        todaysEventTitles: eventTitles,
+      );
+
+      if (triggeredIds.isEmpty) return;
+
+      final now = DateTime.now();
+      final updated = <Alert>[];
+      for (final alert in _alerts) {
+        if (triggeredIds.contains(alert.id) &&
+            (alert.lastTriggeredAt == null || now.difference(alert.lastTriggeredAt!).inMinutes > 5)) {
+          await _notificationService.notify(
+            title: 'MKR Alert',
+            body: alert.summary,
+          );
+          updated.add(alert.copyWith(lastTriggeredAt: now));
+        } else {
+          updated.add(alert);
+        }
+      }
+      await _persist(updated);
+    } finally {
+      _evaluating = false;
     }
-    await _persist(updated);
   }
 
   @override

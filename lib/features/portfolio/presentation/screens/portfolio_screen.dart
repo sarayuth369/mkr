@@ -76,6 +76,10 @@ class _PortfolioBody extends StatelessWidget {
         success: (summary, isStale, lastUpdated) => ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            // Non-blocking degraded indicator, never hiding the valid
+            // cost-basis-priced data underneath (2026-09-15 FINAL FINAL
+            // correction task, Defect 1).
+            if (controller.state.isPartial) _PartialDataBanner(message: l10n.portfolioPartialData),
             _SummaryCard(summary: summary),
             const SizedBox(height: 20),
             if (summary.lines.isNotEmpty) _AllocationChart(summary: summary),
@@ -107,6 +111,39 @@ class _PortfolioBody extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PartialDataBanner extends StatelessWidget {
+  const _PartialDataBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 16, color: theme.colorScheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onErrorContainer),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }

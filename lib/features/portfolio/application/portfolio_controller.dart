@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_state.dart';
 import '../../../domain/market_quote.dart';
+import '../../markets/domain/market_fetch_result.dart';
 import '../../markets/domain/market_service.dart';
 import '../domain/portfolio_calculations.dart';
 import '../domain/portfolio_holding.dart';
@@ -37,19 +38,31 @@ class PortfolioController extends ChangeNotifier {
   /// 2026-09-15 FINAL correction task (point 2): displayed valuation/P&L now
   /// comes from one batched [MarketService.getQuotesFor] call for the held
   /// symbols - never `MockMarketCatalog`. [MarketService.getQuotesFor] is
-  /// already catalog-authorized and never throws (a real fetch/catalog
-  /// fault becomes an empty quote list, not an exception), so a holding
-  /// whose quote didn't resolve is never fabricated:
-  /// [PortfolioCalculations.summarize] already prices a symbol missing from
-  /// the quotes map at cost basis (0 P&L) rather than inventing a value, so
-  /// it stays visible with an honest "no live data" outcome instead of
-  /// vanishing or showing an invented gain/loss. Demo mode is unaffected -
-  /// [MockMarketService]'s [getQuotesFor] already returns
-  /// `MockMarketCatalog`-backed quotes for every seeded symbol, exactly
-  /// matching prior demo behavior through the same call.
+  /// already catalog-authorized, so a holding whose quote didn't resolve
+  /// individually is never fabricated: [PortfolioCalculations.summarize]
+  /// already prices a symbol missing from the quotes map at cost basis (0
+  /// P&L) rather than inventing a value.
   ///
   /// Only called from [_load]/[addHolding]/[removeHolding] - never from a
   /// widget `build`, so this never turns into a request storm on rebuild.
+  ///
+  /// 2026-09-15 FINAL FINAL correction task (Defect 1): the [MarketFetchResult]
+  /// itself is now mapped explicitly rather than blindly always building
+  /// [ApiState.success] from `result.quotes` - a provider-wide
+  /// [MarketFetchFailure] must never look like a normal successful
+  /// valuation just because an empty quote map still prices every holding
+  /// at cost basis:
+  /// - [MarketFetchSuccess]: every held symbol resolved, fully live -
+  ///   `isPartial: false`.
+  /// - [MarketFetchPartial]: some resolved, the rest honestly fall back to
+  ///   cost basis inside [PortfolioCalculations] - `isPartial: true` flags
+  ///   the screen as degraded without hiding the valid data that DID load.
+  /// - [MarketFetchEmpty]: no symbol resolved at all (e.g. none of the held
+  ///   symbols are currently catalog-enabled) - holdings are still real and
+  ///   shown at cost basis, but this is not a live fetch either, so it is
+  ///   flagged the same way as a partial result rather than silently
+  ///   looking identical to a fully-live one.
+  /// - [MarketFetchFailure]: [ApiState.error] - never [ApiState.success].
   Future<void> _recompute() async {
     if (_holdings.isEmpty) {
       _state = const ApiState.empty();
@@ -59,11 +72,20 @@ class PortfolioController extends ChangeNotifier {
 
     final symbols = _holdings.map((h) => h.symbol).toSet().toList();
     final result = await _marketService.getQuotesFor(symbols);
+
+    if (result is MarketFetchFailure) {
+      _state = ApiState.error(result.message);
+      notifyListeners();
+      return;
+    }
+
     final quotes = <String, MarketQuote>{
       for (final q in result.quotes) q.symbol: q,
     };
-
-    _state = ApiState.success(PortfolioCalculations.summarize(_holdings, quotes));
+    _state = ApiState.success(
+      PortfolioCalculations.summarize(_holdings, quotes),
+      isPartial: result is! MarketFetchSuccess,
+    );
     notifyListeners();
   }
 

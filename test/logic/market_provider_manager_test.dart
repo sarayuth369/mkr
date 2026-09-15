@@ -75,8 +75,22 @@ class FakeProvider implements MarketDataProvider {
     return quotes.isEmpty ? const MarketFetchEmpty() : MarketFetchSuccess(quotes);
   }
 
+  /// Overrides the returned candle list when set.
+  List<MarketCandle>? candlesResult;
+
+  /// Thrown by [getHistoricalCandles] when set - simulates a real fetch
+  /// fault (HTTP non-200, malformed response, connection failure), same
+  /// convention as [quoteException] (2026-09-15 FINAL FINAL correction
+  /// task, Defect 3).
+  MarketFetchException? candlesException;
+  int getHistoricalCandlesCalls = 0;
+
   @override
-  Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async => const [];
+  Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async {
+    getHistoricalCandlesCalls++;
+    if (candlesException != null) throw candlesException!;
+    return candlesResult ?? const [];
+  }
 
   @override
   Future<MarketSessionStatus> getMarketStatus(String market) async => MarketSessionStatus.open;
@@ -342,6 +356,75 @@ void main() {
       ]);
 
       expect(primary.getQuotesCalls, 2);
+    });
+  });
+
+  group('2026-09-15 FINAL FINAL correction task — getHistoricalCandles failure semantics (Defect 3)', () {
+    test('no active provider at all throws, never silently returns []', () async {
+      final primary = FakeProvider('twelveData', healthy: false);
+      final manager = MarketProviderManager(primary: primary);
+
+      await expectLater(
+        manager.getHistoricalCandles('AAPL', Timeframe.h1),
+        throwsA(isA<MarketFetchException>()),
+      );
+    });
+
+    test('a thrown MarketFetchException from the provider surfaces once there is no fallback, never a silent []', () async {
+      final primary = FakeProvider('twelveData', healthy: true)
+        ..candlesException = const MarketFetchException(MarketFetchFailureKind.providerError, 'HTTP 500');
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      await expectLater(
+        manager.getHistoricalCandles('AAPL', Timeframe.h1),
+        throwsA(isA<MarketFetchException>()),
+      );
+    });
+
+    test('a genuinely empty candle list from a still-healthy provider is NOT treated as a failure', () async {
+      final primary = FakeProvider('twelveData', healthy: true)..candlesResult = const [];
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      final result = await manager.getHistoricalCandles('AAPL', Timeframe.h1);
+
+      expect(result, isEmpty);
+      expect(manager.activeProvider, primary); // stayed healthy - no failover just because history was empty
+    });
+
+    test('a real candle fetch failure fails over to a healthy secondary and returns its data', () async {
+      final primary = FakeProvider('twelveData', healthy: true)
+        ..candlesException = const MarketFetchException(MarketFetchFailureKind.providerError, 'boom');
+      final secondary = FakeProvider('alpaca', healthy: true)
+        ..candlesResult = [MarketCandle(time: DateTime(2026), open: 1, high: 1, low: 1, close: 1)];
+      final manager = MarketProviderManager(primary: primary, secondary: secondary, secondaryEnabled: true);
+      await manager.connect();
+
+      // Primary goes unhealthy between connect() and the next call, same
+      // pattern as the existing getQuote failover test above.
+      primary.healthy = false;
+      final result = await manager.getHistoricalCandles('AAPL', Timeframe.h1);
+
+      expect(result, hasLength(1));
+      expect(manager.activeProvider, secondary);
+    });
+
+    test('a real fault is never cached as a false empty result - a retry after recovery gets real data', () async {
+      final primary = FakeProvider('twelveData', healthy: true)
+        ..candlesException = const MarketFetchException(MarketFetchFailureKind.offline, 'down');
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      await expectLater(manager.getHistoricalCandles('AAPL', Timeframe.h1), throwsA(isA<MarketFetchException>()));
+
+      // If the failed fetch had been cached as an empty result, this would
+      // incorrectly return [] instead of trying the provider again.
+      primary.candlesException = null;
+      primary.candlesResult = [MarketCandle(time: DateTime(2026), open: 1, high: 1, low: 1, close: 1)];
+      final result = await manager.getHistoricalCandles('AAPL', Timeframe.h1);
+
+      expect(result, hasLength(1));
     });
   });
 }

@@ -102,6 +102,7 @@
   "portfolioQuantity": "Quantity",
   "portfolioAvgPrice": "Average Price",
   "portfolioEmpty": "No holdings yet",
+  "portfolioPartialData": "Some holdings' prices are temporarily unavailable",
   "premiumTitle": "Premium",
   "premiumFree": "Free",
   "premiumPro": "Pro",

@@ -302,6 +302,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get portfolioEmpty => 'No holdings yet';
 
   @override
+  String get portfolioPartialData =>
+      'Some holdings\' prices are temporarily unavailable';
+
+  @override
   String get premiumTitle => 'Premium';
 
   @override

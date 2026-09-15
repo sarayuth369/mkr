@@ -240,7 +240,18 @@ class ProviderBackedMarketService implements MarketService {
         final enabled = catalog.any((s) => s.symbol == symbol);
         if (!enabled) return;
 
-        history = await _manager.getHistoricalCandles(symbol, timeframe);
+        try {
+          history = await _manager.getHistoricalCandles(symbol, timeframe);
+        } catch (e) {
+          // 2026-09-15 FINAL FINAL correction task (Defect 3): a genuine
+          // provider/network fault fetching history must not be silently
+          // indistinguishable from "no candles yet" - surfaced as a stream
+          // error so the UI can tell the two apart, instead of just never
+          // emitting (which [MarketDetailScreen]'s candle view would have
+          // shown identically to "no candle data available").
+          if (!controller.isClosed) controller.addError(e);
+          return;
+        }
         if (!controller.isClosed) controller.add(history);
         subscription = _manager.watchCandles(symbol, timeframe).listen((tick) {
           history = _mergeTick(history, tick, timeframe);

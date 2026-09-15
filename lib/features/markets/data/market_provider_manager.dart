@@ -249,18 +249,44 @@ class MarketProviderManager {
     return retried;
   }
 
+  /// 2026-09-15 FINAL FINAL correction task (Defect 3): matches [getQuote]'s
+  /// failure discipline exactly — a real fetch fault (from either provider,
+  /// or "no provider connected at all") is no longer silently collapsed
+  /// into an empty list. Empty stays reserved for a genuine "no history for
+  /// this symbol" outcome.
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) {
-    return _candleCache.getOrFetch(symbol, timeframe, () async {
-      await ensureConnected();
-      final active = _active;
-      if (active == null) return const [];
-      final candles = await active.getHistoricalCandles(symbol, timeframe);
-      if (candles.isNotEmpty) return candles;
-      await _handleFailure(active);
-      final fallback = _active;
-      if (fallback == null || identical(fallback, active)) return const [];
-      return fallback.getHistoricalCandles(symbol, timeframe);
-    });
+    return _candleCache.getOrFetch(symbol, timeframe, () => _getHistoricalCandlesUncached(symbol, timeframe));
+  }
+
+  Future<List<MarketCandle>> _getHistoricalCandlesUncached(String symbol, Timeframe timeframe) async {
+    await ensureConnected();
+    final active = _active;
+    if (active == null) {
+      throw const MarketFetchException(MarketFetchFailureKind.offline, 'No market data provider is currently available.');
+    }
+
+    List<MarketCandle> candles;
+    Object? primaryError;
+    try {
+      candles = await active.getHistoricalCandles(symbol, timeframe);
+    } catch (e) {
+      candles = const [];
+      primaryError = e;
+    }
+    if (candles.isNotEmpty) return candles;
+
+    await _handleFailure(active);
+    final fallback = _active;
+    if (fallback == null || identical(fallback, active)) {
+      if (primaryError != null) throw primaryError; // nothing left to try - surface the real fault
+      return const []; // primary genuinely had no history, no fallback available
+    }
+    try {
+      final retried = await fallback.getHistoricalCandles(symbol, timeframe);
+      return retried;
+    } catch (e) {
+      throw primaryError ?? e; // prefer surfacing the original fault if there was one
+    }
   }
 
   Future<MarketSessionStatus> getMarketStatus(String market) async {

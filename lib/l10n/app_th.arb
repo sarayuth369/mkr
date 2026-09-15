@@ -102,6 +102,7 @@
   "portfolioQuantity": "จำนวน",
   "portfolioAvgPrice": "ราคาเฉลี่ย",
   "portfolioEmpty": "ยังไม่มีการถือครอง",
+  "portfolioPartialData": "บางราคาที่ถือครองไม่พร้อมใช้งานชั่วคราว",
   "premiumTitle": "พรีเมียม",
   "premiumFree": "ฟรี",
   "premiumPro": "โปร",

@@ -302,6 +302,9 @@ class AppLocalizationsTh extends AppLocalizations {
   String get portfolioEmpty => 'ยังไม่มีการถือครอง';
 
   @override
+  String get portfolioPartialData => 'บางราคาที่ถือครองไม่พร้อมใช้งานชั่วคราว';
+
+  @override
   String get premiumTitle => 'พรีเมียม';
 
   @override

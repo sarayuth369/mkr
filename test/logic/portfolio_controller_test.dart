@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mkr/core/network/api_state.dart';
 import 'package:mkr/core/widgets/price_chart.dart';
 import 'package:mkr/domain/asset_class.dart';
 import 'package:mkr/domain/market_candle.dart';
@@ -8,6 +9,7 @@ import 'package:mkr/features/markets/domain/market_fetch_result.dart';
 import 'package:mkr/features/markets/domain/market_service.dart';
 import 'package:mkr/features/markets/domain/timeframe.dart';
 import 'package:mkr/features/portfolio/application/portfolio_controller.dart';
+import 'package:mkr/features/portfolio/domain/portfolio_calculations.dart';
 import 'package:mkr/features/portfolio/domain/portfolio_holding.dart';
 import 'package:mkr/features/portfolio/domain/portfolio_repository.dart';
 
@@ -136,17 +138,50 @@ void main() {
       expect(line.totalPL, 0);
     });
 
-    test('market-service failure never fabricates - every holding degrades honestly to cost basis', () async {
+    test('a provider-wide market-service failure is ApiState.error, never a successful-looking valuation - FINAL FINAL Defect 1', () async {
       final repo = _FakeRepository([const PortfolioHolding(symbol: 'AAPL', quantity: 10, avgPrice: 100)]);
       final service = _FakeMarketService(quotesResult: const MarketFetchFailure(MarketFetchFailureKind.offline, 'down'));
       final controller = PortfolioController(repo, service);
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
-      final summary = controller.state.dataOrNull;
-      expect(summary, isNotNull);
-      expect(summary!.lines.single.currentPrice, 100);
-      expect(summary.lines.single.totalPL, 0);
+      // 2026-09-15 FINAL FINAL correction task: a provider-wide fetch
+      // failure must never look like a normal successful portfolio
+      // valuation just because an empty quote map still prices every
+      // holding at cost basis - it must surface as an honest error.
+      expect(controller.state, isA<ApiError<PortfolioSummary>>());
+      expect((controller.state as ApiError<PortfolioSummary>).message, contains('down'));
+      expect(controller.state.dataOrNull, isNull);
+    });
+
+    test('MarketFetchEmpty (no held symbol currently resolves) is a degraded/partial success, never a plain full-live one', () async {
+      final repo = _FakeRepository([const PortfolioHolding(symbol: 'AAPL', quantity: 10, avgPrice: 100)]);
+      final service = _FakeMarketService(quotesResult: const MarketFetchEmpty());
+      final controller = PortfolioController(repo, service);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state, isA<ApiSuccess<PortfolioSummary>>());
+      expect(controller.state.isPartial, isTrue); // flagged as degraded, not silently "fully live"
+      expect(controller.state.dataOrNull!.lines.single.currentPrice, 100); // still honest cost-basis fallback
+    });
+
+    test('MarketFetchPartial is a degraded/partial success; MarketFetchSuccess is fully live (not flagged)', () async {
+      final repo = _FakeRepository([
+        const PortfolioHolding(symbol: 'AAPL', quantity: 10, avgPrice: 100),
+        const PortfolioHolding(symbol: 'BTC', quantity: 1, avgPrice: 20000),
+      ]);
+      final partialService = _FakeMarketService(quotesResult: MarketFetchPartial([_quote('AAPL', 150)], ['BTC']));
+      final partialController = PortfolioController(repo, partialService);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(partialController.state.isPartial, isTrue);
+
+      final successService = _FakeMarketService(quotesResult: MarketFetchSuccess([_quote('AAPL', 150), _quote('BTC', 25000)]));
+      final successController = PortfolioController(repo, successService);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(successController.state.isPartial, isFalse);
     });
 
     test('adding a holding refreshes the valuation via one new batch call - never a request storm', () async {

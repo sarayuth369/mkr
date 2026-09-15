@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mkr/core/widgets/price_chart.dart';
 import 'package:mkr/domain/asset_class.dart';
@@ -59,6 +61,11 @@ class _FakeMarketService implements MarketService {
   List<String>? lastRequestedSymbols;
   int getQuotesForCallCount = 0;
 
+  /// When set, [getQuotesFor] suspends on this until it completes - lets a
+  /// test hold one evaluation cycle "in flight" to exercise the in-flight
+  /// guard (2026-09-15 FINAL FINAL correction task, Defect 2).
+  Completer<void>? blockGetQuotesFor;
+
   @override
   MarketDataMode mode = MarketDataMode.live;
 
@@ -75,6 +82,8 @@ class _FakeMarketService implements MarketService {
   Future<MarketFetchResult> getQuotesFor(List<String> symbols) async {
     lastRequestedSymbols = symbols;
     getQuotesForCallCount++;
+    final blocker = blockGetQuotesFor;
+    if (blocker != null) await blocker.future;
     return quotesResult;
   }
 
@@ -255,6 +264,64 @@ void main() {
 
       await controller.evaluateNow();
       expect(notifications.notified, hasLength(1)); // still just one - cooldown honored
+
+      controller.dispose();
+    });
+
+    test('a concurrent evaluation while one is already in flight is skipped/coalesced - only one market fetch, no duplicate notification - FINAL FINAL Defect 2', () async {
+      final repo = _FakeAlertRepository([Alert.price(id: '1', symbol: 'AAPL', target: 200, direction: PriceDirection.above)]);
+      final notifications = _FakeNotificationService();
+      final blocker = Completer<void>();
+      final service = _FakeMarketService(quotesResult: MarketFetchSuccess([_quote('AAPL', 250)]))..blockGetQuotesFor = blocker;
+      final controller = AlertsController(
+        repository: repo,
+        notificationService: notifications,
+        calendarService: MockEconomicCalendarService(),
+        marketService: service,
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      // Simulates a slow evaluation cycle (e.g. a slow market-service
+      // fetch) still running when the next tick/call arrives.
+      final first = controller.evaluateNow();
+      await Future<void>.delayed(Duration.zero);
+      final second = controller.evaluateNow(); // must be skipped, not start a second fetch
+
+      expect(service.getQuotesForCallCount, 1); // the second call never even reached getQuotesFor
+
+      blocker.complete();
+      await first;
+      await second;
+
+      expect(service.getQuotesForCallCount, 1); // still exactly one fetch for the whole overlap window
+      expect(notifications.notified, hasLength(1)); // no duplicate notification from the overlap
+
+      controller.dispose();
+    });
+
+    test('after an in-flight evaluation finishes, the next evaluateNow runs normally (guard releases correctly)', () async {
+      final repo = _FakeAlertRepository([Alert.price(id: '1', symbol: 'AAPL', target: 200, direction: PriceDirection.above)]);
+      final notifications = _FakeNotificationService();
+      final service = _FakeMarketService(quotesResult: MarketFetchSuccess([_quote('AAPL', 250)]));
+      final controller = AlertsController(
+        repository: repo,
+        notificationService: notifications,
+        calendarService: MockEconomicCalendarService(),
+        marketService: service,
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      await controller.evaluateNow();
+      expect(service.getQuotesForCallCount, 1);
+
+      // A brand new alert, well past the 5-minute cooldown window (there is
+      // none yet for this alert) - a second, sequential (not overlapping)
+      // evaluateNow must still run a fresh fetch, proving the guard isn't
+      // stuck "on" after the first cycle completes.
+      await controller.evaluateNow();
+      expect(service.getQuotesForCallCount, 2);
 
       controller.dispose();
     });

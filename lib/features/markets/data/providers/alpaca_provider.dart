@@ -124,24 +124,39 @@ class AlpacaProvider implements MarketDataProvider {
     return MarketFetchSuccess(quotes);
   }
 
+  /// Standby-only (see [activated]): `!activated` and "no Alpaca mapping"
+  /// both stay a plain `[]` — genuinely "no data from this provider", not a
+  /// fetch fault. A real HTTP/network fault once activated DOES throw
+  /// [MarketFetchException] (2026-09-15 FINAL FINAL correction task, Defect
+  /// 3), matching [getQuote]'s contract exactly.
   @override
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async {
     if (!activated) return const [];
     final providerSymbol = _symbolMapper.toProviderSymbol(symbol, MarketDataProviderId.alpaca);
     if (providerSymbol == null) return const [];
 
+    final http.Response response;
     try {
-      final response = await _http.get(_restUri('/api/mkr/alpaca/bars', {
+      response = await _http.get(_restUri('/api/mkr/alpaca/bars', {
         'symbol': providerSymbol,
         'timeframe': timeframe.providerInterval,
       }));
-      if (response.statusCode != 200) return const [];
-      final json = jsonDecode(response.body);
-      if (json is! Map<String, dynamic>) return const [];
-      return AlpacaParser.parseBars(json);
     } catch (_) {
-      return const [];
+      throw const MarketFetchException(MarketFetchFailureKind.offline, 'Could not reach the market data service.');
     }
+    if (response.statusCode != 200) {
+      throw MarketFetchException(MarketFetchFailureKind.providerError, 'Market data request failed (HTTP ${response.statusCode}).');
+    }
+    final dynamic json;
+    try {
+      json = jsonDecode(response.body);
+    } catch (_) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    if (json is! Map<String, dynamic>) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    return AlpacaParser.parseBars(json);
   }
 
   @override
