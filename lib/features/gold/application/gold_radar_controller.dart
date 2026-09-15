@@ -62,7 +62,15 @@ class GoldRadarController extends ChangeNotifier {
         _state = ApiState.success(
           GoldRadarData.derive(gold: gold, dxy: dxy, us10y: us10y, oil: oil),
         );
-        _series = await _marketService.getPriceSeries('XAU/USD', ChartTimeframe.d1);
+        // Fetched separately from the quotes above: a rare series-only
+        // failure (e.g. a catalog blip between calls) must not discard the
+        // gold/dxy/us10y/oil data that already resolved successfully - the
+        // chart simply stays omitted rather than the whole screen erroring.
+        try {
+          _series = await _marketService.getPriceSeries('XAU/USD', ChartTimeframe.d1);
+        } catch (_) {
+          _series = const [];
+        }
       }
     } catch (e) {
       _state = ApiState.error(e.toString());

@@ -855,6 +855,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chartCandleEmpty => 'No candle data available for this timeframe';
 
   @override
+  String get chartSeriesUnavailable => 'Chart data unavailable right now';
+
+  @override
   String get notificationHistoryTitle => 'Notifications';
 
   @override

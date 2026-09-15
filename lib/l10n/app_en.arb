@@ -309,6 +309,7 @@
   "chartModeCandle": "Candle",
   "chartCandleCaption": "Pinch to zoom, drag to pan, tap a candle to inspect OHLC",
   "chartCandleEmpty": "No candle data available for this timeframe",
+  "chartSeriesUnavailable": "Chart data unavailable right now",
   "notificationHistoryTitle": "Notifications",
   "notificationHistoryEmpty": "No notifications yet",
   "notificationHistorySignInRequired": "Sign in to see your notification history",

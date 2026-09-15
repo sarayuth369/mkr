@@ -33,6 +33,11 @@ abstract class MarketService {
   /// already wraps this in try/catch and converts it to `ApiState.error`.
   Future<MarketQuote?> getQuote(String symbol);
 
+  /// Returns an empty list for a genuine "no history for this symbol"
+  /// outcome (including a disabled/unknown symbol in real mode). Throws
+  /// [MarketFetchException] for a real fetch/catalog fault — same contract
+  /// as [getQuote] — so a caller with state to report a real failure with
+  /// can distinguish it from an honestly empty series.
   Future<List<double>> getPriceSeries(String symbol, ChartTimeframe timeframe);
 
   Future<MarketFetchResult> search(String query);

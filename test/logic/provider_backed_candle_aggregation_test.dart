@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:mkr/domain/market_candle.dart';
 import 'package:mkr/domain/market_quote.dart';
 import 'package:mkr/domain/market_session_status.dart';
@@ -10,6 +13,28 @@ import 'package:mkr/features/markets/data/provider_backed_market_service.dart';
 import 'package:mkr/features/markets/domain/market_data_provider.dart';
 import 'package:mkr/features/markets/domain/market_fetch_result.dart';
 import 'package:mkr/features/markets/domain/timeframe.dart';
+
+/// A stub catalog HTTP client returning exactly [enabledSymbols] as the
+/// enabled backend catalog - watchCandles is now catalog-authorized
+/// (2026-09-15 FINAL correction task, point 1), so every test below that
+/// exercises the candle merge/aggregation logic needs its symbol enabled.
+MarketCatalogRepository _catalogFor(List<String> enabledSymbols) {
+  return MarketCatalogRepository(
+    backendBaseUrl: 'https://backend.example.com',
+    httpClient: MockClient((request) async {
+      return http.Response(
+        jsonEncode({
+          'success': true,
+          'data': [
+            for (final symbol in enabledSymbols) {'symbol': symbol, 'displayName': symbol, 'category': 'us_stock'},
+          ],
+        }),
+        200,
+        headers: const {'content-type': 'application/json'},
+      );
+    }),
+  );
+}
 
 class _FakeCandleProvider implements MarketDataProvider {
   _FakeCandleProvider(this.history);
@@ -59,10 +84,11 @@ void main() {
     final seed = [_candle(bucketStart, 100)];
     final provider = _FakeCandleProvider(seed);
     final manager = MarketProviderManager(primary: provider);
-    final service = ProviderBackedMarketService(manager, MarketCatalogRepository(backendBaseUrl: 'https://unused.invalid'));
+    final service = ProviderBackedMarketService(manager, _catalogFor(['AAPL']));
 
     final updates = <List<MarketCandle>>[];
     final sub = service.watchCandles('AAPL', Timeframe.h1).listen(updates.add);
+    await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
     // Same hour bucket as the seed candle: must merge, not append.

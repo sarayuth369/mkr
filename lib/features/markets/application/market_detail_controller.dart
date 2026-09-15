@@ -43,6 +43,14 @@ class MarketDetailController extends ChangeNotifier {
   List<double> _series = const [];
   List<double> get series => _series;
 
+  /// True only when the last [loadSeries] failed because of a genuine
+  /// catalog/provider fault - never for "this symbol has no history", which
+  /// stays a plain empty [series]. Lets the screen tell the two apart
+  /// instead of treating a real failure as a valid empty chart (2026-09-15
+  /// FINAL correction task, point 4).
+  bool _seriesUnavailable = false;
+  bool get seriesUnavailable => _seriesUnavailable;
+
   ApiState<AIInsight> _aiState = const ApiState.loading();
   ApiState<AIInsight> get aiState => _aiState;
 
@@ -117,7 +125,13 @@ class MarketDetailController extends ChangeNotifier {
 
   Future<void> loadSeries(ChartTimeframe timeframe) async {
     _timeframe = timeframe;
-    _series = await _marketService.getPriceSeries(symbol, timeframe);
+    try {
+      _series = await _marketService.getPriceSeries(symbol, timeframe);
+      _seriesUnavailable = false;
+    } catch (_) {
+      _series = const [];
+      _seriesUnavailable = true;
+    }
     notifyListeners();
   }
 

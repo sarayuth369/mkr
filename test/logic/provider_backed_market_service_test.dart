@@ -55,6 +55,10 @@ class _RecordingProvider implements MarketDataProvider {
   List<String>? lastWatchQuotesSymbols;
   Stream<MarketQuote> watchQuotesResult = const Stream.empty();
 
+  String? lastWatchCandlesSymbol;
+  Timeframe? lastWatchCandlesTimeframe;
+  Stream<MarketCandle> watchCandlesResult = const Stream.empty();
+
   @override
   Future<bool> healthCheck() async => true;
 
@@ -93,7 +97,11 @@ class _RecordingProvider implements MarketDataProvider {
   }
 
   @override
-  Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) => const Stream.empty();
+  Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) {
+    lastWatchCandlesSymbol = symbol;
+    lastWatchCandlesTimeframe = timeframe;
+    return watchCandlesResult;
+  }
 }
 
 void main() {
@@ -327,15 +335,19 @@ void main() {
       expect(series, [1.5, 2.0]);
     });
 
-    test('getPriceSeries fails honestly (empty, never mock) when the catalog cannot be loaded - regression 4', () async {
+    test('getPriceSeries fails honestly (throws, never a silently-valid empty chart) when the catalog cannot be loaded - regression 4 / FINAL point 4', () async {
       final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: MockClient((r) async => _jsonResponse({'error': 'down'}, status: 500)));
       final provider = _RecordingProvider();
       final manager = MarketProviderManager(primary: provider);
       final service = ProviderBackedMarketService(manager, catalog);
 
-      final series = await service.getPriceSeries('AAPL', ChartTimeframe.d1);
-
-      expect(series, isEmpty);
+      // 2026-09-15 FINAL correction task: a catalog LOAD failure must not
+      // be indistinguishable from a genuine "no history for this symbol"
+      // empty list - it now throws, exactly like getQuote already does.
+      await expectLater(
+        () => service.getPriceSeries('AAPL', ChartTimeframe.d1),
+        throwsA(isA<MarketFetchException>().having((e) => e.kind, 'kind', MarketFetchFailureKind.offline)),
+      );
       expect(provider.lastCandlesSymbol, isNull);
     });
   });
@@ -381,6 +393,72 @@ void main() {
       await sub.cancel();
 
       expect(provider.lastWatchQuotesSymbols, isNull);
+    });
+  });
+
+  group('2026-09-15 FINAL correction task — watchCandles never bypasses the catalog (point 1)', () {
+    test('watchCandles(disabled/unknown) never fetches history or subscribes upstream', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL'])); // 'DXY' not enabled
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final sub = service.watchCandles('DXY', Timeframe.h1).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(provider.lastCandlesSymbol, isNull); // no historical fetch
+      expect(provider.lastWatchCandlesSymbol, isNull); // no live subscription
+    });
+
+    test('watchCandles(unknown) never fetches history or subscribes upstream', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL']));
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final sub = service.watchCandles('NOSUCHSYMBOL', Timeframe.h1).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(provider.lastCandlesSymbol, isNull);
+      expect(provider.lastWatchCandlesSymbol, isNull);
+    });
+
+    test('watchCandles(enabled) still fetches history and subscribes upstream - canonical formats intact', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['XAU/USD']));
+      final seedCandle = MarketCandle(time: DateTime(2026), open: 1, high: 1, low: 1, close: 1);
+      final provider = _RecordingProvider()..candlesResult = [seedCandle];
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final updates = <List<MarketCandle>>[];
+      final sub = service.watchCandles('XAU/USD', Timeframe.h1).listen(updates.add);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(provider.lastCandlesSymbol, 'XAU/USD');
+      expect(provider.lastWatchCandlesSymbol, 'XAU/USD');
+      expect(updates, isNotEmpty);
+      expect(updates.first.single.close, 1);
+    });
+
+    test('watchCandles never fetches history or subscribes upstream when the catalog cannot be loaded - honest failure, never mock', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: MockClient((r) async => _jsonResponse({'error': 'down'}, status: 500)));
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final sub = service.watchCandles('AAPL', Timeframe.h1).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(provider.lastCandlesSymbol, isNull);
+      expect(provider.lastWatchCandlesSymbol, isNull);
     });
   });
 }

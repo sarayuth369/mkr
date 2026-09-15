@@ -309,6 +309,7 @@
   "chartModeCandle": "แท่งเทียน",
   "chartCandleCaption": "บีบนิ้วเพื่อซูม ลากเพื่อเลื่อน แตะแท่งเทียนเพื่อดู OHLC",
   "chartCandleEmpty": "ไม่มีข้อมูลแท่งเทียนสำหรับกรอบเวลานี้",
+  "chartSeriesUnavailable": "ขณะนี้ไม่สามารถโหลดข้อมูลกราฟได้",
   "notificationHistoryTitle": "การแจ้งเตือน",
   "notificationHistoryEmpty": "ยังไม่มีการแจ้งเตือน",
   "notificationHistorySignInRequired": "เข้าสู่ระบบเพื่อดูประวัติการแจ้งเตือน",

@@ -202,7 +202,15 @@ class _PulseSectionState extends State<_PulseSection> {
       _selectedChangePct = quote.changePct;
       _loadingSeries = true;
     });
-    final series = await context.read<MarketService>().getPriceSeries(quote.symbol, _timeframe);
+    // getPriceSeries throws on a genuine catalog/provider fault (2026-09-15
+    // FINAL correction task) - the chart simply stays omitted, same as a
+    // real "no history" outcome, rather than an unhandled async error.
+    List<double> series = const [];
+    try {
+      series = await context.read<MarketService>().getPriceSeries(quote.symbol, _timeframe);
+    } catch (_) {
+      series = const [];
+    }
     if (!mounted) return;
     setState(() {
       _series = series;
@@ -216,7 +224,12 @@ class _PulseSectionState extends State<_PulseSection> {
       _timeframe = timeframe;
       _loadingSeries = true;
     });
-    final series = await context.read<MarketService>().getPriceSeries(_selectedSymbol!, timeframe);
+    List<double> series = const [];
+    try {
+      series = await context.read<MarketService>().getPriceSeries(_selectedSymbol!, timeframe);
+    } catch (_) {
+      series = const [];
+    }
     if (!mounted) return;
     setState(() {
       _series = series;

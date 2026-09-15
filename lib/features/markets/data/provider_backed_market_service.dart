@@ -136,17 +136,25 @@ class ProviderBackedMarketService implements MarketService {
   /// 2026-09-15 correction task (Defect B): same catalog authorization as
   /// [getQuote] before requesting history from [MarketProviderManager]. The
   /// existing return shape (`Future<List<double>>`, no failure channel) is
-  /// preserved rather than changed - a disabled/unknown symbol or a catalog
-  /// load failure both resolve as an empty series, the same "nothing to
-  /// chart" signal callers already need to handle honestly (omit the
-  /// sparkline/chart) instead of falling back to synthetic data.
+  /// preserved for the "no data" case - a disabled/unknown symbol still
+  /// resolves as an empty series, the honest "nothing to chart" signal
+  /// callers already need to handle by omitting the sparkline/chart instead
+  /// of falling back to synthetic data.
+  ///
+  /// 2026-09-15 FINAL correction task (point 4): a genuine catalog LOAD
+  /// failure is a different thing from "this symbol has no history" and
+  /// must not be silently collapsed into the same empty list a caller
+  /// cannot distinguish from valid-but-empty data - it now throws
+  /// [MarketFetchException], the exact pattern [getQuote] already
+  /// established, so every caller that has state to report a real failure
+  /// with can tell the two apart.
   @override
   Future<List<double>> getPriceSeries(String symbol, ChartTimeframe timeframe) async {
     final List<CatalogSymbol> catalog;
     try {
       catalog = await _catalog.load();
-    } on MarketCatalogException {
-      return const [];
+    } on MarketCatalogException catch (e) {
+      throw MarketFetchException(MarketFetchFailureKind.offline, e.message);
     }
     final enabled = catalog.any((s) => s.symbol == symbol);
     if (!enabled) return const [];
@@ -207,6 +215,14 @@ class ProviderBackedMarketService implements MarketService {
   /// in a new bucket starts a fresh candle. Without this, every single tick
   /// would append as its own permanent 1-price-point candle, growing the
   /// list unboundedly and never actually aggregating into real OHLC bars.
+  /// 2026-09-15 FINAL correction task (point 1): authorized against the
+  /// catalog before either the historical-candle fetch or the live
+  /// subscription is opened - exactly the same rule [watchQuotes] already
+  /// enforces. A disabled/unknown symbol never reaches
+  /// [MarketProviderManager.getHistoricalCandles]/[MarketProviderManager.watchCandles];
+  /// a catalog load failure means the stream honestly never emits rather
+  /// than opening a provider stream on a guess. The shared single-
+  /// subscription-per-call architecture is unchanged.
   @override
   Stream<List<MarketCandle>> watchCandles(String symbol, Timeframe timeframe) {
     late StreamController<List<MarketCandle>> controller;
@@ -214,6 +230,16 @@ class ProviderBackedMarketService implements MarketService {
     StreamSubscription<MarketCandle>? subscription;
     controller = StreamController<List<MarketCandle>>.broadcast(
       onListen: () async {
+        final List<CatalogSymbol> catalog;
+        try {
+          catalog = await _catalog.load();
+        } on MarketCatalogException {
+          return;
+        }
+        if (controller.isClosed) return;
+        final enabled = catalog.any((s) => s.symbol == symbol);
+        if (!enabled) return;
+
         history = await _manager.getHistoricalCandles(symbol, timeframe);
         if (!controller.isClosed) controller.add(history);
         subscription = _manager.watchCandles(symbol, timeframe).listen((tick) {

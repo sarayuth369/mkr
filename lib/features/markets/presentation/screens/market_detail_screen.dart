@@ -223,11 +223,21 @@ class _ChartSectionState extends State<_ChartSection> {
         ),
         const SizedBox(height: 12),
         if (_mode == _ChartMode.line)
-          PriceChart(
-            series: widget.controller.series,
-            isUp: widget.isUp,
-            onTimeframeChanged: widget.controller.loadSeries,
-          )
+          widget.controller.seriesUnavailable
+              ? SizedBox(
+                  height: 180,
+                  child: Center(
+                    child: TextButton(
+                      onPressed: () => widget.controller.loadSeries(widget.controller.timeframe),
+                      child: Text(l10n.chartSeriesUnavailable),
+                    ),
+                  ),
+                )
+              : PriceChart(
+                  series: widget.controller.series,
+                  isUp: widget.isUp,
+                  onTimeframeChanged: widget.controller.loadSeries,
+                )
         else ...[
           Wrap(
             spacing: 6,

@@ -854,6 +854,9 @@ class AppLocalizationsTh extends AppLocalizations {
   String get chartCandleEmpty => 'ไม่มีข้อมูลแท่งเทียนสำหรับกรอบเวลานี้';
 
   @override
+  String get chartSeriesUnavailable => 'ขณะนี้ไม่สามารถโหลดข้อมูลกราฟได้';
+
+  @override
   String get notificationHistoryTitle => 'การแจ้งเตือน';
 
   @override

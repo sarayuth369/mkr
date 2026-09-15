@@ -208,10 +208,11 @@ class MkrApp extends StatelessWidget {
             repository: ctx.read<AlertRepository>(),
             notificationService: ctx.read<NotificationService>(),
             calendarService: ctx.read<EconomicCalendarService>(),
+            marketService: ctx.read<MarketService>(),
             cloudSync: SupabaseConfig.instance.isConfigured ? SupabaseAlertCloudSync(ctx.read<AuthController>()) : const NoopAlertCloudSync(),
           ),
         ),
-        ChangeNotifierProvider(create: (ctx) => PortfolioController(ctx.read<PortfolioRepository>())),
+        ChangeNotifierProvider(create: (ctx) => PortfolioController(ctx.read<PortfolioRepository>(), ctx.read<MarketService>())),
         ChangeNotifierProvider(create: (ctx) => NewsController(ctx.read<NewsService>())),
         ChangeNotifierProvider(create: (ctx) => CalendarController(ctx.read<EconomicCalendarService>())),
         ChangeNotifierProvider(

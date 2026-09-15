@@ -1730,6 +1730,12 @@ abstract class AppLocalizations {
   /// **'No candle data available for this timeframe'**
   String get chartCandleEmpty;
 
+  /// No description provided for @chartSeriesUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Chart data unavailable right now'**
+  String get chartSeriesUnavailable;
+
   /// No description provided for @notificationHistoryTitle.
   ///
   /// In en, this message translates to:
