@@ -161,6 +161,20 @@ class TwelveDataProvider implements MarketDataProvider {
     if (json is! Map<String, dynamic>) {
       throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
     }
+    // 2026-09-15 candle envelope correction: an HTTP 200 error envelope or a
+    // non-list `data` must not silently become "genuine empty history" -
+    // [TwelveDataParser.parseCandles] intentionally still returns `[]` for
+    // both (used elsewhere to keep the parser itself simple/never-throwing),
+    // so the envelope is validated HERE, before the parser ever sees it -
+    // the smallest fix that closes the gap without changing the parser's
+    // existing, still-relied-upon "never throws" contract.
+    if (TwelveDataParser.isErrorEnvelope(json)) {
+      final message = (json['error'] as Map?)?['message']?.toString() ?? 'The market data provider is currently unavailable.';
+      throw MarketFetchException(MarketFetchFailureKind.providerError, message);
+    }
+    if (json['data'] is! List) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
     return TwelveDataParser.parseCandles(json);
   }
 

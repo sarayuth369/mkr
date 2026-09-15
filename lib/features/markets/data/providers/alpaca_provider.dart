@@ -156,6 +156,19 @@ class AlpacaProvider implements MarketDataProvider {
     if (json is! Map<String, dynamic>) {
       throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
     }
+    // 2026-09-15 candle envelope correction: same gap as
+    // TwelveDataProvider - an HTTP 200 Alpaca error response or a missing/
+    // non-list `bars` must not silently become "genuine empty history".
+    // [AlpacaParser.parseBars] intentionally still returns `[]` for both
+    // (its own "never throws" contract, unchanged), so the envelope is
+    // validated here first.
+    if (AlpacaParser.isErrorResponse(json)) {
+      final message = (json['message'] as Object?)?.toString() ?? 'The market data provider is currently unavailable.';
+      throw MarketFetchException(MarketFetchFailureKind.providerError, message);
+    }
+    if (json['bars'] is! List) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
     return AlpacaParser.parseBars(json);
   }
 
