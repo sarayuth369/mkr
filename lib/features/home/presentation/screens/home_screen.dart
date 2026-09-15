@@ -13,7 +13,6 @@ import '../../../../core/widgets/market_card.dart';
 import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../core/widgets/price_chart.dart';
 import '../../../../core/widgets/radar_card.dart';
-import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_data_mode.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../l10n/generated/app_localizations.dart';
@@ -106,7 +105,6 @@ class HomeScreen extends StatelessWidget {
               MarketCard(
                 quote: controller.gold!,
                 label: 'XAU/USD',
-                sparkline: MockMarketCatalog.syntheticSeries('XAU/USD', points: 14),
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const MarketDetailScreen(symbol: 'XAU/USD')),
                 ),
@@ -191,16 +189,20 @@ class _PulseSection extends StatefulWidget {
 
 class _PulseSectionState extends State<_PulseSection> {
   String? _selectedSymbol;
+  // Real changePct of the selected quote, for genuine trend direction -
+  // never MockMarketCatalog (2026-09-15 correction task, Defect D).
+  double _selectedChangePct = 0;
   List<double>? _series;
   ChartTimeframe _timeframe = ChartTimeframe.d1;
   bool _loadingSeries = false;
 
-  Future<void> _selectSymbol(String symbol) async {
+  Future<void> _selectSymbol(MarketQuote quote) async {
     setState(() {
-      _selectedSymbol = symbol;
+      _selectedSymbol = quote.symbol;
+      _selectedChangePct = quote.changePct;
       _loadingSeries = true;
     });
-    final series = await context.read<MarketService>().getPriceSeries(symbol, _timeframe);
+    final series = await context.read<MarketService>().getPriceSeries(quote.symbol, _timeframe);
     if (!mounted) return;
     setState(() {
       _series = series;
@@ -244,7 +246,7 @@ class _PulseSectionState extends State<_PulseSection> {
             empty: () => const SizedBox.shrink(),
             success: (quotes, isStale, lastUpdated) {
               if (_selectedSymbol == null && quotes.isNotEmpty) {
-                WidgetsBinding.instance.addPostFrameCallback((_) => _selectSymbol(quotes.first.symbol));
+                WidgetsBinding.instance.addPostFrameCallback((_) => _selectSymbol(quotes.first));
               }
               return ListView.separated(
                 scrollDirection: Axis.horizontal,
@@ -256,8 +258,7 @@ class _PulseSectionState extends State<_PulseSection> {
                     child: MarketCard(
                       quote: quote,
                       featured: true,
-                      sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 14),
-                      onTap: () => _selectSymbol(quote.symbol),
+                      onTap: () => _selectSymbol(quote),
                     ),
                   );
                 },
@@ -269,12 +270,14 @@ class _PulseSectionState extends State<_PulseSection> {
           const SizedBox(height: 14),
           _loadingSeries || _series == null
               ? const LoadingSkeleton(height: 90, width: double.infinity, borderRadius: 12)
-              : PriceChart(
-                  series: _series!,
-                  isUp: (MockMarketCatalog.bySymbol(_selectedSymbol!)?.changePct ?? 0) >= 0,
-                  height: 90,
-                  onTimeframeChanged: _changeTimeframe,
-                ),
+              : _series!.isEmpty
+                  ? const SizedBox.shrink()
+                  : PriceChart(
+                      series: _series!,
+                      isUp: _selectedChangePct >= 0,
+                      height: 90,
+                      onTimeframeChanged: _changeTimeframe,
+                    ),
         ],
       ],
     );
@@ -298,7 +301,6 @@ class _SnapshotList extends StatelessWidget {
           for (final quote in quotes)
             AssetRow(
               quote: quote,
-              sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
               ),

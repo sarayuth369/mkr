@@ -9,7 +9,6 @@ import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../core/widgets/price_chart.dart';
-import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../domain/market_trend.dart';
 import '../../../../l10n/generated/app_localizations.dart';
@@ -56,8 +55,10 @@ class GoldRadarScreen extends StatelessWidget {
               MarketDataStatusChip(mode: controller.mode, lastUpdated: controller.lastUpdated),
               const SizedBox(height: 12),
               _PriceHeader(data: data),
-              const SizedBox(height: 16),
-              PriceChart(series: MockMarketCatalog.syntheticSeries('XAU/USD'), isUp: data.gold.isUp),
+              if (controller.series.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                PriceChart(series: controller.series, isUp: data.gold.isUp),
+              ],
               const SizedBox(height: 20),
               _MetricsGrid(data: data),
               const SizedBox(height: 20),

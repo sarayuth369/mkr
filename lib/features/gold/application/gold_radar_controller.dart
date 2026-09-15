@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_state.dart';
+import '../../../core/widgets/price_chart.dart';
 import '../../../domain/impact_level.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../ai/domain/ai_insight.dart';
@@ -37,6 +38,13 @@ class GoldRadarController extends ChangeNotifier {
   List<EconomicEvent> _importantEvents = const [];
   List<EconomicEvent> get importantEvents => _importantEvents;
 
+  /// Genuine historical series for the price chart - never
+  /// `MockMarketCatalog.syntheticSeries` in real mode. Empty when no real
+  /// history is available; the screen omits the chart rather than showing a
+  /// fabricated one (2026-09-15 correction task, Defect D).
+  List<double> _series = const [];
+  List<double> get series => _series;
+
   Future<void> _load() async {
     _state = const ApiState.loading();
     _aiState = const ApiState.loading();
@@ -46,6 +54,7 @@ class GoldRadarController extends ChangeNotifier {
       final gold = await _marketService.getQuote('XAU/USD');
       if (gold == null) {
         _state = const ApiState.empty();
+        _series = const [];
       } else {
         final dxy = await _marketService.getQuote('DXY');
         final us10y = await _marketService.getQuote('US10Y');
@@ -53,9 +62,11 @@ class GoldRadarController extends ChangeNotifier {
         _state = ApiState.success(
           GoldRadarData.derive(gold: gold, dxy: dxy, us10y: us10y, oil: oil),
         );
+        _series = await _marketService.getPriceSeries('XAU/USD', ChartTimeframe.d1);
       }
     } catch (e) {
       _state = ApiState.error(e.toString());
+      _series = const [];
     }
     notifyListeners();
 

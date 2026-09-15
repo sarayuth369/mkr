@@ -63,8 +63,26 @@ class ProviderBackedMarketService implements MarketService {
     return _fetchSymbols((catalog) => catalog.where((s) => s.assetClass == assetClass).map((s) => s.symbol).toList());
   }
 
+  /// 2026-09-15 correction task (Defect A): validated against the same
+  /// [MarketCatalogRepository] authority as every batch path before ever
+  /// reaching [MarketProviderManager] - a disabled/unknown symbol is treated
+  /// as [getQuote]'s own documented `null` ("no data for this symbol")
+  /// outcome rather than being forwarded to the provider. A genuine catalog
+  /// LOAD failure (network/backend down) is a real fault, not "no data", so
+  /// it surfaces the same way as any other real fetch fault: a thrown
+  /// [MarketFetchException].
   @override
-  Future<MarketQuote?> getQuote(String symbol) => _manager.getQuote(symbol);
+  Future<MarketQuote?> getQuote(String symbol) async {
+    final List<CatalogSymbol> catalog;
+    try {
+      catalog = await _catalog.load();
+    } on MarketCatalogException catch (e) {
+      throw MarketFetchException(MarketFetchFailureKind.offline, e.message);
+    }
+    final enabled = catalog.any((s) => s.symbol == symbol);
+    if (!enabled) return null;
+    return _manager.getQuote(symbol);
+  }
 
   /// 2026-09-15 correction task: a caller-supplied symbol list (e.g. a
   /// saved Watchlist, which can retain a symbol the backend later disables
@@ -115,8 +133,23 @@ class ProviderBackedMarketService implements MarketService {
     };
   }
 
+  /// 2026-09-15 correction task (Defect B): same catalog authorization as
+  /// [getQuote] before requesting history from [MarketProviderManager]. The
+  /// existing return shape (`Future<List<double>>`, no failure channel) is
+  /// preserved rather than changed - a disabled/unknown symbol or a catalog
+  /// load failure both resolve as an empty series, the same "nothing to
+  /// chart" signal callers already need to handle honestly (omit the
+  /// sparkline/chart) instead of falling back to synthetic data.
   @override
   Future<List<double>> getPriceSeries(String symbol, ChartTimeframe timeframe) async {
+    final List<CatalogSymbol> catalog;
+    try {
+      catalog = await _catalog.load();
+    } on MarketCatalogException {
+      return const [];
+    }
+    final enabled = catalog.any((s) => s.symbol == symbol);
+    if (!enabled) return const [];
     final candles = await _manager.getHistoricalCandles(symbol, timeframeForChartRange(timeframe));
     return candles.map((c) => c.close).toList();
   }
@@ -130,17 +163,35 @@ class ProviderBackedMarketService implements MarketService {
     );
   }
 
+  /// 2026-09-15 correction task (Defect C): [symbols] is authorized against
+  /// the catalog before the upstream subscription opens - a disabled/unknown
+  /// symbol never reaches [MarketProviderManager.watchQuotes]. The shared
+  /// broadcast-stream architecture is unchanged (still exactly one upstream
+  /// subscription per call, fanned out to every listener); the catalog check
+  /// simply runs inside the existing `onListen` before that subscription is
+  /// created. If the catalog itself fails to load, the stream honestly never
+  /// emits rather than guessing which symbols were safe to request.
   @override
   Stream<List<MarketQuote>> watchQuotes(List<String> symbols) {
     final latest = <String, MarketQuote>{};
     late StreamController<List<MarketQuote>> controller;
     StreamSubscription<MarketQuote>? subscription;
     controller = StreamController<List<MarketQuote>>.broadcast(
-      onListen: () {
-        subscription = _manager.watchQuotes(symbols).listen((quote) {
+      onListen: () async {
+        final List<CatalogSymbol> catalog;
+        try {
+          catalog = await _catalog.load();
+        } on MarketCatalogException {
+          return;
+        }
+        if (controller.isClosed) return;
+        final enabled = catalog.map((s) => s.symbol).toSet();
+        final authorized = symbols.where(enabled.contains).toList();
+        if (authorized.isEmpty) return;
+        subscription = _manager.watchQuotes(authorized).listen((quote) {
           latest[quote.symbol] = quote;
           if (!controller.isClosed) {
-            controller.add(symbols.map((s) => latest[s]).whereType<MarketQuote>().toList());
+            controller.add(authorized.map((s) => latest[s]).whereType<MarketQuote>().toList());
           }
         });
       },

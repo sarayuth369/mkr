@@ -6,7 +6,6 @@ import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/market_data_status_chip.dart';
-import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/asset_class.dart';
 import '../../../../domain/market_data_mode.dart';
 import '../../../../l10n/generated/app_localizations.dart';
@@ -120,7 +119,6 @@ class _MarketsScreenState extends State<MarketsScreen> {
                             final quote = quotes[index];
                             return AssetRow(
                               quote: quote,
-                              sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
                               onTap: () => Navigator.of(context).push(
                                 MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
                               ),

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:mkr/core/widgets/price_chart.dart';
 import 'package:mkr/domain/asset_class.dart';
 import 'package:mkr/domain/market_candle.dart';
 import 'package:mkr/domain/market_quote.dart';
@@ -44,6 +45,16 @@ class _RecordingProvider implements MarketDataProvider {
   List<String>? lastRequestedSymbols;
   MarketFetchResult quotesResult = const MarketFetchEmpty();
 
+  String? lastGetQuoteSymbol;
+  MarketQuote? getQuoteResult;
+
+  String? lastCandlesSymbol;
+  Timeframe? lastCandlesTimeframe;
+  List<MarketCandle> candlesResult = const [];
+
+  List<String>? lastWatchQuotesSymbols;
+  Stream<MarketQuote> watchQuotesResult = const Stream.empty();
+
   @override
   Future<bool> healthCheck() async => true;
 
@@ -54,7 +65,10 @@ class _RecordingProvider implements MarketDataProvider {
   Future<void> disconnect() async {}
 
   @override
-  Future<MarketQuote?> getQuote(String symbol) async => null;
+  Future<MarketQuote?> getQuote(String symbol) async {
+    lastGetQuoteSymbol = symbol;
+    return getQuoteResult;
+  }
 
   @override
   Future<MarketFetchResult> getQuotes(List<String> symbols) async {
@@ -63,13 +77,20 @@ class _RecordingProvider implements MarketDataProvider {
   }
 
   @override
-  Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async => const [];
+  Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async {
+    lastCandlesSymbol = symbol;
+    lastCandlesTimeframe = timeframe;
+    return candlesResult;
+  }
 
   @override
   Future<MarketSessionStatus> getMarketStatus(String market) async => MarketSessionStatus.open;
 
   @override
-  Stream<MarketQuote> watchQuotes(List<String> symbols) => const Stream.empty();
+  Stream<MarketQuote> watchQuotes(List<String> symbols) {
+    lastWatchQuotesSymbols = symbols;
+    return watchQuotesResult;
+  }
 
   @override
   Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) => const Stream.empty();
@@ -228,6 +249,138 @@ void main() {
 
       expect(catalogCalls, 1); // single-flight - the catalog itself was fetched exactly once
       expect(provider.lastRequestedSymbols, isNot(contains('DISABLEDSYM'))); // never reached the provider
+    });
+  });
+
+  group('2026-09-15 correction task 2 — getQuote never bypasses the catalog (Defect A)', () {
+    test('getQuote(disabled/unknown) never calls the provider and returns null - regression 1', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL'])); // 'DXY' not enabled
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final result = await service.getQuote('DXY');
+
+      expect(result, isNull);
+      expect(provider.lastGetQuoteSymbol, isNull);
+    });
+
+    test('getQuote(enabled) still reaches the provider and returns the real quote - regression 5', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['XAU/USD', 'BTC']));
+      final quote = MarketQuote(symbol: 'XAU/USD', name: 'Gold', assetClass: AssetClass.gold, price: 2000, changeAbs: 0, changePct: 0);
+      final provider = _RecordingProvider()..getQuoteResult = quote;
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final result = await service.getQuote('XAU/USD');
+
+      expect(provider.lastGetQuoteSymbol, 'XAU/USD');
+      expect(result, quote);
+
+      // BTC (canonical crypto format) also passes the catalog check and
+      // reaches the provider untouched - canonical formats are preserved.
+      final btcResult = await service.getQuote('BTC');
+      expect(provider.lastGetQuoteSymbol, 'BTC');
+      expect(btcResult, quote); // same stub result, just confirming the call reached the provider
+    });
+
+    test('getQuote fails honestly (never falls back to mock) when the catalog cannot be loaded - regression 4', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: MockClient((r) async => _jsonResponse({'error': 'down'}, status: 500)));
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      await expectLater(
+        () => service.getQuote('AAPL'),
+        throwsA(isA<MarketFetchException>().having((e) => e.kind, 'kind', MarketFetchFailureKind.offline)),
+      );
+      expect(provider.lastGetQuoteSymbol, isNull);
+    });
+  });
+
+  group('2026-09-15 correction task 2 — getPriceSeries never bypasses the catalog (Defect B)', () {
+    test('getPriceSeries(disabled/unknown) never calls the provider and returns an empty series - regression 2', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL'])); // 'DXY' not enabled
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final series = await service.getPriceSeries('DXY', ChartTimeframe.d1);
+
+      expect(series, isEmpty);
+      expect(provider.lastCandlesSymbol, isNull);
+    });
+
+    test('getPriceSeries(enabled) still reaches the provider for real history - regression 5', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['XAU/USD']));
+      final provider = _RecordingProvider()
+        ..candlesResult = [
+          MarketCandle(time: DateTime(2026), open: 1, high: 2, low: 0.5, close: 1.5, volume: 0),
+          MarketCandle(time: DateTime(2026, 1, 2), open: 1.5, high: 2.5, low: 1, close: 2, volume: 0),
+        ];
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final series = await service.getPriceSeries('XAU/USD', ChartTimeframe.d1);
+
+      expect(provider.lastCandlesSymbol, 'XAU/USD');
+      expect(series, [1.5, 2.0]);
+    });
+
+    test('getPriceSeries fails honestly (empty, never mock) when the catalog cannot be loaded - regression 4', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: MockClient((r) async => _jsonResponse({'error': 'down'}, status: 500)));
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final series = await service.getPriceSeries('AAPL', ChartTimeframe.d1);
+
+      expect(series, isEmpty);
+      expect(provider.lastCandlesSymbol, isNull);
+    });
+  });
+
+  group('2026-09-15 correction task 2 — watchQuotes never bypasses the catalog (Defect C)', () {
+    test('watchQuotes(disabled/unknown) never subscribes upstream - regression 3', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL'])); // 'DXY' not enabled
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final sub = service.watchQuotes(['DXY']).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(provider.lastWatchQuotesSymbols, isNull);
+    });
+
+    test('watchQuotes([enabled, disabled]) subscribes only to the enabled symbol - regression 3/5', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL'])); // 'DXY' not enabled
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final sub = service.watchQuotes(['AAPL', 'DXY']).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(provider.lastWatchQuotesSymbols, ['AAPL']);
+    });
+
+    test('watchQuotes never subscribes upstream when the catalog cannot be loaded - regression 4', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: MockClient((r) async => _jsonResponse({'error': 'down'}, status: 500)));
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final sub = service.watchQuotes(['AAPL']).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(provider.lastWatchQuotesSymbols, isNull);
     });
   });
 }

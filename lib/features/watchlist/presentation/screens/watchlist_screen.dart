@@ -7,7 +7,6 @@ import '../../../../core/widgets/asset_row.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
-import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../billing/application/entitlement_controller.dart';
@@ -105,7 +104,6 @@ class WatchlistScreen extends StatelessWidget {
                               )
                             : AssetRow(
                                 quote: quote,
-                                sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
                                 onTap: () => Navigator.of(context).push(
                                   MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
                                 ),
