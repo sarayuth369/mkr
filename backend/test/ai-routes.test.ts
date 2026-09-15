@@ -129,6 +129,29 @@ describe('AI routes - handleAiBrief', () => {
     const userMessage = userPromptFrom(run);
     expect(userMessage).toContain('No live quote data is currently cached.');
   });
+
+  // Confirmed live (2026-09-15): after switching models following a
+  // deprecation, the new model's `response` field was sometimes an object
+  // rather than a plain string - these pin the fallback shapes
+  // extractModelText now handles instead of producing "[object Object]".
+  it('extracts text from a nested response.content shape', async () => {
+    const env = makeEnv({ aiRun: vi.fn(async () => ({ response: { content: VALID_INSIGHT_JSON } })) });
+    const res = await handleAiBrief(new Request('https://x/api/mkr/ai/brief', { method: 'POST' }), env, 'r1');
+    expect(res.status).toBe(200);
+  });
+
+  it('extracts text from an OpenAI-compatible choices[0].message.content shape', async () => {
+    const env = makeEnv({ aiRun: vi.fn(async () => ({ choices: [{ message: { content: VALID_INSIGHT_JSON } }] })) });
+    const res = await handleAiBrief(new Request('https://x/api/mkr/ai/brief', { method: 'POST' }), env, 'r1');
+    expect(res.status).toBe(200);
+  });
+
+  it('throws INTERNAL_ERROR (not "[object Object]") when response is an unrecognized shape', async () => {
+    const env = makeEnv({ aiRun: vi.fn(async () => ({ response: { unexpected: 'shape' } })) });
+    await expect(handleAiBrief(new Request('https://x/api/mkr/ai/brief', { method: 'POST' }), env, 'r1')).rejects.toMatchObject({
+      code: 'INTERNAL_ERROR',
+    });
+  });
 });
 
 describe('AI routes - handleAiAssetInsight', () => {

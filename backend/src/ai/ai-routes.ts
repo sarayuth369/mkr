@@ -41,12 +41,26 @@ async function requireAiEnabled(env: Env): Promise<void> {
   if (!featureFlags.aiBriefEnabled) aiDisabled();
 }
 
-function extractJsonObject(text: string): unknown {
+/** Logs the raw model text (truncated - never unbounded, this is
+ * diagnostic-only) whenever parsing fails, so a bad response is actually
+ * debuggable server-side instead of only ever showing up as an opaque
+ * INTERNAL_ERROR client-side - confirmed necessary live (2026-09-15): the
+ * very first parse failure after switching models had no raw text logged
+ * anywhere, and had to be re-diagnosed by hand. */
+function logParseFailure(reason: string, text: string, route: string): void {
+  logError(reason, { route, rawResponse: text.slice(0, 500) });
+}
+
+function extractJsonObject(text: string, route: string): unknown {
   const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new ApiError('INTERNAL_ERROR', 'AI response was not valid JSON.');
+  if (!match) {
+    logParseFailure('AI response contained no JSON object', text, route);
+    throw new ApiError('INTERNAL_ERROR', 'AI response was not valid JSON.');
+  }
   try {
     return JSON.parse(match[0]);
   } catch {
+    logParseFailure('AI response JSON failed to parse', text, route);
     throw new ApiError('INTERNAL_ERROR', 'AI response was not valid JSON.');
   }
 }
@@ -55,12 +69,13 @@ function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
-function parseInsight(text: string): AiInsightPayload {
-  const parsed = extractJsonObject(text) as Record<string, unknown>;
+function parseInsight(text: string, route: string): AiInsightPayload {
+  const parsed = extractJsonObject(text, route) as Record<string, unknown>;
   const summary = parsed.summary;
   const whyItMatters = parsed.whyItMatters;
   const marketImpact = parsed.marketImpact;
   if (typeof summary !== 'string' || typeof whyItMatters !== 'string' || typeof marketImpact !== 'string') {
+    logParseFailure('AI response JSON was missing required fields', text, route);
     throw new ApiError('INTERNAL_ERROR', 'AI response was missing required fields.');
   }
   return {
@@ -73,9 +88,45 @@ function parseInsight(text: string): AiInsightPayload {
   };
 }
 
-/** Cloudflare Workers AI text-generation model - fast/cheap, good enough
- * for short structured summaries; no external account/key required. */
-const MODEL = '@cf/meta/llama-3.1-8b-instruct' as const;
+/** Cloudflare Workers AI text-generation model - no external account/key
+ * required. `@cf/meta/llama-3.1-8b-instruct` (the original choice here)
+ * was deprecated by Cloudflare on 2026-05-30 - confirmed live
+ * (2026-09-15, via wrangler tail) once every AI route started failing
+ * with "PROVIDER_UNAVAILABLE" right after the feature flag was turned on;
+ * the actual env.AI.run() error named the deprecation explicitly. Verified
+ * against Cloudflare's current model catalog before picking this
+ * replacement (developers.cloudflare.com/workers-ai/models/) rather than
+ * guessing an ID. */
+const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast' as const;
+
+/**
+ * Workers AI's `response` field is normally a plain string, but a few
+ * models (confirmed live 2026-09-15 with llama-3.3-70b-instruct-fp8-fast,
+ * after the previous model was deprecated) return something else in some
+ * cases - a nested object, or an OpenAI-compatible `choices[0].message.content`
+ * shape. Checks each documented shape before giving up; logs the actual
+ * raw structure (truncated) only when none match, so a future model
+ * swap's response shape is debuggable from one log line instead of
+ * needing another live round-trip to diagnose by hand.
+ */
+function extractModelText(raw: unknown, route: string): string {
+  if (raw && typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.response === 'string') return obj.response;
+    if (obj.response && typeof obj.response === 'object') {
+      const nested = obj.response as Record<string, unknown>;
+      if (typeof nested.content === 'string') return nested.content;
+      if (typeof nested.text === 'string') return nested.text;
+    }
+    if (Array.isArray(obj.choices)) {
+      const first = obj.choices[0] as Record<string, unknown> | undefined;
+      const message = first?.message as Record<string, unknown> | undefined;
+      if (typeof message?.content === 'string') return message.content;
+    }
+  }
+  logError('AI response had no recognizable text field', { route, rawShape: JSON.stringify(raw).slice(0, 500) });
+  return '';
+}
 
 async function runInsight(env: Env, requestId: string, route: string, userPrompt: string): Promise<AiInsightPayload> {
   let raw: unknown;
@@ -91,8 +142,7 @@ async function runInsight(env: Env, requestId: string, route: string, userPrompt
     logError('AI run failed', { requestId, route, message: (err as Error).message });
     throw new ApiError('PROVIDER_UNAVAILABLE', 'AI provider request failed.');
   }
-  const text = raw && typeof raw === 'object' && 'response' in raw ? String((raw as { response: unknown }).response ?? '') : '';
-  return parseInsight(text);
+  return parseInsight(extractModelText(raw, route), route);
 }
 
 async function cachedQuoteContext(env: Env, symbols: string[]): Promise<string> {
@@ -196,7 +246,7 @@ export async function handleAiAsk(request: Request, env: Env, requestId: string)
     logError('AI run failed', { requestId, route: 'ai/ask', message: (err as Error).message });
     throw new ApiError('PROVIDER_UNAVAILABLE', 'AI provider request failed.');
   }
-  const answer = raw && typeof raw === 'object' && 'response' in raw ? String((raw as { response: unknown }).response ?? '') : '';
+  const answer = extractModelText(raw, 'ai/ask');
   if (!answer.trim()) throw new ApiError('INTERNAL_ERROR', 'AI returned an empty response.');
   return jsonResponse({ answer });
 }
