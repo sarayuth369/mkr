@@ -1,9 +1,11 @@
+import { logError } from '../../logging';
 import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, NormalizedQuote } from '../../types';
 import { recordProviderRequest } from '../quota-manager';
 import { ProviderError, type MarketDataProvider } from '../types';
 import {
   isTwelveDataError,
   isTwelveDataRateLimited,
+  isTwelveDataSymbolError,
   parseTwelveDataBatchQuotes,
   parseTwelveDataCandles,
   parseTwelveDataMarketStatus,
@@ -74,6 +76,11 @@ export class TwelveDataProvider implements MarketDataProvider {
 
     const json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (isTwelveDataRateLimited(json)) throw new ProviderError('Twelve Data rate limit exceeded', 'rate_limit');
+    // 'not_found' (a specific symbol is invalid, or unavailable on this
+    // plan tier) is deliberately distinct from 'unknown' - see
+    // isTwelveDataSymbolError's doc comment. provider-manager.ts's
+    // withFailover treats it as never a provider-health signal.
+    if (isTwelveDataSymbolError(json)) throw new ProviderError(String(json.message ?? 'Twelve Data symbol error'), 'not_found');
     if (isTwelveDataError(json)) throw new ProviderError(String(json.message ?? 'Twelve Data error'), 'unknown');
     return json;
   }
@@ -88,11 +95,26 @@ export class TwelveDataProvider implements MarketDataProvider {
   // 25-symbol request came back with usable data for only the first few,
   // `null` for the rest - not an error, just missing from the response
   // object) rather than rejecting the request outright. Chunking keeps
-  // each individual upstream call small and reliable while still using a
-  // handful of concurrent requests instead of one per symbol.
+  // each individual upstream call small and reliable.
   private static readonly BATCH_CHUNK_SIZE = 8;
 
-  /** Many symbols in as few upstream calls as Twelve Data's per-request cap allows - see the interface doc comment for why this exists. */
+  /**
+   * Many symbols in as few upstream calls as Twelve Data's per-request cap
+   * allows - see the interface doc comment for why this exists.
+   *
+   * Chunks are requested SEQUENTIALLY, not concurrently - confirmed live
+   * (2026-09-15, via `wrangler tail` against a real ~28-symbol request)
+   * that firing every chunk at once via `Promise.allSettled` made Twelve
+   * Data Free reject most of them outright: only ~1 of 4 concurrent chunk
+   * requests ever succeeded, and since a failed chunk's symbols are (by
+   * design, see below) simply left out of the result rather than surfaced
+   * as an error, this manifested client-side as most of the catalog
+   * silently vanishing from Markets/Home with no error shown anywhere -
+   * not a rate-limit issue in the "too many requests over time" sense,
+   * Twelve Data Free's free plan does not allow concurrent/parallel
+   * requests at all. Sequential execution costs some latency for a large
+   * catalog but is what actually returns each symbol reliably.
+   */
   async getBatchQuotes(providerToMkr: Record<string, string>): Promise<Record<string, NormalizedQuote | null>> {
     const providerSymbols = Object.keys(providerToMkr);
     if (providerSymbols.length === 0) return {};
@@ -106,27 +128,28 @@ export class TwelveDataProvider implements MarketDataProvider {
       chunks.push(providerSymbols.slice(i, i + TwelveDataProvider.BATCH_CHUNK_SIZE));
     }
 
-    const settled = await Promise.allSettled(
-      chunks.map(async (chunk) => {
+    const result: Record<string, NormalizedQuote | null> = {};
+    let anyChunkSucceeded = false;
+    let lastFailure: unknown;
+    for (const chunk of chunks) {
+      try {
         const chunkMap = Object.fromEntries(chunk.map((s) => [s, providerToMkr[s]!]));
         const json = await this.request('/quote', { symbol: chunk.join(',') });
-        return parseTwelveDataBatchQuotes(json, chunkMap);
-      }),
-    );
-
-    const result: Record<string, NormalizedQuote | null> = {};
-    let allChunksFailed = settled.length > 0;
-    for (const outcome of settled) {
-      if (outcome.status === 'fulfilled') {
-        allChunksFailed = false;
-        Object.assign(result, outcome.value);
+        Object.assign(result, parseTwelveDataBatchQuotes(json, chunkMap));
+        anyChunkSucceeded = true;
+      } catch (err) {
+        lastFailure = err;
+        // Deliberately not thrown here - only a genuine, total failure
+        // (every chunk threw) should look like a provider fault to the
+        // caller's failover logic; a partial chunk failure just leaves
+        // those specific symbols out of `result`, which the route handler
+        // already treats as "no data for this symbol". Logged (unlike
+        // before) so a recurring partial failure is actually visible
+        // server-side instead of only showing up as a client-side gap.
+        logError('batch quote chunk failed', { symbols: chunk.join(','), message: (err as Error).message });
       }
     }
-    // Only a genuine, total failure (every chunk threw) should look like a
-    // provider fault to the caller's failover logic; a partial chunk
-    // failure just leaves those specific symbols out of `result`, which
-    // the route handler already treats as "no data for this symbol".
-    if (allChunksFailed) throw (settled[0] as PromiseRejectedResult).reason;
+    if (!anyChunkSucceeded) throw lastFailure;
     return result;
   }
 

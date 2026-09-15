@@ -39,7 +39,10 @@ function quote(price: number): NormalizedQuote {
 class FakeProvider implements MarketDataProvider {
   constructor(
     readonly id: ProviderId,
-    private opts: { healthy?: boolean; quoteResult?: NormalizedQuote | null; throwKind?: 'timeout' | 'rate_limit' | 'auth' | 'network' } = {},
+    // Not private - a couple of tests reassign this mid-test to change a
+    // fake provider's behavior between two calls without constructing a
+    // second manager.
+    public opts: { healthy?: boolean; quoteResult?: NormalizedQuote | null; throwKind?: 'timeout' | 'rate_limit' | 'auth' | 'network' | 'not_found' } = {},
   ) {}
 
   quoteCalls = 0;
@@ -208,6 +211,71 @@ describe('MarketProviderManager', () => {
       expect(source).toBeNull();
       expect(result).toEqual({ UNMAPPED: null });
       expect(primary.batchCalls).toBe(0);
+    });
+  });
+
+  describe('symbol-specific ("not_found") errors never affect provider health', () => {
+    // Confirmed live (2026-09-15): a handful of misconfigured/plan-
+    // restricted catalog symbols each triggered a healthCheck()
+    // confirmation, and once enough piled up under real traffic, tripped
+    // the circuit for the ENTIRE provider - taking every other, perfectly
+    // valid symbol down with it too. These tests pin the fix: a 'not_found'
+    // error must never spend a confirmation call or touch circuit state,
+    // for either getQuote or getBatchQuotes.
+    it('getQuote: propagates without calling healthCheck() at all', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'not_found' });
+      const healthChecks = countHealthChecks(primary);
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getQuote('XYZ', symbolFor)).rejects.toThrow();
+
+      expect(healthChecks.calls()).toBe(0);
+    });
+
+    it('getQuote: never trips the circuit - a later call still reaches the primary normally', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'not_found' });
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getQuote('XYZ', symbolFor)).rejects.toThrow();
+      await expect(manager.getQuote('XYZ', symbolFor)).rejects.toThrow();
+      await expect(manager.getQuote('XYZ', symbolFor)).rejects.toThrow();
+
+      expect(circuitStatus('twelve_data')).toBe('closed');
+      expect(admitCircuitRequest('twelve_data').allowed).toBe(true);
+    });
+
+    it('getQuote: a not_found symbol never blocks a DIFFERENT, healthy symbol from succeeding right after', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'not_found' });
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getQuote('BROKEN', symbolFor)).rejects.toThrow();
+
+      primary.opts = { quoteResult: quote(150) };
+      const { result } = await manager.getQuote('AAPL', symbolFor);
+      expect(result?.price).toBe(150);
+    });
+
+    it('getBatchQuotes: propagates without calling healthCheck() and never trips the circuit', async () => {
+      const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
+      const primary = new FakeProvider('twelve_data', { throwKind: 'not_found' });
+      const healthChecks = countHealthChecks(primary);
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getBatchQuotes(['XYZ', 'ABC'], providerSymbolFor)).rejects.toThrow();
+
+      expect(healthChecks.calls()).toBe(0);
+      expect(circuitStatus('twelve_data')).toBe('closed');
+    });
+
+    it('an unrelated error kind (e.g. network) still goes through the normal confirmation/circuit-trip path - this fix only changes not_found', async () => {
+      const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+      const healthChecks = countHealthChecks(primary);
+      const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getQuote('AAPL', symbolFor)).rejects.toThrow();
+
+      expect(healthChecks.calls()).toBe(1);
+      expect(circuitStatus('twelve_data')).toBe('open');
     });
   });
 

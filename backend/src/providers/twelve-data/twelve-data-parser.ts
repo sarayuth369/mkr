@@ -15,6 +15,38 @@ export function isTwelveDataRateLimited(json: unknown): boolean {
   return code === 429 || message.includes('api credits') || message.includes('rate limit');
 }
 
+/**
+ * A permanent, symbol-specific failure - the requested symbol is invalid,
+ * or genuinely unavailable on this Twelve Data plan tier - as opposed to a
+ * transient/infrastructure fault (network, timeout, auth, real rate limit).
+ * Confirmed live (2026-09-15): a handful of misconfigured/plan-restricted
+ * symbols in MKR's catalog (stock indices requiring a paid Twelve Data
+ * plan; a couple of wrong symbol codes) were classified as generic
+ * 'unknown' provider errors, which made every request for one of them
+ * trigger the circuit breaker's healthCheck() confirmation - and once
+ * enough of those piled up, tripped the circuit for the ENTIRE provider,
+ * taking down every other (perfectly valid) symbol along with it. This is
+ * what actually distinguishes "this one symbol will never work" (retrying
+ * it, on this account/plan, changes nothing - never a provider health
+ * signal) from "the provider itself is unwell" (see provider-manager.ts's
+ * withFailover, which skips circuit-breaker involvement entirely for
+ * this kind).
+ */
+export function isTwelveDataSymbolError(json: unknown): boolean {
+  if (!isTwelveDataError(json)) return false;
+  if (isTwelveDataRateLimited(json)) return false; // rate limits are transient, never symbol-specific
+  const code = (json as Record<string, unknown>).code;
+  const message = String((json as Record<string, unknown>).message ?? '').toLowerCase();
+  return (
+    code === 400 ||
+    code === 404 ||
+    message.includes('missing or invalid') ||
+    message.includes('available starting with') ||
+    message.includes('not found') ||
+    message.includes('not supported')
+  );
+}
+
 function num(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;

@@ -3,6 +3,24 @@ import { admitCircuitRequest, circuitSnapshot, recordCircuitFailure, recordCircu
 import { admitProviderRequest, type ProviderBudgetPolicy, type RequestPriority } from './quota-manager';
 import { ProviderError, type MarketDataProvider } from './types';
 
+/**
+ * A `not_found` [ProviderError] means one specific symbol is invalid or
+ * unavailable on the account's plan tier - a permanent, symbol-specific
+ * outcome that retrying (or confirming provider health) can never change.
+ * Confirmed live (2026-09-15): treating this the same as a genuine
+ * transient/infra fault meant a handful of misconfigured catalog symbols
+ * each spent a healthCheck() confirmation call and, once enough piled up
+ * under real request volume, tripped the circuit for the WHOLE provider -
+ * taking every other, perfectly valid symbol down with it. Skipping
+ * confirmation and circuit-breaker involvement entirely for this kind is
+ * what actually fixes that: the error still propagates (the route handler
+ * already treats a thrown error for one symbol as "no data for this
+ * symbol", same as a null result), it just never touches provider health.
+ */
+function isSymbolSpecificError(err: unknown): boolean {
+  return err instanceof ProviderError && err.kind === 'not_found';
+}
+
 interface InMemoryHealth {
   lastSuccessAt: number | null;
   lastErrorAt: number | null;
@@ -195,6 +213,10 @@ export class MarketProviderManager {
               return { result, source: this.primary.id };
             } catch (err) {
               recordFailure(this.primary.id, (err as Error).message);
+              if (isSymbolSpecificError(err)) {
+                if (admission.isProbe) releaseCircuitProbe(this.primary.id); // claimed but never a real health signal - free the slot
+                throw err; // never a provider-health event - see isSymbolSpecificError
+              }
               if (admission.isProbe) {
                 // The half-open trial's own outcome IS the confirmation -
                 // no separate healthCheck needed (would just double-spend
@@ -243,7 +265,9 @@ export class MarketProviderManager {
               // needlessly trip the circuit and disable Alpaca. There is no
               // further fallback either way, so the real error always
               // propagates - only whether the circuit trips differs.
-              if (admission.isProbe) {
+              if (isSymbolSpecificError(err)) {
+                if (admission.isProbe) releaseCircuitProbe(this.secondary.id); // never a provider-health signal - see isSymbolSpecificError
+              } else if (admission.isProbe) {
                 recordCircuitFailure(this.secondary.id);
               } else {
                 const confirmation = await this.confirmUnhealthy(this.secondary.id, this.secondary);
@@ -309,6 +333,10 @@ export class MarketProviderManager {
               return { result, source: this.primary.id };
             } catch (err) {
               recordFailure(this.primary.id, (err as Error).message);
+              if (isSymbolSpecificError(err)) {
+                if (admission.isProbe) releaseCircuitProbe(this.primary.id); // never a provider-health signal - see isSymbolSpecificError
+                throw err;
+              }
               if (admission.isProbe) {
                 recordCircuitFailure(this.primary.id); // the trial's own failure is the confirmation
               } else {
@@ -342,7 +370,9 @@ export class MarketProviderManager {
             } catch (err) {
               recordFailure(this.secondary.id, (err as Error).message);
               // Finding 2: same confirmed-unhealthy treatment as the primary.
-              if (admission.isProbe) {
+              if (isSymbolSpecificError(err)) {
+                if (admission.isProbe) releaseCircuitProbe(this.secondary.id); // never a provider-health signal - see isSymbolSpecificError
+              } else if (admission.isProbe) {
                 recordCircuitFailure(this.secondary.id);
               } else {
                 const confirmation = await this.confirmUnhealthy(this.secondary.id, this.secondary);

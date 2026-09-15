@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isTwelveDataRateLimited,
+  isTwelveDataSymbolError,
   parseTwelveDataCandles,
   parseTwelveDataMarketStatus,
   parseTwelveDataQuote,
@@ -65,6 +66,49 @@ describe('isTwelveDataRateLimited', () => {
 
   it('never flags a success response', () => {
     expect(isTwelveDataRateLimited({ close: '1.0' })).toBe(false);
+  });
+});
+
+describe('isTwelveDataSymbolError', () => {
+  // Confirmed live (2026-09-15): both exact messages Twelve Data actually
+  // returned for MKR's catalog - a plan-restricted index and an invalid
+  // symbol string - see provider-manager.ts's isSymbolSpecificError for
+  // why correctly classifying these (instead of the old blanket 'unknown')
+  // matters: they must never spend a circuit-breaker health confirmation.
+  it('detects a plan-tier restriction message', () => {
+    expect(
+      isTwelveDataSymbolError({
+        status: 'error',
+        message: 'This symbol is available starting with the Grow or Venture plan. Consider upgrading now at https://twelvedata.com/pricing',
+      }),
+    ).toBe(true);
+  });
+
+  it('detects an invalid-symbol-parameter message', () => {
+    expect(
+      isTwelveDataSymbolError({
+        status: 'error',
+        message: '**symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation',
+      }),
+    ).toBe(true);
+  });
+
+  it('detects a 400 or 404 code even without a matching message pattern', () => {
+    expect(isTwelveDataSymbolError({ status: 'error', code: 400, message: 'something else entirely' })).toBe(true);
+    expect(isTwelveDataSymbolError({ status: 'error', code: 404, message: 'something else entirely' })).toBe(true);
+  });
+
+  it('never flags a rate-limit error as symbol-specific, even one shaped like code 400', () => {
+    expect(isTwelveDataSymbolError({ status: 'error', code: 400, message: 'You have run out of API credits' })).toBe(false);
+    expect(isTwelveDataSymbolError({ status: 'error', code: 429, message: 'too many requests' })).toBe(false);
+  });
+
+  it('never flags a success response', () => {
+    expect(isTwelveDataSymbolError({ close: '1.0' })).toBe(false);
+  });
+
+  it('does not flag an error with neither a matching code nor a matching message', () => {
+    expect(isTwelveDataSymbolError({ status: 'error', code: 500, message: 'internal server error' })).toBe(false);
   });
 });
 
