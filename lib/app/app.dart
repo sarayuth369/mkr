@@ -42,6 +42,7 @@ import '../features/calendar/domain/economic_calendar_service.dart';
 import '../features/gold/application/gold_radar_controller.dart';
 import '../features/home/application/home_controller.dart';
 import '../features/markets/application/markets_controller.dart';
+import '../features/markets/data/market_catalog_repository.dart';
 import '../features/markets/data/market_data_config.dart';
 import '../features/markets/data/market_provider_manager.dart';
 import '../features/markets/data/mock_market_service.dart';
@@ -86,7 +87,11 @@ MarketService _buildMarketService() {
     secondaryEnabled: config.secondaryEnabled,
   );
   unawaited(manager.connect());
-  return ProviderBackedMarketService(manager);
+  // 2026-09-15 hardening task: real mode now sources its symbol list from
+  // the backend's own catalog (`GET /api/mkr/market/symbols`), never
+  // MockMarketCatalog - see MarketCatalogRepository's doc comment.
+  final catalog = MarketCatalogRepository(backendBaseUrl: config.backendBaseUrl);
+  return ProviderBackedMarketService(manager, catalog);
 }
 
 /// Real [CloudflareMarketAIService] (Cloudflare Workers AI, proxied through
@@ -132,9 +137,20 @@ EconomicCalendarService _buildEconomicCalendarService() {
 }
 
 class MkrApp extends StatelessWidget {
-  const MkrApp({super.key, required this.store});
+  const MkrApp({super.key, required this.store, MarketService? marketService}) : _marketServiceOverride = marketService;
 
   final AppLocalStore store;
+
+  /// Test-only seam (2026-09-15 hardening task): widget tests construct
+  /// [MkrApp] directly with no way to control `MarketDataConfig`'s
+  /// environment-derived real/demo mode, so a widget/navigation smoke test
+  /// would otherwise always exercise the REAL network path (previously
+  /// masked by [ProviderBackedMarketService] silently using the static
+  /// [MockMarketCatalog] even in "real" mode - the exact bug this task
+  /// fixes). Passing an explicit [MarketService] here (e.g.
+  /// [MockMarketService]) makes such tests deterministic without any
+  /// network dependency; production `main.dart` never passes this.
+  final MarketService? _marketServiceOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -146,7 +162,7 @@ class MkrApp extends StatelessWidget {
 
         // Backend-abstraction seams — swap Mock* for real implementations
         // behind these same interfaces in Phase 2.
-        Provider<MarketService>(create: (_) => _buildMarketService()),
+        Provider<MarketService>(create: (_) => _marketServiceOverride ?? _buildMarketService()),
         Provider<MarketAIService>(create: (_) => _buildMarketAIService()),
         Provider<NewsService>(create: (_) => _buildNewsService()),
         Provider<EconomicCalendarService>(create: (_) => _buildEconomicCalendarService()),
@@ -186,7 +202,7 @@ class MkrApp extends StatelessWidget {
         ),
 
         ChangeNotifierProvider(create: (ctx) => EntitlementController(ctx.read<BillingRepository>())),
-        ChangeNotifierProvider(create: (ctx) => WatchlistController(ctx.read<WatchlistRepository>())),
+        ChangeNotifierProvider(create: (ctx) => WatchlistController(ctx.read<WatchlistRepository>(), ctx.read<MarketService>())),
         ChangeNotifierProvider(
           create: (ctx) => AlertsController(
             repository: ctx.read<AlertRepository>(),

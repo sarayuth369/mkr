@@ -3,6 +3,7 @@ import 'package:mkr/domain/asset_class.dart';
 import 'package:mkr/domain/market_data_source.dart';
 import 'package:mkr/domain/market_session_status.dart';
 import 'package:mkr/features/markets/data/providers/twelve_data_parser.dart';
+import 'package:mkr/features/markets/domain/market_fetch_result.dart';
 
 Map<String, dynamic> _envelope(Map<String, dynamic>? data) => {'success': true, 'data': data};
 Map<String, dynamic> _listEnvelope(List<dynamic>? data) => {'success': true, 'data': data};
@@ -152,13 +153,16 @@ void main() {
     });
   });
 
-  group('parseQuotesBatch', () {
+  group('parseQuotesBatchResult (2026-09-15 hardening task)', () {
     // Regression coverage for the "N individual /quote calls exhausts
     // Twelve Data Free's rate limit" bug found live: getQuotes() must
     // consume the batch endpoint's flat items array in one pass, not loop
-    // parseQuote per symbol.
-    test('parses every item in the batch response', () {
-      final quotes = TwelveDataParser.parseQuotesBatch(
+    // parseQuote per symbol. ALSO regression coverage for the physical-
+    // device bug this task exists to close: a provider failure/malformed
+    // response must become a typed MarketFetchFailure, never silently
+    // collapse into the same shape as a genuine empty result.
+    test('parses every item in the batch response as MarketFetchSuccess', () {
+      final result = TwelveDataParser.parseQuotesBatchResult(
         json: _envelope({
           'items': [
             {'symbol': 'AAPL', 'price': 227.5},
@@ -168,13 +172,35 @@ void main() {
         }),
         assetClassFor: (symbol) => symbol == 'XAU/USD' ? AssetClass.gold : AssetClass.usStock,
       );
+      expect(result, isA<MarketFetchSuccess>());
+      final quotes = result.quotes;
       expect(quotes, hasLength(2));
       expect(quotes.firstWhere((q) => q.symbol == 'AAPL').price, 227.5);
       expect(quotes.firstWhere((q) => q.symbol == 'XAU/USD').assetClass, AssetClass.gold);
+      // Canonical symbol formats (both slash-containing and plain) survive intact.
+      expect(quotes.map((q) => q.symbol), containsAll(['AAPL', 'XAU/USD']));
     });
 
-    test('skips an item missing a price rather than fabricating one', () {
-      final quotes = TwelveDataParser.parseQuotesBatch(
+    test('a partial batch (valid items + errors) becomes MarketFetchPartial - successful quotes stay visible, failed symbols are listed', () {
+      final result = TwelveDataParser.parseQuotesBatchResult(
+        json: _envelope({
+          'items': [
+            {'symbol': 'AAPL', 'price': 227.5},
+          ],
+          'errors': [
+            {'symbol': 'MSFT', 'code': 'PROVIDER_UNAVAILABLE', 'message': 'unavailable'},
+          ],
+        }),
+        assetClassFor: (_) => AssetClass.usStock,
+      );
+      expect(result, isA<MarketFetchPartial>());
+      final partial = result as MarketFetchPartial;
+      expect(partial.quotes.single.symbol, 'AAPL');
+      expect(partial.failedSymbols, ['MSFT']);
+    });
+
+    test('an item missing a price is skipped, never fabricated - a zero-item, zero-error result is a genuine MarketFetchEmpty', () {
+      final result = TwelveDataParser.parseQuotesBatchResult(
         json: _envelope({
           'items': [
             {'symbol': 'AAPL'},
@@ -183,18 +209,36 @@ void main() {
         }),
         assetClassFor: (_) => AssetClass.usStock,
       );
-      expect(quotes, isEmpty);
+      expect(result, isA<MarketFetchEmpty>());
     });
 
-    test('returns empty for an error envelope', () {
-      expect(
-        TwelveDataParser.parseQuotesBatch(json: _errorEnvelope('PROVIDER_UNAVAILABLE'), assetClassFor: (_) => AssetClass.usStock),
-        isEmpty,
+    test('every requested symbol failing (zero items, non-empty errors) is a MarketFetchFailure, not an empty result', () {
+      final result = TwelveDataParser.parseQuotesBatchResult(
+        json: _envelope({
+          'items': [],
+          'errors': [
+            {'symbol': 'AAPL', 'code': 'PROVIDER_RATE_LIMIT', 'message': 'rate limited'},
+          ],
+        }),
+        assetClassFor: (_) => AssetClass.usStock,
       );
+      expect(result, isA<MarketFetchFailure>());
     });
 
-    test('returns empty when items is missing or not a list', () {
-      expect(TwelveDataParser.parseQuotesBatch(json: _envelope(const {}), assetClassFor: (_) => AssetClass.usStock), isEmpty);
+    test('an error envelope (HTTP 429/5xx-classified) becomes MarketFetchFailure carrying the backend\'s message, never an empty result', () {
+      final result = TwelveDataParser.parseQuotesBatchResult(json: _errorEnvelope('PROVIDER_UNAVAILABLE', 'Market data provider is currently unavailable.'), assetClassFor: (_) => AssetClass.usStock);
+      expect(result, isA<MarketFetchFailure>());
+      expect((result as MarketFetchFailure).message, 'Market data provider is currently unavailable.');
+    });
+
+    test('a malformed response (items missing or not a list) becomes MarketFetchFailure, never an empty result', () {
+      final result = TwelveDataParser.parseQuotesBatchResult(json: _envelope(const {}), assetClassFor: (_) => AssetClass.usStock);
+      expect(result, isA<MarketFetchFailure>());
+    });
+
+    test('a non-Map data body becomes MarketFetchFailure', () {
+      final result = TwelveDataParser.parseQuotesBatchResult(json: _listEnvelope(const []), assetClassFor: (_) => AssetClass.usStock);
+      expect(result, isA<MarketFetchFailure>());
     });
   });
 }

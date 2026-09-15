@@ -1,13 +1,14 @@
 import 'dart:async';
 
 import '../../../core/widgets/price_chart.dart';
-import '../../../data/mock_market_catalog.dart';
 import '../../../domain/asset_class.dart';
 import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import '../domain/market_fetch_result.dart';
 import '../domain/market_service.dart';
 import '../domain/timeframe.dart';
+import 'market_catalog_repository.dart';
 import 'market_provider_manager.dart';
 
 /// [MarketService] implementation backed by a real [MarketProviderManager]
@@ -17,14 +18,22 @@ import 'market_provider_manager.dart';
 /// keeps depending on the unchanged [MarketService] interface and needs no
 /// changes to use this instead of [MockMarketService].
 ///
-/// Symbols this provider set doesn't cover (see [SymbolMapper]) are simply
-/// omitted from list results rather than backfilled with a fabricated
-/// value — callers already handle a shorter-than-expected list the same
-/// way they handle any other partial/empty state.
+/// 2026-09-15 hardening task: which symbols to request now comes from
+/// [MarketCatalogRepository] (the real backend catalog), never
+/// [MockMarketCatalog] — a disabled/removed backend symbol is never
+/// requested, and the mock catalog is never used as a silent fallback if
+/// the real catalog fails to load (that surfaces as an honest
+/// [MarketFetchFailure] instead).
+///
+/// Symbols this provider set doesn't cover are simply omitted from list
+/// results rather than backfilled with a fabricated value — callers already
+/// handle a shorter-than-expected list the same way they handle any other
+/// partial/empty state.
 class ProviderBackedMarketService implements MarketService {
-  ProviderBackedMarketService(this._manager);
+  ProviderBackedMarketService(this._manager, this._catalog);
 
   final MarketProviderManager _manager;
+  final MarketCatalogRepository _catalog;
 
   @override
   MarketDataMode get mode => _manager.mode;
@@ -32,20 +41,36 @@ class ProviderBackedMarketService implements MarketService {
   @override
   DateTime? get lastUpdated => _manager.lastUpdated;
 
-  @override
-  Future<List<MarketQuote>> getAllQuotes() {
-    final symbols = MockMarketCatalog.all.map((q) => q.symbol).toList();
+  Future<MarketFetchResult> _fetchSymbols(List<String> Function(List<CatalogSymbol>) select) async {
+    final List<CatalogSymbol> catalog;
+    try {
+      catalog = await _catalog.load();
+    } on MarketCatalogException catch (e) {
+      return MarketFetchFailure(MarketFetchFailureKind.offline, e.message);
+    }
+    final symbols = select(catalog);
+    if (symbols.isEmpty) return const MarketFetchEmpty();
     return _manager.getQuotes(symbols);
   }
 
   @override
-  Future<List<MarketQuote>> getQuotesByCategory(AssetClass assetClass) {
-    final symbols = MockMarketCatalog.byAssetClass(assetClass).map((q) => q.symbol).toList();
-    return _manager.getQuotes(symbols);
+  Future<MarketFetchResult> getAllQuotes() {
+    return _fetchSymbols((catalog) => catalog.map((s) => s.symbol).toList());
+  }
+
+  @override
+  Future<MarketFetchResult> getQuotesByCategory(AssetClass assetClass) {
+    return _fetchSymbols((catalog) => catalog.where((s) => s.assetClass == assetClass).map((s) => s.symbol).toList());
   }
 
   @override
   Future<MarketQuote?> getQuote(String symbol) => _manager.getQuote(symbol);
+
+  @override
+  Future<MarketFetchResult> getQuotesFor(List<String> symbols) {
+    if (symbols.isEmpty) return Future.value(const MarketFetchEmpty());
+    return _manager.getQuotes(symbols);
+  }
 
   @override
   Future<List<double>> getPriceSeries(String symbol, ChartTimeframe timeframe) async {
@@ -54,9 +79,12 @@ class ProviderBackedMarketService implements MarketService {
   }
 
   @override
-  Future<List<MarketQuote>> search(String query) {
-    final symbols = MockMarketCatalog.search(query).map((q) => q.symbol).toList();
-    return _manager.getQuotes(symbols);
+  Future<MarketFetchResult> search(String query) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return Future.value(const MarketFetchEmpty());
+    return _fetchSymbols(
+      (catalog) => catalog.where((s) => s.symbol.toLowerCase().contains(q) || s.displayName.toLowerCase().contains(q)).map((s) => s.symbol).toList(),
+    );
   }
 
   @override

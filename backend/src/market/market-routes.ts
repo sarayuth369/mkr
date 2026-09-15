@@ -214,3 +214,47 @@ export async function handleMarketHealth(_request: Request, env: Env, _requestId
   });
   return jsonResponse(value);
 }
+
+export interface PublicSymbol {
+  symbol: string;
+  displayName: string;
+  category: string;
+  featured: boolean;
+  sortOrder: number;
+  defaultTimeframe: string;
+}
+
+/**
+ * 2026-09-15 frontend hardening task: the public, read-only counterpart to
+ * `GET /api/mkr/admin/symbols` - reuses the SAME D1 `symbols` table (no
+ * second catalog database), filtered to `enabled = 1` and stripped to only
+ * the fields a client actually needs (display metadata + asset category).
+ * Provider-specific mapping (`twelve_data_symbol`/`alpaca_symbol`) is
+ * deliberately NOT exposed here - Flutter sends plain MKR symbols to
+ * `/quote(s)`/`/candles`/`/status`; the backend already does provider
+ * mapping server-side (see provider-manager.ts), so the client has no need
+ * for (and should never special-case) a provider symbol.
+ *
+ * This is what lets production Flutter stop treating `MockMarketCatalog`
+ * as the source of truth for which symbols to request - it can now build
+ * its own real-mode catalog from exactly what this deployment's backend
+ * currently has enabled, so a disabled/removed symbol is never requested
+ * and a newly-enabled one appears without an app update.
+ */
+export async function handleMarketSymbols(_request: Request, env: Env, _requestId: string): Promise<Response> {
+  const { value } = await cachedFetch(env.MKR_CACHE, 'market:symbols:v1', 300, async () => {
+    const rows = await catalogFor(env).all();
+    const symbols: PublicSymbol[] = rows
+      .filter((row) => row.enabled !== 0)
+      .map((row) => ({
+        symbol: row.symbol,
+        displayName: row.display_name,
+        category: row.category,
+        featured: row.featured !== 0,
+        sortOrder: row.sort_order,
+        defaultTimeframe: row.default_timeframe,
+      }));
+    return symbols;
+  });
+  return jsonResponse(value);
+}

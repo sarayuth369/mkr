@@ -10,6 +10,7 @@ import '../../../../domain/market_candle.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../domain/market_session_status.dart';
 import '../../domain/market_data_provider.dart';
+import '../../domain/market_fetch_result.dart';
 import '../../domain/timeframe.dart';
 import '../market_data_config.dart';
 import '../symbol_mapping.dart';
@@ -66,27 +67,61 @@ class AlpacaProvider implements MarketDataProvider {
     }
   }
 
+  /// Standby-only (see [activated]): `!activated` and "this symbol has no
+  /// Alpaca mapping" both stay a plain `null` — that is genuinely "no data
+  /// from this provider", not a fetch fault. A real HTTP/network fault once
+  /// activated DOES throw [MarketFetchException] (2026-09-15 hardening
+  /// task), matching [TwelveDataProvider.getQuote]'s contract.
   @override
   Future<MarketQuote?> getQuote(String symbol) async {
     if (!activated) return null;
     final providerSymbol = _symbolMapper.toProviderSymbol(symbol, MarketDataProviderId.alpaca);
     if (providerSymbol == null) return null;
 
+    final http.Response response;
     try {
-      final response = await _http.get(_restUri('/api/mkr/alpaca/snapshot', {'symbol': providerSymbol}));
-      if (response.statusCode != 200) return null;
-      final json = jsonDecode(response.body);
-      if (json is! Map<String, dynamic>) return null;
-      return AlpacaParser.parseSnapshot(json: json, mkrSymbol: symbol, assetClass: _assetClassFor(symbol));
+      response = await _http.get(_restUri('/api/mkr/alpaca/snapshot', {'symbol': providerSymbol}));
     } catch (_) {
-      return null;
+      throw const MarketFetchException(MarketFetchFailureKind.offline, 'Could not reach the market data service.');
     }
+    if (response.statusCode != 200) {
+      throw MarketFetchException(MarketFetchFailureKind.providerError, 'Market data request failed (HTTP ${response.statusCode}).');
+    }
+    final dynamic json;
+    try {
+      json = jsonDecode(response.body);
+    } catch (_) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    if (json is! Map<String, dynamic>) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    return AlpacaParser.parseSnapshot(json: json, mkrSymbol: symbol, assetClass: _assetClassFor(symbol));
   }
 
   @override
-  Future<List<MarketQuote>> getQuotes(List<String> symbols) async {
-    final results = await Future.wait(symbols.map(getQuote));
-    return results.whereType<MarketQuote>().toList();
+  Future<MarketFetchResult> getQuotes(List<String> symbols) async {
+    if (symbols.isEmpty) return const MarketFetchEmpty();
+    if (!activated) return const MarketFetchEmpty(); // standby - genuinely nothing from this provider, not a fault
+
+    final quotes = <MarketQuote>[];
+    final failedSymbols = <String>[];
+    MarketFetchFailureKind? hardFailureKind;
+    String? hardFailureMessage;
+    for (final symbol in symbols) {
+      try {
+        final quote = await getQuote(symbol);
+        if (quote != null) quotes.add(quote);
+      } on MarketFetchException catch (e) {
+        failedSymbols.add(symbol);
+        hardFailureKind = e.kind;
+        hardFailureMessage = e.message;
+      }
+    }
+    if (quotes.isEmpty && failedSymbols.isEmpty) return const MarketFetchEmpty();
+    if (quotes.isEmpty) return MarketFetchFailure(hardFailureKind!, hardFailureMessage!);
+    if (failedSymbols.isNotEmpty) return MarketFetchPartial(quotes, failedSymbols);
+    return MarketFetchSuccess(quotes);
   }
 
   @override

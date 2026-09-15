@@ -962,6 +962,12 @@ abstract class AppLocalizations {
   /// **'No symbols match your search'**
   String get marketsNoSymbolsMatch;
 
+  /// No description provided for @marketsPartialData.
+  ///
+  /// In en, this message translates to:
+  /// **'Some symbols are temporarily unavailable'**
+  String get marketsPartialData;
+
   /// No description provided for @marketDetailSymbolNotFound.
   ///
   /// In en, this message translates to:

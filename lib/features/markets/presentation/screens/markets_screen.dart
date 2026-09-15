@@ -8,6 +8,7 @@ import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/asset_class.dart';
+import '../../../../domain/market_data_mode.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../ads/presentation/widgets/mkr_ad_slot.dart';
 import '../../application/markets_controller.dart';
@@ -51,7 +52,7 @@ class _MarketsScreenState extends State<MarketsScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: MarketDataStatusChip(mode: controller.mode, lastUpdated: controller.lastUpdated),
+            child: MarketDataStatusChip(mode: controller.mode.effectiveFor(controller.state), lastUpdated: controller.lastUpdated),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -103,19 +104,31 @@ class _MarketsScreenState extends State<MarketsScreen> {
                   if (quotes.isEmpty) {
                     return EmptyState(message: l10n.marketsNoSymbolsMatch, icon: Icons.search_off);
                   }
-                  return ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: quotes.length,
-                    itemBuilder: (context, index) {
-                      final quote = quotes[index];
-                      return AssetRow(
-                        quote: quote,
-                        sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
+                  return Column(
+                    children: [
+                      // Non-blocking degraded indicator (task: "render the
+                      // valid symbols and expose a non-blocking degraded/
+                      // error indication rather than hiding all successful
+                      // data") - shown alongside the real data, never in
+                      // place of it.
+                      if (controller.state.isPartial) _PartialDataBanner(message: l10n.marketsPartialData),
+                      Expanded(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: quotes.length,
+                          itemBuilder: (context, index) {
+                            final quote = quotes[index];
+                            return AssetRow(
+                              quote: quote,
+                              sparkline: MockMarketCatalog.syntheticSeries(quote.symbol, points: 10),
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(builder: (_) => MarketDetailScreen(symbol: quote.symbol)),
+                              ),
+                            );
+                          },
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   );
                 },
               ),
@@ -125,6 +138,39 @@ class _MarketsScreenState extends State<MarketsScreen> {
         ),
       ),
       bottomNavigationBar: const MkrBottomBannerAd(),
+    );
+  }
+}
+
+class _PartialDataBanner extends StatelessWidget {
+  const _PartialDataBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 16, color: theme.colorScheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onErrorContainer),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

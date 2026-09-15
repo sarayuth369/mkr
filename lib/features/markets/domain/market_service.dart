@@ -3,21 +3,39 @@ import '../../../domain/asset_class.dart';
 import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import 'market_fetch_result.dart';
 import 'timeframe.dart';
 
 /// Production path: Flutter → Cloudflare Worker → Twelve Data (or similar)
 /// for live quotes — the client never holds a market-data API key.
 /// [MockMarketService] serves the static catalog until that backend exists.
+///
+/// [getAllQuotes]/[getQuotesByCategory]/[search] return a typed
+/// [MarketFetchResult] (2026-09-15 frontend hardening task) rather than a
+/// bare `List<MarketQuote>` — a real implementation must NEVER collapse a
+/// provider failure, rate limit, or offline state into an indistinguishable
+/// empty list; an empty list is reserved for a genuinely valid zero-item
+/// result. See [ProviderBackedMarketService]/[MarketProviderManager] for how
+/// this is produced in real mode.
 abstract class MarketService {
-  Future<List<MarketQuote>> getAllQuotes();
+  Future<MarketFetchResult> getAllQuotes();
 
-  Future<List<MarketQuote>> getQuotesByCategory(AssetClass assetClass);
+  Future<MarketFetchResult> getQuotesByCategory(AssetClass assetClass);
 
+  /// ONE batched fetch for a caller-supplied symbol list (e.g. the user's
+  /// Watchlist) - distinct from [getAllQuotes]/[getQuotesByCategory], which
+  /// derive their own symbol list from the catalog. Still never N
+  /// individual `/quote` calls.
+  Future<MarketFetchResult> getQuotesFor(List<String> symbols);
+
+  /// Returns `null` only for a genuine "no data for this symbol" outcome.
+  /// Throws [MarketFetchException] for a real fetch fault — every caller
+  /// already wraps this in try/catch and converts it to `ApiState.error`.
   Future<MarketQuote?> getQuote(String symbol);
 
   Future<List<double>> getPriceSeries(String symbol, ChartTimeframe timeframe);
 
-  Future<List<MarketQuote>> search(String query);
+  Future<MarketFetchResult> search(String query);
 
   /// Where the data returned above is actually coming from right now.
   /// A real implementation flips this to [MarketDataMode.live] only once

@@ -149,6 +149,7 @@
   "homeNothingScheduled": "วันนี้ยังไม่มีเหตุการณ์สำคัญ",
   "marketsNoMarketsAvailable": "ไม่มีข้อมูลตลาด",
   "marketsNoSymbolsMatch": "ไม่พบสัญลักษณ์ที่ตรงกับการค้นหา",
+  "marketsPartialData": "บางสัญลักษณ์ไม่พร้อมใช้งานชั่วคราว",
   "marketDetailSymbolNotFound": "ไม่พบสัญลักษณ์นี้",
   "goldRadarUnavailable": "ไม่มีข้อมูลทองคำ",
   "goldSpotSubtitle": "ทองคำสปอต",

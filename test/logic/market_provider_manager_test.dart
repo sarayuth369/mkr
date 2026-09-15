@@ -7,6 +7,7 @@ import 'package:mkr/domain/market_quote.dart';
 import 'package:mkr/domain/market_session_status.dart';
 import 'package:mkr/features/markets/data/market_provider_manager.dart';
 import 'package:mkr/features/markets/domain/market_data_provider.dart';
+import 'package:mkr/features/markets/domain/market_fetch_result.dart';
 import 'package:mkr/features/markets/domain/timeframe.dart';
 
 MarketQuote _quote(String symbol, double price, {MarketDataSource source = MarketDataSource.twelveData}) => MarketQuote(
@@ -34,6 +35,14 @@ class FakeProvider implements MarketDataProvider {
   int healthCheckCalls = 0;
   Duration? healthCheckDelay;
 
+  /// Thrown by [getQuote] when set - simulates a real fetch fault (HTTP
+  /// non-200, malformed response, connection failure) instead of "no data".
+  MarketFetchException? quoteException;
+
+  /// Overrides [getQuotes]' derived result entirely when set - simulates a
+  /// provider-error/offline/partial batch outcome directly.
+  MarketFetchResult? quotesResult;
+
   @override
   Future<bool> healthCheck() async {
     healthCheckCalls++;
@@ -52,15 +61,18 @@ class FakeProvider implements MarketDataProvider {
   @override
   Future<MarketQuote?> getQuote(String symbol) async {
     getQuoteCalls++;
+    if (quoteException != null) throw quoteException!;
     return quoteResultFor != null ? quoteResultFor!(symbol) : quoteResult;
   }
 
   int getQuotesCalls = 0;
 
   @override
-  Future<List<MarketQuote>> getQuotes(List<String> symbols) async {
+  Future<MarketFetchResult> getQuotes(List<String> symbols) async {
     getQuotesCalls++;
-    return symbols.map((s) => quoteResultFor != null ? quoteResultFor!(s) : quoteResult).whereType<MarketQuote>().toList();
+    if (quotesResult != null) return quotesResult!;
+    final quotes = symbols.map((s) => quoteResultFor != null ? quoteResultFor!(s) : quoteResult).whereType<MarketQuote>().toList();
+    return quotes.isEmpty ? const MarketFetchEmpty() : MarketFetchSuccess(quotes);
   }
 
   @override
@@ -233,10 +245,103 @@ void main() {
     final primary = FakeProvider('twelveData', healthy: true)..quoteResultFor = (s) => _quote(s, 1);
     final manager = MarketProviderManager(primary: primary);
 
-    final results = await manager.getQuotes(['AAPL', 'MSFT', 'GOOGL']);
+    final result = await manager.getQuotes(['AAPL', 'MSFT', 'GOOGL']);
 
-    expect(results, hasLength(3));
+    expect(result.quotes, hasLength(3));
     expect(primary.getQuotesCalls, 1);
     expect(primary.getQuoteCalls, 0);
+  });
+
+  group('2026-09-15 frontend hardening — typed MarketFetchResult', () {
+    test('a provider failure never collapses into an empty result - returns MarketFetchFailure', () async {
+      final primary = FakeProvider('twelveData', healthy: true)
+        ..quotesResult = const MarketFetchFailure(MarketFetchFailureKind.providerError, 'HTTP 500');
+      final manager = MarketProviderManager(primary: primary);
+
+      final result = await manager.getQuotes(['AAPL', 'MSFT']);
+
+      expect(result, isA<MarketFetchFailure>());
+      expect((result as MarketFetchFailure).message, 'HTTP 500');
+    });
+
+    test('a partial batch (valid items + errors) preserves both - quotes stay visible, failed symbols are listed', () async {
+      final primary = FakeProvider('twelveData', healthy: true)
+        ..quotesResult = MarketFetchPartial([_quote('AAPL', 100)], ['MSFT']);
+      final manager = MarketProviderManager(primary: primary);
+
+      final result = await manager.getQuotes(['AAPL', 'MSFT']);
+
+      expect(result, isA<MarketFetchPartial>());
+      final partial = result as MarketFetchPartial;
+      expect(partial.quotes.single.symbol, 'AAPL');
+      expect(partial.failedSymbols, ['MSFT']);
+    });
+
+    test('a valid zero-item response with no error is a genuine MarketFetchEmpty, not a failure', () async {
+      final primary = FakeProvider('twelveData', healthy: true)..quotesResult = const MarketFetchEmpty();
+      final manager = MarketProviderManager(primary: primary);
+
+      final result = await manager.getQuotes(['NOSUCHSYMBOL']);
+
+      expect(result, isA<MarketFetchEmpty>());
+    });
+
+    test('lastUpdated does not advance after a failed or empty fetch', () async {
+      final primary = FakeProvider('twelveData', healthy: true)
+        ..quotesResult = const MarketFetchFailure(MarketFetchFailureKind.providerError, 'boom');
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      await manager.getQuotes(['AAPL']);
+
+      expect(manager.lastUpdated, isNull);
+    });
+
+    test('LIVE (mode) becomes true only via a successful connect, and lastUpdated only after real quote data', () async {
+      final primary = FakeProvider('twelveData', healthy: true)..quotesResult = MarketFetchSuccess([_quote('AAPL', 1)]);
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+      expect(manager.mode, MarketDataMode.live);
+      expect(manager.lastUpdated, isNull); // connected, but no data fetched yet
+
+      await manager.getQuotes(['AAPL']);
+
+      expect(manager.lastUpdated, isNotNull);
+    });
+
+    test('a thrown MarketFetchException from getQuote surfaces to the caller once there is no fallback, never a silent null', () async {
+      final primary = FakeProvider('twelveData', healthy: true)
+        ..quoteException = const MarketFetchException(MarketFetchFailureKind.providerError, 'rate limited');
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      await expectLater(manager.getQuote('AAPL'), throwsA(isA<MarketFetchException>()));
+    });
+
+    test('concurrent identical getQuotes calls coalesce into one provider call (client-side single-flight)', () async {
+      final primary = FakeProvider('twelveData', healthy: true)..quoteResultFor = (s) => _quote(s, 1);
+      final manager = MarketProviderManager(primary: primary);
+
+      final results = await Future.wait([
+        manager.getQuotes(['AAPL', 'MSFT']),
+        manager.getQuotes(['MSFT', 'AAPL']), // same set, different order - still the same request
+      ]);
+
+      expect(primary.getQuotesCalls, 1);
+      expect(results[0].quotes, hasLength(2));
+      expect(results[1].quotes, hasLength(2));
+    });
+
+    test('different symbol sets requested concurrently are NOT coalesced', () async {
+      final primary = FakeProvider('twelveData', healthy: true)..quoteResultFor = (s) => _quote(s, 1);
+      final manager = MarketProviderManager(primary: primary);
+
+      await Future.wait([
+        manager.getQuotes(['AAPL']),
+        manager.getQuotes(['MSFT']),
+      ]);
+
+      expect(primary.getQuotesCalls, 2);
+    });
   });
 }

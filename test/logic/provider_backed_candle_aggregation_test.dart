@@ -4,9 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mkr/domain/market_candle.dart';
 import 'package:mkr/domain/market_quote.dart';
 import 'package:mkr/domain/market_session_status.dart';
+import 'package:mkr/features/markets/data/market_catalog_repository.dart';
 import 'package:mkr/features/markets/data/market_provider_manager.dart';
 import 'package:mkr/features/markets/data/provider_backed_market_service.dart';
 import 'package:mkr/features/markets/domain/market_data_provider.dart';
+import 'package:mkr/features/markets/domain/market_fetch_result.dart';
 import 'package:mkr/features/markets/domain/timeframe.dart';
 
 class _FakeCandleProvider implements MarketDataProvider {
@@ -33,7 +35,7 @@ class _FakeCandleProvider implements MarketDataProvider {
   Future<MarketQuote?> getQuote(String symbol) async => null;
 
   @override
-  Future<List<MarketQuote>> getQuotes(List<String> symbols) async => const [];
+  Future<MarketFetchResult> getQuotes(List<String> symbols) async => const MarketFetchEmpty();
 
   @override
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) async => history;
@@ -57,7 +59,7 @@ void main() {
     final seed = [_candle(bucketStart, 100)];
     final provider = _FakeCandleProvider(seed);
     final manager = MarketProviderManager(primary: provider);
-    final service = ProviderBackedMarketService(manager);
+    final service = ProviderBackedMarketService(manager, MarketCatalogRepository(backendBaseUrl: 'https://unused.invalid'));
 
     final updates = <List<MarketCandle>>[];
     final sub = service.watchCandles('AAPL', Timeframe.h1).listen(updates.add);

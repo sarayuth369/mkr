@@ -1,6 +1,7 @@
 import '../../../domain/market_candle.dart';
 import '../../../domain/market_quote.dart';
 import '../../../domain/market_session_status.dart';
+import 'market_fetch_result.dart';
 import 'timeframe.dart';
 
 /// One real (or demo) market-data source, behind a single provider-agnostic
@@ -15,9 +16,20 @@ abstract class MarketDataProvider {
   /// Stable identifier used in logs/telemetry and by [MarketDataSource].
   String get id;
 
+  /// Returns `null` only for a genuine "no data for this symbol" outcome
+  /// (an unsupported symbol, or a healthy-but-empty backend response).
+  /// Throws [MarketFetchException] for a real fetch fault (HTTP non-200,
+  /// malformed response, a provider error envelope, a timeout, or a
+  /// connection failure) — 2026-09-15 hardening task: a real failure must
+  /// never be silently indistinguishable from "no data".
   Future<MarketQuote?> getQuote(String symbol);
 
-  Future<List<MarketQuote>> getQuotes(List<String> symbols);
+  /// Never throws — every outcome (full success, partial success with
+  /// per-symbol failures, a genuinely empty result, or a hard provider/
+  /// offline failure) is encoded in the returned [MarketFetchResult] so
+  /// [MarketProviderManager] can react uniformly without a try/catch around
+  /// every call site.
+  Future<MarketFetchResult> getQuotes(List<String> symbols);
 
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe);
 

@@ -445,6 +445,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get marketsNoSymbolsMatch => 'No symbols match your search';
 
   @override
+  String get marketsPartialData => 'Some symbols are temporarily unavailable';
+
+  @override
   String get marketDetailSymbolNotFound => 'Symbol not found';
 
   @override

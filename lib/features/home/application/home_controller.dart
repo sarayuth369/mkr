@@ -10,6 +10,7 @@ import '../../../domain/radar_item.dart';
 import '../../ai/domain/ai_insight.dart';
 import '../../ai/domain/market_ai_service.dart';
 import '../../calendar/domain/economic_calendar_service.dart';
+import '../../markets/domain/market_fetch_result.dart';
 import '../../markets/domain/market_service.dart';
 
 class HomeController extends ChangeNotifier {
@@ -100,17 +101,34 @@ class HomeController extends ChangeNotifier {
     _briefState = const ApiState.loading();
     notifyListeners();
 
+    // 2026-09-15 hardening task: a provider/offline failure becomes
+    // ApiState.error for BOTH curated sections - never silently rendered
+    // as an empty/success state just because Home only shows a filtered
+    // subset of the full catalog result.
     try {
-      final all = await _marketService.getAllQuotes();
-      final bySymbol = {for (final q in all) q.symbol: q};
-      _pulseState = ApiState.success(
-        [for (final s in pulseSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
-      );
-      _snapshotState = ApiState.success(
-        [for (final s in snapshotSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
-      );
-      _gold = bySymbol['XAU/USD'];
-      _watchLiveQuotes();
+      final result = await _marketService.getAllQuotes();
+      switch (result) {
+        case MarketFetchSuccess(:final quotes):
+        case MarketFetchPartial(:final quotes):
+          final bySymbol = {for (final q in quotes) q.symbol: q};
+          final isPartial = result is MarketFetchPartial;
+          _pulseState = ApiState.success(
+            [for (final s in pulseSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
+            isPartial: isPartial,
+          );
+          _snapshotState = ApiState.success(
+            [for (final s in snapshotSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
+            isPartial: isPartial,
+          );
+          _gold = bySymbol['XAU/USD'];
+          _watchLiveQuotes();
+        case MarketFetchEmpty():
+          _pulseState = const ApiState.empty();
+          _snapshotState = const ApiState.empty();
+        case MarketFetchFailure(:final message):
+          _pulseState = ApiState.error(message);
+          _snapshotState = ApiState.error(message);
+      }
     } catch (e) {
       _pulseState = ApiState.error(e.toString());
       _snapshotState = ApiState.error(e.toString());

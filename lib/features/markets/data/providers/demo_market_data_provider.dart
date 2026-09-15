@@ -7,6 +7,7 @@ import '../../../../domain/market_data_source.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../domain/market_session_status.dart';
 import '../../domain/market_data_provider.dart';
+import '../../domain/market_fetch_result.dart';
 import '../../domain/timeframe.dart';
 import '../demo_market_simulator.dart';
 
@@ -53,8 +54,9 @@ class DemoMarketDataProvider implements MarketDataProvider {
   }
 
   @override
-  Future<List<MarketQuote>> getQuotes(List<String> symbols) async {
-    return symbols.map(_simulator.currentQuote).whereType<MarketQuote>().map(_tagged).toList();
+  Future<MarketFetchResult> getQuotes(List<String> symbols) async {
+    final quotes = symbols.map(_simulator.currentQuote).whereType<MarketQuote>().map(_tagged).toList();
+    return quotes.isEmpty ? const MarketFetchEmpty() : MarketFetchSuccess(quotes);
   }
 
   @override

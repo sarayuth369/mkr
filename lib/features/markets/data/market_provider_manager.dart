@@ -5,6 +5,7 @@ import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
 import '../../../domain/market_session_status.dart';
 import '../domain/market_data_provider.dart';
+import '../domain/market_fetch_result.dart';
 import '../domain/timeframe.dart';
 import 'candle_cache.dart';
 
@@ -39,6 +40,15 @@ class MarketProviderManager {
   DateTime? _lastUpdated;
   MarketDataProvider? _active;
   Future<void>? _connectFuture;
+
+  /// Client-side single-flight for [getQuotes], keyed by the exact
+  /// (sorted) symbol set — 2026-09-15 hardening task: "Prevent duplicate
+  /// initial loads from creating unnecessary repeated requests when
+  /// controllers/widgets are constructed concurrently." Home/Markets/
+  /// Watchlist can all construct around the same app-startup moment and
+  /// request the identical catalog; without this each would fire its own
+  /// real HTTP request for the same data.
+  final Map<String, Future<MarketFetchResult>> _inFlightQuotes = {};
 
   /// The currently active provider, if any — exposed for tests/telemetry.
   MarketDataProvider? get activeProvider => _active;
@@ -132,21 +142,46 @@ class MarketProviderManager {
     _rawMode = MarketDataMode.providerError;
   }
 
+  /// 2026-09-15 hardening task: a real fetch fault from the active provider
+  /// no longer silently becomes `null` (indistinguishable from "no data for
+  /// this symbol") — [MarketDataProvider.getQuote] now throws
+  /// [MarketFetchException] for one, which this method catches so the
+  /// EXISTING failover-to-secondary behavior is preserved (a caught fault
+  /// still tries the fallback, exactly like a `null` always did), but the
+  /// real error is surfaced to the caller once there is nothing left to
+  /// try — never swallowed into a false "no data" result.
   Future<MarketQuote?> getQuote(String symbol) async {
     await ensureConnected();
     final active = _active;
-    if (active == null) return null;
-    final quote = await active.getQuote(symbol);
+    if (active == null) {
+      throw const MarketFetchException(MarketFetchFailureKind.offline, 'No market data provider is currently available.');
+    }
+
+    MarketQuote? quote;
+    Object? primaryError;
+    try {
+      quote = await active.getQuote(symbol);
+    } catch (e) {
+      primaryError = e;
+    }
     if (quote != null) {
       _lastUpdated = DateTime.now();
       return quote;
     }
+
     await _handleFailure(active);
     final fallback = _active;
-    if (fallback == null || identical(fallback, active)) return null;
-    final retried = await fallback.getQuote(symbol);
-    if (retried != null) _lastUpdated = DateTime.now();
-    return retried;
+    if (fallback == null || identical(fallback, active)) {
+      if (primaryError != null) throw primaryError; // nothing left to try - surface the real fault
+      return null; // primary genuinely had no data, no fallback available
+    }
+    try {
+      final retried = await fallback.getQuote(symbol);
+      if (retried != null) _lastUpdated = DateTime.now();
+      return retried;
+    } catch (e) {
+      throw primaryError ?? e; // prefer surfacing the original fault if there was one
+    }
   }
 
   /// ONE batched provider call for every symbol — looping [getQuote] here
@@ -155,14 +190,63 @@ class MarketProviderManager {
   /// architecture exists to prevent (confirmed live against the deployed
   /// backend: ~28 concurrent individual quote calls exhausted Twelve Data
   /// Free's rate limit and every single one came back unavailable).
-  Future<List<MarketQuote>> getQuotes(List<String> symbols) async {
-    if (symbols.isEmpty) return const [];
+  ///
+  /// 2026-09-15 hardening task: returns a typed [MarketFetchResult] instead
+  /// of a bare list — [MarketFetchFailure] is confirmed via the same
+  /// [_handleFailure] health-check discipline as [getQuote]/
+  /// [getHistoricalCandles] before failing over, and `lastUpdated` only
+  /// advances once real quote data was actually received (never on an
+  /// empty/failed outcome).
+  Future<MarketFetchResult> getQuotes(List<String> symbols) {
+    if (symbols.isEmpty) return Future.value(const MarketFetchEmpty());
+    final key = (List<String>.of(symbols)..sort()).join(',');
+    final existing = _inFlightQuotes[key];
+    if (existing != null) return existing;
+
+    // A single async wrapper (not `.whenComplete()` with the chained future
+    // discarded) - see MarketCatalogRepository's identical fix for why: an
+    // unlistened chained future is "unhandled" in Dart even when the
+    // ORIGINAL future is properly awaited elsewhere. [MarketDataProvider.getQuotes]
+    // is documented to never throw, but this stays safe even if a provider
+    // implementation ever violates that.
+    final future = _getQuotesAndClearInFlight(key, symbols);
+    _inFlightQuotes[key] = future;
+    return future;
+  }
+
+  Future<MarketFetchResult> _getQuotesAndClearInFlight(String key, List<String> symbols) async {
+    try {
+      return await _getQuotesUncached(symbols);
+    } finally {
+      _inFlightQuotes.remove(key);
+    }
+  }
+
+  Future<MarketFetchResult> _getQuotesUncached(List<String> symbols) async {
     await ensureConnected();
     final active = _active;
-    if (active == null) return const [];
-    final results = await active.getQuotes(symbols);
-    if (results.isNotEmpty) _lastUpdated = DateTime.now();
-    return results;
+    if (active == null) {
+      return const MarketFetchFailure(MarketFetchFailureKind.offline, 'No market data provider is currently available.');
+    }
+
+    final result = await active.getQuotes(symbols);
+    if (result is MarketFetchSuccess || result is MarketFetchPartial) {
+      if (result.quotes.isNotEmpty) _lastUpdated = DateTime.now();
+      return result;
+    }
+    if (result is MarketFetchEmpty) return result;
+
+    // MarketFetchFailure - confirm via health check before failing over,
+    // same discipline as getQuote/getHistoricalCandles (never fail over on
+    // a single unconfirmed blip).
+    await _handleFailure(active);
+    final fallback = _active;
+    if (fallback == null || identical(fallback, active)) return result;
+    final retried = await fallback.getQuotes(symbols);
+    if ((retried is MarketFetchSuccess || retried is MarketFetchPartial) && retried.quotes.isNotEmpty) {
+      _lastUpdated = DateTime.now();
+    }
+    return retried;
   }
 
   Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) {

@@ -14,6 +14,7 @@ import '../../../../core/widgets/market_data_status_chip.dart';
 import '../../../../core/widgets/price_chart.dart';
 import '../../../../core/widgets/radar_card.dart';
 import '../../../../data/mock_market_catalog.dart';
+import '../../../../domain/market_data_mode.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../ads/presentation/widgets/mkr_ad_slot.dart';
@@ -81,7 +82,7 @@ class HomeScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            MarketDataStatusChip(mode: controller.mode, lastUpdated: controller.lastUpdated),
+            MarketDataStatusChip(mode: controller.mode.effectiveFor(controller.pulseState), lastUpdated: controller.lastUpdated),
             const SizedBox(height: 14),
             _GlobalMarketsSection(controller: controller),
             const SizedBox(height: 20),

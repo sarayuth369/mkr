@@ -7,6 +7,7 @@ import '../../../domain/asset_class.dart';
 import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import '../domain/market_fetch_result.dart';
 import '../domain/market_service.dart';
 import '../domain/timeframe.dart';
 import 'demo_market_simulator.dart';
@@ -68,17 +69,27 @@ class MockMarketService implements MarketService {
   DateTime? get lastUpdated => _lastUpdated;
 
   @override
-  Future<List<MarketQuote>> getAllQuotes() async {
+  Future<MarketFetchResult> getAllQuotes() async {
     await Future.delayed(const Duration(milliseconds: 300));
     _lastUpdated = DateTime.now();
-    return MockMarketCatalog.all.map(_liveOrCatalog).toList();
+    return MarketFetchSuccess(MockMarketCatalog.all.map(_liveOrCatalog).toList());
   }
 
   @override
-  Future<List<MarketQuote>> getQuotesByCategory(AssetClass assetClass) async {
+  Future<MarketFetchResult> getQuotesByCategory(AssetClass assetClass) async {
     await Future.delayed(const Duration(milliseconds: 250));
     _lastUpdated = DateTime.now();
-    return MockMarketCatalog.byAssetClass(assetClass).map(_liveOrCatalog).toList();
+    final quotes = MockMarketCatalog.byAssetClass(assetClass).map(_liveOrCatalog).toList();
+    return quotes.isEmpty ? const MarketFetchEmpty() : MarketFetchSuccess(quotes);
+  }
+
+  @override
+  Future<MarketFetchResult> getQuotesFor(List<String> symbols) async {
+    if (symbols.isEmpty) return const MarketFetchEmpty();
+    await Future.delayed(const Duration(milliseconds: 200));
+    _lastUpdated = DateTime.now();
+    final quotes = symbols.map(MockMarketCatalog.bySymbol).whereType<MarketQuote>().map(_liveOrCatalog).toList();
+    return quotes.isEmpty ? const MarketFetchEmpty() : MarketFetchSuccess(quotes);
   }
 
   @override
@@ -111,9 +122,10 @@ class MockMarketService implements MarketService {
   }
 
   @override
-  Future<List<MarketQuote>> search(String query) async {
+  Future<MarketFetchResult> search(String query) async {
     await Future.delayed(const Duration(milliseconds: 150));
-    return MockMarketCatalog.search(query).map(_liveOrCatalog).toList();
+    final quotes = MockMarketCatalog.search(query).map(_liveOrCatalog).toList();
+    return quotes.isEmpty ? const MarketFetchEmpty() : MarketFetchSuccess(quotes);
   }
 
   @override

@@ -149,6 +149,7 @@
   "homeNothingScheduled": "Nothing major scheduled today",
   "marketsNoMarketsAvailable": "No markets available",
   "marketsNoSymbolsMatch": "No symbols match your search",
+  "marketsPartialData": "Some symbols are temporarily unavailable",
   "marketDetailSymbolNotFound": "Symbol not found",
   "goldRadarUnavailable": "Gold data unavailable",
   "goldSpotSubtitle": "Gold Spot",

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,6 +13,8 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../billing/application/entitlement_controller.dart';
 import '../../../billing/domain/entitlement.dart';
 import '../../../billing/presentation/screens/paywall_screen.dart';
+import '../../../markets/domain/market_fetch_result.dart';
+import '../../../markets/domain/market_service.dart';
 import '../../../markets/presentation/screens/market_detail_screen.dart';
 import '../../application/watchlist_controller.dart';
 
@@ -182,15 +186,67 @@ class _AddSymbolSheet extends StatefulWidget {
   State<_AddSymbolSheet> createState() => _AddSymbolSheetState();
 }
 
+/// 2026-09-15 hardening task: searches the real [MarketService] (the same
+/// canonical catalog + typed fetch result every other market surface uses)
+/// instead of [MockMarketCatalog] directly - in real mode this now shows
+/// only symbols the backend currently has enabled, with real live quotes,
+/// never a frozen mock price. [MockMarketService] still answers this in
+/// demo mode via the SAME `MarketService.search` call, so demo mode is
+/// unaffected.
 class _AddSymbolSheetState extends State<_AddSymbolSheet> {
+  late final MarketService _marketService = context.read<MarketService>();
+  Timer? _debounce;
   String _query = '';
+  bool _loading = false;
+  String? _error;
+  List<MarketQuote> _results = const [];
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onQueryChanged(String value) {
+    setState(() => _query = value);
+    _debounce?.cancel();
+    if (value.trim().isEmpty) {
+      setState(() {
+        _results = const [];
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 300), () => _runSearch(value));
+  }
+
+  Future<void> _runSearch(String query) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await _marketService.search(query);
+      if (!mounted || query != _query) return; // a newer query has already superseded this one
+      setState(() {
+        _loading = false;
+        _results = result.quotes;
+        _error = result is MarketFetchFailure ? result.message : null;
+      });
+    } catch (e) {
+      if (!mounted || query != _query) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final results = MockMarketCatalog.search(_query)
-        .where((q) => !widget.controller.contains(q.symbol))
-        .toList();
+    final results = _results.where((q) => !widget.controller.contains(q.symbol)).toList();
 
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
@@ -207,26 +263,34 @@ class _AddSymbolSheetState extends State<_AddSymbolSheet> {
                 hintText: l10n.searchSymbolHint,
                 prefixIcon: const Icon(Icons.search),
               ),
-              onChanged: (value) => setState(() => _query = value),
+              onChanged: _onQueryChanged,
             ),
             const SizedBox(height: 12),
-            Expanded(
-              child: ListView.builder(
-                controller: scrollController,
-                itemCount: results.length,
-                itemBuilder: (context, index) {
-                  final MarketQuote quote = results[index];
-                  return AssetRow(
-                    quote: quote,
-                    onTap: () {
-                      widget.controller.add(quote.symbol);
-                      Navigator.pop(context);
-                    },
-                    trailing: const Icon(Icons.add_circle_outline),
-                  );
-                },
+            if (_loading) const Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())
+            else if (_error != null)
+              Expanded(child: ErrorState(message: _error!, onRetry: () => _runSearch(_query)))
+            else if (_query.trim().isEmpty)
+              Expanded(child: EmptyState(message: l10n.searchSymbolHint, icon: Icons.search))
+            else if (results.isEmpty)
+              Expanded(child: EmptyState(message: l10n.marketsNoSymbolsMatch, icon: Icons.search_off))
+            else
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemCount: results.length,
+                  itemBuilder: (context, index) {
+                    final MarketQuote quote = results[index];
+                    return AssetRow(
+                      quote: quote,
+                      onTap: () {
+                        widget.controller.add(quote.symbol);
+                        Navigator.pop(context);
+                      },
+                      trailing: const Icon(Icons.add_circle_outline),
+                    );
+                  },
+                ),
               ),
-            ),
           ],
         ),
       ),

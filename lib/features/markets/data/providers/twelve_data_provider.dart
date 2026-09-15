@@ -10,6 +10,7 @@ import '../../../../domain/market_candle.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../domain/market_session_status.dart';
 import '../../domain/market_data_provider.dart';
+import '../../domain/market_fetch_result.dart';
 import '../../domain/timeframe.dart';
 import 'twelve_data_parser.dart';
 
@@ -63,17 +64,39 @@ class TwelveDataProvider implements MarketDataProvider {
     return Uri.parse('$wsBase$path');
   }
 
+  /// 2026-09-15 hardening task: throws [MarketFetchException] for a real
+  /// fetch fault instead of silently returning `null` — `null` now means
+  /// ONLY "the backend genuinely has no data for this symbol" (an error
+  /// envelope, a malformed body, a timeout, or a connection failure are all
+  /// real faults, never treated the same as "no data").
   @override
   Future<MarketQuote?> getQuote(String symbol) async {
+    final http.Response response;
     try {
-      final response = await _http.get(_restUri('/api/mkr/market/quote', {'symbol': symbol}));
-      if (response.statusCode != 200) return null;
-      final json = jsonDecode(response.body);
-      if (json is! Map<String, dynamic>) return null;
-      return TwelveDataParser.parseQuote(json: json, mkrSymbol: symbol, assetClass: _assetClassFor(symbol));
+      response = await _http.get(_restUri('/api/mkr/market/quote', {'symbol': symbol}));
     } catch (_) {
-      return null;
+      throw const MarketFetchException(MarketFetchFailureKind.offline, 'Could not reach the market data service.');
     }
+    if (response.statusCode == 429) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Market data provider rate limit reached.');
+    }
+    if (response.statusCode != 200) {
+      throw MarketFetchException(MarketFetchFailureKind.providerError, 'Market data request failed (HTTP ${response.statusCode}).');
+    }
+    final dynamic json;
+    try {
+      json = jsonDecode(response.body);
+    } catch (_) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    if (json is! Map<String, dynamic>) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    if (TwelveDataParser.isErrorEnvelope(json)) {
+      final message = (json['error'] as Map?)?['message']?.toString() ?? 'The market data provider is currently unavailable.';
+      throw MarketFetchException(MarketFetchFailureKind.providerError, message);
+    }
+    return TwelveDataParser.parseQuote(json: json, mkrSymbol: symbol, assetClass: _assetClassFor(symbol));
   }
 
   /// ONE request for every requested symbol via the backend's batch
@@ -81,18 +104,34 @@ class TwelveDataProvider implements MarketDataProvider {
   /// mean N individual REST calls for a client's full catalog load, which
   /// exhausts Twelve Data Free's rate limit almost immediately (confirmed
   /// live: every quote came back PROVIDER_UNAVAILABLE under that load).
+  ///
+  /// 2026-09-15 hardening task: never returns a bare empty list for a real
+  /// fetch fault — see [MarketFetchResult]/[TwelveDataParser.parseQuotesBatchResult].
   @override
-  Future<List<MarketQuote>> getQuotes(List<String> symbols) async {
-    if (symbols.isEmpty) return const [];
+  Future<MarketFetchResult> getQuotes(List<String> symbols) async {
+    if (symbols.isEmpty) return const MarketFetchEmpty();
+    final http.Response response;
     try {
-      final response = await _http.get(_restUri('/api/mkr/market/quotes', {'symbols': symbols.join(',')}));
-      if (response.statusCode != 200) return const [];
-      final json = jsonDecode(response.body);
-      if (json is! Map<String, dynamic>) return const [];
-      return TwelveDataParser.parseQuotesBatch(json: json, assetClassFor: _assetClassFor);
+      response = await _http.get(_restUri('/api/mkr/market/quotes', {'symbols': symbols.join(',')}));
     } catch (_) {
-      return const [];
+      return const MarketFetchFailure(MarketFetchFailureKind.offline, 'Could not reach the market data service.');
     }
+    if (response.statusCode == 429) {
+      return const MarketFetchFailure(MarketFetchFailureKind.providerError, 'Market data provider rate limit reached.');
+    }
+    if (response.statusCode != 200) {
+      return MarketFetchFailure(MarketFetchFailureKind.providerError, 'Market data request failed (HTTP ${response.statusCode}).');
+    }
+    final dynamic json;
+    try {
+      json = jsonDecode(response.body);
+    } catch (_) {
+      return const MarketFetchFailure(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    if (json is! Map<String, dynamic>) {
+      return const MarketFetchFailure(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
+    return TwelveDataParser.parseQuotesBatchResult(json: json, assetClassFor: _assetClassFor);
   }
 
   @override

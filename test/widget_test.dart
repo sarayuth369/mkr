@@ -4,6 +4,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:mkr/app/app.dart';
 import 'package:mkr/core/persistence/app_local_store.dart';
+import 'package:mkr/features/markets/data/mock_market_service.dart';
+import 'package:mkr/features/markets/domain/market_service.dart';
+
+/// 2026-09-15 hardening task: these smoke tests exercise navigation/UI
+/// structure, not live real-mode network behavior (that's covered by the
+/// dedicated unit tests in test/logic/) - an explicit [MockMarketService]
+/// keeps them deterministic and network-free regardless of
+/// `MarketDataConfig`'s environment-derived default, which is otherwise
+/// "real" during a plain `flutter test` run.
+MarketService _testMarketService() => MockMarketService();
 
 /// The App Open ad placeholder shows automatically on cold start (see
 /// [AppOpenAdHost]) — dismiss it first, the way a real user would, before
@@ -21,7 +31,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'onboarding_complete': true});
     final store = await AppLocalStore.create();
 
-    await tester.pumpWidget(MkrApp(store: store));
+    await tester.pumpWidget(MkrApp(store: store, marketService: _testMarketService()));
     await tester.pumpAndSettle();
     await _dismissAppOpenAdIfShown(tester);
 
@@ -41,7 +51,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'onboarding_complete': true});
     final store = await AppLocalStore.create();
 
-    await tester.pumpWidget(MkrApp(store: store));
+    await tester.pumpWidget(MkrApp(store: store, marketService: _testMarketService()));
     await tester.pumpAndSettle();
     await _dismissAppOpenAdIfShown(tester);
 

@@ -4,6 +4,7 @@ import '../../../core/network/api_state.dart';
 import '../../../domain/asset_class.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import '../domain/market_fetch_result.dart';
 import '../domain/market_service.dart';
 
 class MarketsController extends ChangeNotifier {
@@ -25,12 +26,24 @@ class MarketsController extends ChangeNotifier {
   String _query = '';
   String get query => _query;
 
+  /// 2026-09-15 hardening task: [MarketFetchResult] is mapped to
+  /// [ApiState] explicitly per outcome — a provider/offline failure ALWAYS
+  /// becomes `ApiState.error(...)`, never `ApiState.empty()`, so the UI can
+  /// never show `No markets available` for what was actually a rate limit,
+  /// timeout, or malformed response. A partial result still renders as
+  /// `ApiState.success` (the valid quotes stay visible) with `isPartial:
+  /// true` so the screen can show a non-blocking degraded indicator.
   Future<void> _load() async {
     _state = const ApiState.loading();
     notifyListeners();
     try {
-      final quotes = await _service.getAllQuotes();
-      _state = quotes.isEmpty ? const ApiState.empty() : ApiState.success(quotes);
+      final result = await _service.getAllQuotes();
+      _state = switch (result) {
+        MarketFetchSuccess(:final quotes) => ApiState.success(quotes, lastUpdated: _service.lastUpdated),
+        MarketFetchPartial(:final quotes) => ApiState.success(quotes, lastUpdated: _service.lastUpdated, isPartial: true),
+        MarketFetchEmpty() => const ApiState.empty(),
+        MarketFetchFailure(:final message) => ApiState.error(message),
+      };
     } catch (e) {
       _state = ApiState.error(e.toString());
     }

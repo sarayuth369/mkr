@@ -445,6 +445,9 @@ class AppLocalizationsTh extends AppLocalizations {
   String get marketsNoSymbolsMatch => 'ไม่พบสัญลักษณ์ที่ตรงกับการค้นหา';
 
   @override
+  String get marketsPartialData => 'บางสัญลักษณ์ไม่พร้อมใช้งานชั่วคราว';
+
+  @override
   String get marketDetailSymbolNotFound => 'ไม่พบสัญลักษณ์นี้';
 
   @override

@@ -3,6 +3,7 @@ import '../../../../domain/market_candle.dart';
 import '../../../../domain/market_data_source.dart';
 import '../../../../domain/market_quote.dart';
 import '../../../../domain/market_session_status.dart';
+import '../../domain/market_fetch_result.dart';
 
 /// Pure JSON parsing for the MKR backend's normalized market-data envelope
 /// (`{"success": true, "data": ...}` — see `backend/src/types.ts`
@@ -54,7 +55,8 @@ class TwelveDataParser {
     return _quoteFromData(data, mkrSymbol, assetClass);
   }
 
-  /// Parses a `GET /api/mkr/market/quotes` (plural, batch) response body —
+  /// Parses a `GET /api/mkr/market/quotes` (plural, batch) response body
+  /// into a typed [MarketFetchResult] — 2026-09-15 frontend hardening task.
   /// `data.items` is a flat array of the same normalized-quote shape as the
   /// single-quote endpoint, already resolved server-side in ONE upstream
   /// call for every requested symbol (see `backend/src/market/market-routes.ts`
@@ -62,15 +64,28 @@ class TwelveDataParser {
   /// call instead of looping [parseQuote]/[getQuote] per symbol; N
   /// individual REST calls for one client's full catalog load exhausts
   /// Twelve Data Free's rate limit almost immediately (confirmed live).
-  static List<MarketQuote> parseQuotesBatch({
+  ///
+  /// `data.errors` (per-symbol failures the backend already isolates - see
+  /// `handleQuotes`' `{items, errors}` envelope) is now read and preserved
+  /// as [MarketFetchPartial.failedSymbols] instead of being silently
+  /// discarded — the exact gap that let a genuine partial/total provider
+  /// failure look identical to "zero symbols matched".
+  static MarketFetchResult parseQuotesBatchResult({
     required Map<String, dynamic> json,
     required AssetClass Function(String symbol) assetClassFor,
   }) {
-    if (isErrorEnvelope(json)) return const [];
+    if (isErrorEnvelope(json)) {
+      final message = (json['error'] as Map?)?['message']?.toString() ?? 'The market data provider is currently unavailable.';
+      return MarketFetchFailure(MarketFetchFailureKind.providerError, message);
+    }
     final data = json['data'];
-    if (data is! Map<String, dynamic>) return const [];
+    if (data is! Map<String, dynamic>) {
+      return const MarketFetchFailure(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
     final items = data['items'];
-    if (items is! List) return const [];
+    if (items is! List) {
+      return const MarketFetchFailure(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
+    }
 
     final quotes = <MarketQuote>[];
     for (final entry in items) {
@@ -81,7 +96,24 @@ class TwelveDataParser {
       final quote = _quoteFromData(map, symbol, assetClassFor(symbol));
       if (quote != null) quotes.add(quote);
     }
-    return quotes;
+
+    final failedSymbols = <String>[];
+    final errorsRaw = data['errors'];
+    if (errorsRaw is List) {
+      for (final entry in errorsRaw) {
+        if (entry is! Map) continue;
+        final symbol = (entry['symbol'] as Object?)?.toString();
+        if (symbol != null) failedSymbols.add(symbol);
+      }
+    }
+
+    if (quotes.isEmpty && failedSymbols.isEmpty) return const MarketFetchEmpty();
+    if (quotes.isEmpty) {
+      // Every requested symbol failed - a real fetch fault, not "zero results".
+      return const MarketFetchFailure(MarketFetchFailureKind.providerError, 'Market data is temporarily unavailable for the requested symbols.');
+    }
+    if (failedSymbols.isNotEmpty) return MarketFetchPartial(quotes, failedSymbols);
+    return MarketFetchSuccess(quotes);
   }
 
   static MarketQuote? _quoteFromData(Map<String, dynamic> data, String mkrSymbol, AssetClass assetClass) {

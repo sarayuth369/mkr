@@ -35,7 +35,7 @@ import { adminCorsHeaders, publicCorsHeaders } from './cors';
 import { ApiError, errorResponse } from './errors';
 import { handleHealth, handleVersion } from './health';
 import { logError } from './logging';
-import { handleCandles, handleMarketHealth, handleMarketStatus, handleQuote, handleQuotes } from './market/market-routes';
+import { handleCandles, handleMarketHealth, handleMarketStatus, handleMarketSymbols, handleQuote, handleQuotes } from './market/market-routes';
 import { handleNews, handleNewsRelated } from './news/news-routes';
 import { checkRateLimit, clientKeyFromRequest, rateLimitedResponse, rateLimitEnv } from './ratelimit';
 import type { Env } from './types';
@@ -143,6 +143,7 @@ async function routeMarket(request: Request, env: Env, path: string, id: string)
   if (path === '/api/mkr/market/candles') return handleCandles(request, env, id);
   if (path === '/api/mkr/market/status') return handleMarketStatus(request, env, id);
   if (path === '/api/mkr/market/health') return handleMarketHealth(request, env, id);
+  if (path === '/api/mkr/market/symbols') return handleMarketSymbols(request, env, id);
 
   throw new ApiError('NOT_FOUND', `No market route for ${request.method} ${path}`);
 }

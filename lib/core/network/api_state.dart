@@ -9,6 +9,7 @@ sealed class ApiState<T> {
     T data, {
     bool isStale,
     DateTime? lastUpdated,
+    bool isPartial,
   }) = ApiSuccess<T>;
 
   const factory ApiState.empty() = ApiEmpty<T>;
@@ -35,6 +36,17 @@ sealed class ApiState<T> {
         ApiSuccess<T>(:final data) => data,
         _ => null,
       };
+
+  /// True only for a [ApiSuccess] whose underlying fetch was a partial
+  /// success (some items resolved, some failed) - e.g. a batch quote fetch
+  /// where a few symbols came back with provider errors. Lets a screen show
+  /// a small non-blocking degraded indicator without hiding the data that
+  /// DID load (task: "render the valid symbols and expose a non-blocking
+  /// degraded/error indication rather than hiding all successful data").
+  bool get isPartial => switch (this) {
+        ApiSuccess<T>(:final isPartial) => isPartial,
+        _ => false,
+      };
 }
 
 final class ApiLoading<T> extends ApiState<T> {
@@ -42,11 +54,13 @@ final class ApiLoading<T> extends ApiState<T> {
 }
 
 final class ApiSuccess<T> extends ApiState<T> {
-  const ApiSuccess(this.data, {this.isStale = false, this.lastUpdated});
+  const ApiSuccess(this.data, {this.isStale = false, this.lastUpdated, this.isPartial = false});
 
   final T data;
   final bool isStale;
   final DateTime? lastUpdated;
+  @override
+  final bool isPartial;
 }
 
 final class ApiEmpty<T> extends ApiState<T> {
