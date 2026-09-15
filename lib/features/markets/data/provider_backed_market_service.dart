@@ -177,8 +177,10 @@ class ProviderBackedMarketService implements MarketService {
   /// broadcast-stream architecture is unchanged (still exactly one upstream
   /// subscription per call, fanned out to every listener); the catalog check
   /// simply runs inside the existing `onListen` before that subscription is
-  /// created. If the catalog itself fails to load, the stream honestly never
-  /// emits rather than guessing which symbols were safe to request.
+  /// created. If the catalog itself fails to load, the stream surfaces a
+  /// genuine error (2026-09-15 pre-Closed-Testing audit, Known Issue A)
+  /// rather than guessing which symbols were safe to request OR leaving a
+  /// listener waiting forever with no event at all.
   @override
   Stream<List<MarketQuote>> watchQuotes(List<String> symbols) {
     final latest = <String, MarketQuote>{};
@@ -189,7 +191,13 @@ class ProviderBackedMarketService implements MarketService {
         final List<CatalogSymbol> catalog;
         try {
           catalog = await _catalog.load();
-        } on MarketCatalogException {
+        } on MarketCatalogException catch (e) {
+          // 2026-09-15 pre-Closed-Testing audit (Known Issue A): a catalog
+          // load failure must not leave a listener waiting forever with no
+          // event at all - surfaced as a genuine stream error so a
+          // real-mode consumer (e.g. [MarketDetailController]) can react
+          // instead of silently staying stuck at its last known state.
+          if (!controller.isClosed) controller.addError(MarketFetchException(MarketFetchFailureKind.offline, e.message));
           return;
         }
         if (controller.isClosed) return;
@@ -219,10 +227,12 @@ class ProviderBackedMarketService implements MarketService {
   /// catalog before either the historical-candle fetch or the live
   /// subscription is opened - exactly the same rule [watchQuotes] already
   /// enforces. A disabled/unknown symbol never reaches
-  /// [MarketProviderManager.getHistoricalCandles]/[MarketProviderManager.watchCandles];
-  /// a catalog load failure means the stream honestly never emits rather
-  /// than opening a provider stream on a guess. The shared single-
-  /// subscription-per-call architecture is unchanged.
+  /// [MarketProviderManager.getHistoricalCandles]/[MarketProviderManager.watchCandles].
+  /// A catalog load failure surfaces as a genuine stream error (2026-09-15
+  /// pre-Closed-Testing audit, Known Issue A) rather than opening a
+  /// provider stream on a guess OR leaving a listener waiting forever with
+  /// no event at all. The shared single-subscription-per-call architecture
+  /// is unchanged.
   @override
   Stream<List<MarketCandle>> watchCandles(String symbol, Timeframe timeframe) {
     late StreamController<List<MarketCandle>> controller;
@@ -233,7 +243,8 @@ class ProviderBackedMarketService implements MarketService {
         final List<CatalogSymbol> catalog;
         try {
           catalog = await _catalog.load();
-        } on MarketCatalogException {
+        } on MarketCatalogException catch (e) {
+          if (!controller.isClosed) controller.addError(MarketFetchException(MarketFetchFailureKind.offline, e.message));
           return;
         }
         if (controller.isClosed) return;

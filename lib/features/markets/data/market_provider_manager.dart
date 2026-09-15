@@ -275,17 +275,30 @@ class MarketProviderManager {
     }
     if (candles.isNotEmpty) return candles;
 
+    // 2026-09-15 pre-Closed-Testing audit (Known Issue D): a genuinely
+    // empty history (the provider call returned normally with nothing, no
+    // exception - `primaryError == null`) is NOT a provider failure and
+    // must not trigger a confirmatory health check at all. Unlike a real
+    // fetch fault, there is nothing here to confirm - the provider is
+    // known-fine, this symbol/timeframe combination simply has no data.
+    // Calling `_handleFailure` anyway was pure downside: in the common
+    // (healthy) case it burns an extra network request for no benefit and
+    // changes nothing (the result was already going to be `[]`); in the
+    // unlucky case where that UNRELATED health check itself blips, it
+    // spuriously flips the WHOLE manager to providerError over a symbol
+    // that was never actually a failure.
+    if (primaryError == null) return const [];
+
     await _handleFailure(active);
     final fallback = _active;
     if (fallback == null || identical(fallback, active)) {
-      if (primaryError != null) throw primaryError; // nothing left to try - surface the real fault
-      return const []; // primary genuinely had no history, no fallback available
+      throw primaryError; // nothing left to try - surface the real fault
     }
     try {
       final retried = await fallback.getHistoricalCandles(symbol, timeframe);
       return retried;
     } catch (e) {
-      throw primaryError ?? e; // prefer surfacing the original fault if there was one
+      throw primaryError; // prefer surfacing the original fault
     }
   }
 

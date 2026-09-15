@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mkr/domain/asset_class.dart';
 import 'package:mkr/domain/market_candle.dart';
@@ -26,9 +28,13 @@ MarketQuote _quote(String symbol, double price) => MarketQuote(
     );
 
 class _FakeMarketService implements MarketService {
-  _FakeMarketService({required this.allQuotesResult});
+  _FakeMarketService({required this.allQuotesResult, this.watchQuotesStream});
 
   MarketFetchResult allQuotesResult;
+
+  /// Overrides [watchQuotes]'s returned stream when set - lets a test
+  /// control exactly what the live subscription emits (or errors).
+  Stream<List<MarketQuote>>? watchQuotesStream;
 
   @override
   MarketDataMode mode = MarketDataMode.live;
@@ -59,7 +65,7 @@ class _FakeMarketService implements MarketService {
   @override
   Stream<List<MarketQuote>> watchQuotes(List<String> symbols) {
     lastWatchedSymbols = symbols;
-    return const Stream.empty();
+    return watchQuotesStream ?? const Stream.empty();
   }
 
   @override
@@ -140,6 +146,34 @@ void main() {
 
       expect(service.lastWatchedSymbols, containsAll(HomeController.pulseSymbols));
       expect(service.lastWatchedSymbols, containsAll(HomeController.snapshotSymbols));
+    });
+  });
+
+  group('HomeController — 2026-09-15 pre-Closed-Testing audit', () {
+    test('a live-stream error never crashes as an unhandled zone exception and preserves the already-loaded pulse/snapshot data', () async {
+      final liveController = StreamController<List<MarketQuote>>();
+      final service = _FakeMarketService(
+        allQuotesResult: MarketFetchSuccess([_quote('XAU/USD', 100), _quote('BTC', 200)]),
+        watchQuotesStream: liveController.stream,
+      );
+      final controller = HomeController(marketService: service, aiService: MockMarketAIService(), calendarService: MockEconomicCalendarService());
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final pulseBefore = controller.pulseState.dataOrNull;
+      expect(pulseBefore, isNotNull);
+
+      // Previously this had no onError handler at all, so this would
+      // surface only as an unhandled zone error - not caught anywhere,
+      // and (depending on the test zone) could fail the test outright.
+      liveController.addError(Exception('live stream broke'));
+      await Future<void>.delayed(Duration.zero);
+
+      // The already-successfully-loaded grid must still be intact - a
+      // live-ticker hiccup must not wipe already-correct REST-loaded data.
+      expect(controller.pulseState.dataOrNull, pulseBefore);
+
+      await liveController.close();
     });
   });
 }

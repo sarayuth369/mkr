@@ -196,12 +196,21 @@ class _PulseSectionState extends State<_PulseSection> {
   ChartTimeframe _timeframe = ChartTimeframe.d1;
   bool _loadingSeries = false;
 
+  // 2026-09-15 pre-Closed-Testing audit: rapidly tapping a different pulse
+  // card, or switching timeframe, before the previous getPriceSeries call
+  // resolves could let a slower, now-stale response land AFTER a faster,
+  // newer one and silently overwrite it with the wrong symbol's/timeframe's
+  // data. Shared by both methods below so switching from one to the other
+  // also correctly invalidates any older in-flight request.
+  int _seriesRequestId = 0;
+
   Future<void> _selectSymbol(MarketQuote quote) async {
     setState(() {
       _selectedSymbol = quote.symbol;
       _selectedChangePct = quote.changePct;
       _loadingSeries = true;
     });
+    final requestId = ++_seriesRequestId;
     // getPriceSeries throws on a genuine catalog/provider fault (2026-09-15
     // FINAL correction task) - the chart simply stays omitted, same as a
     // real "no history" outcome, rather than an unhandled async error.
@@ -211,7 +220,7 @@ class _PulseSectionState extends State<_PulseSection> {
     } catch (_) {
       series = const [];
     }
-    if (!mounted) return;
+    if (!mounted || requestId != _seriesRequestId) return;
     setState(() {
       _series = series;
       _loadingSeries = false;
@@ -224,13 +233,14 @@ class _PulseSectionState extends State<_PulseSection> {
       _timeframe = timeframe;
       _loadingSeries = true;
     });
+    final requestId = ++_seriesRequestId;
     List<double> series = const [];
     try {
       series = await context.read<MarketService>().getPriceSeries(_selectedSymbol!, timeframe);
     } catch (_) {
       series = const [];
     }
-    if (!mounted) return;
+    if (!mounted || requestId != _seriesRequestId) return;
     setState(() {
       _series = series;
       _loadingSeries = false;

@@ -66,34 +66,49 @@ class HomeController extends ChangeNotifier {
   /// them can be backend-disabled at any time. Requesting a live
   /// subscription for a disabled symbol would bypass the same
   /// backend-catalog rule the initial REST load already enforces.
+  /// 2026-09-15 pre-Closed-Testing audit: previously had no `onError`
+  /// handler - a genuine live-stream fault (e.g. a catalog re-check inside
+  /// [MarketService.watchQuotes] failing) became an unhandled zone error
+  /// instead of being caught anywhere. Unlike [MarketDetailController]
+  /// (a single quote), Home shows a whole grid of already-successfully-
+  /// loaded cards - replacing all of it with a full-screen error just
+  /// because the live ticker specifically hiccuped would be a worse
+  /// regression than leaving the already-correct REST-loaded data visible,
+  /// so this only logs (matching the same lightweight convention already
+  /// used in `AlertsController`) rather than fabricating a trigger or
+  /// discarding good data; [mode]/[lastUpdated] (the status chip) remain
+  /// the honest signal that live updates have stopped.
   void _watchLiveQuotes(List<String> symbols) {
     _liveSubscription?.cancel();
     if (symbols.isEmpty) return; // nothing currently resolvable - omit honestly, never subscribe to a guess
-    _liveSubscription = _marketService.watchQuotes(symbols).listen((updates) {
-      final bySymbol = {for (final q in updates) q.symbol: q};
+    _liveSubscription = _marketService.watchQuotes(symbols).listen(
+      (updates) {
+        final bySymbol = {for (final q in updates) q.symbol: q};
 
-      final pulse = _pulseState.dataOrNull;
-      if (pulse != null) {
-        _pulseState = ApiState.success(
-          [for (final q in pulse) bySymbol[q.symbol] ?? q],
-          lastUpdated: _marketService.lastUpdated,
-        );
-      }
+        final pulse = _pulseState.dataOrNull;
+        if (pulse != null) {
+          _pulseState = ApiState.success(
+            [for (final q in pulse) bySymbol[q.symbol] ?? q],
+            lastUpdated: _marketService.lastUpdated,
+          );
+        }
 
-      final snapshot = _snapshotState.dataOrNull;
-      if (snapshot != null) {
-        _snapshotState = ApiState.success(
-          [for (final q in snapshot) bySymbol[q.symbol] ?? q],
-          lastUpdated: _marketService.lastUpdated,
-        );
-      }
+        final snapshot = _snapshotState.dataOrNull;
+        if (snapshot != null) {
+          _snapshotState = ApiState.success(
+            [for (final q in snapshot) bySymbol[q.symbol] ?? q],
+            lastUpdated: _marketService.lastUpdated,
+          );
+        }
 
-      if (_gold != null && bySymbol.containsKey(_gold!.symbol)) {
-        _gold = bySymbol[_gold!.symbol];
-      }
+        if (_gold != null && bySymbol.containsKey(_gold!.symbol)) {
+          _gold = bySymbol[_gold!.symbol];
+        }
 
-      notifyListeners();
-    });
+        notifyListeners();
+      },
+      onError: (Object e) => debugPrint('[MKR home] live quote stream error: $e'),
+    );
   }
 
   @override

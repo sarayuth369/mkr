@@ -403,18 +403,22 @@ void main() {
       expect(provider.lastWatchQuotesSymbols, ['AAPL']);
     });
 
-    test('watchQuotes never subscribes upstream when the catalog cannot be loaded - regression 4', () async {
+    test('watchQuotes never subscribes upstream when the catalog cannot be loaded - surfaces as a stream error, never a silent hang - regression 4 / pre-Closed-Testing audit Known Issue A', () async {
       final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: MockClient((r) async => _jsonResponse({'error': 'down'}, status: 500)));
       final provider = _RecordingProvider();
       final manager = MarketProviderManager(primary: provider);
       final service = ProviderBackedMarketService(manager, catalog);
 
-      final sub = service.watchQuotes(['AAPL']).listen((_) {});
+      Object? receivedError;
+      final sub = service.watchQuotes(['AAPL']).listen((_) {}, onError: (Object e) => receivedError = e);
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
       await sub.cancel();
 
       expect(provider.lastWatchQuotesSymbols, isNull);
+      // A catalog load failure must not leave a listener waiting forever
+      // with no event at all - it surfaces as a genuine stream error.
+      expect(receivedError, isA<MarketFetchException>());
     });
   });
 
@@ -468,19 +472,21 @@ void main() {
       expect(updates.first.single.close, 1);
     });
 
-    test('watchCandles never fetches history or subscribes upstream when the catalog cannot be loaded - honest failure, never mock', () async {
+    test('watchCandles never fetches history or subscribes upstream when the catalog cannot be loaded - surfaces as a stream error, never a silent hang - pre-Closed-Testing audit Known Issue A', () async {
       final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: MockClient((r) async => _jsonResponse({'error': 'down'}, status: 500)));
       final provider = _RecordingProvider();
       final manager = MarketProviderManager(primary: provider);
       final service = ProviderBackedMarketService(manager, catalog);
 
-      final sub = service.watchCandles('AAPL', Timeframe.h1).listen((_) {});
+      Object? receivedError;
+      final sub = service.watchCandles('AAPL', Timeframe.h1).listen((_) {}, onError: (Object e) => receivedError = e);
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
       await sub.cancel();
 
       expect(provider.lastCandlesSymbol, isNull);
       expect(provider.lastWatchCandlesSymbol, isNull);
+      expect(receivedError, isA<MarketFetchException>());
     });
   });
 

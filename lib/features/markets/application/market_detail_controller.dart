@@ -65,17 +65,31 @@ class MarketDetailController extends ChangeNotifier {
 
   StreamSubscription<List<MarketQuote>>? _liveSubscription;
 
+  /// 2026-09-15 pre-Closed-Testing audit (Known Issue B): previously had no
+  /// `onError` handler, so a genuine live-stream fault (e.g. the catalog
+  /// re-check inside [MarketService.watchQuotes] failing) became an
+  /// unhandled zone error and left [_quoteState] stuck at whatever it was
+  /// before - looking "live" forever with no indication the subscription
+  /// actually died. Now surfaces honestly as [ApiState.error] (the same
+  /// error+retry UI this screen already uses everywhere else), rather than
+  /// silently going stale with no signal.
   void _watchLiveQuote() {
     _liveSubscription?.cancel();
-    _liveSubscription = _marketService.watchQuotes([symbol]).listen((updates) {
-      if (updates.isEmpty) return;
-      final live = updates.first;
-      _quoteState = ApiState.success(live, lastUpdated: _marketService.lastUpdated);
-      if (_series.isNotEmpty && _timeframe == ChartTimeframe.d1) {
-        _series = [..._series]..[_series.length - 1] = live.price;
-      }
-      notifyListeners();
-    });
+    _liveSubscription = _marketService.watchQuotes([symbol]).listen(
+      (updates) {
+        if (updates.isEmpty) return;
+        final live = updates.first;
+        _quoteState = ApiState.success(live, lastUpdated: _marketService.lastUpdated);
+        if (_series.isNotEmpty && _timeframe == ChartTimeframe.d1) {
+          _series = [..._series]..[_series.length - 1] = live.price;
+        }
+        notifyListeners();
+      },
+      onError: (Object e) {
+        _quoteState = ApiState.error(e.toString());
+        notifyListeners();
+      },
+    );
   }
 
   @override
@@ -123,15 +137,30 @@ class MarketDetailController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 2026-09-15 pre-Closed-Testing audit (Known Issue C): rapidly switching
+  /// timeframe (tapping "1W" then "1M" before the first fetch resolves)
+  /// used to let the slower, now-stale "1W" response land AFTER the faster
+  /// "1M" one and silently overwrite it - `_timeframe` would read "1M" while
+  /// `_series` held "1W" data, an inconsistent state the UI can't detect.
+  /// `_seriesRequestId` makes each call's result apply only if no newer
+  /// [loadSeries] call has started since - a late/stale response is
+  /// discarded instead of applied.
+  int _seriesRequestId = 0;
+
   Future<void> loadSeries(ChartTimeframe timeframe) async {
     _timeframe = timeframe;
+    final requestId = ++_seriesRequestId;
+    List<double> series = const [];
+    var unavailable = false;
     try {
-      _series = await _marketService.getPriceSeries(symbol, timeframe);
-      _seriesUnavailable = false;
+      series = await _marketService.getPriceSeries(symbol, timeframe);
     } catch (_) {
-      _series = const [];
-      _seriesUnavailable = true;
+      series = const [];
+      unavailable = true;
     }
+    if (requestId != _seriesRequestId) return; // a newer request has since started - discard this stale result
+    _series = series;
+    _seriesUnavailable = unavailable;
     notifyListeners();
   }
 

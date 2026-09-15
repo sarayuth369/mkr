@@ -393,6 +393,45 @@ void main() {
       expect(manager.activeProvider, primary); // stayed healthy - no failover just because history was empty
     });
 
+    // 2026-09-15 pre-Closed-Testing audit (Known Issue D): a genuinely
+    // empty history (the provider call returned normally, no exception)
+    // must not trigger a confirmatory health check at all - there is
+    // nothing to confirm, the provider already answered successfully with
+    // "nothing here". Calling _handleFailure anyway was pure downside: an
+    // UNRELATED health-check blip at that exact moment could spuriously
+    // flip the whole manager to providerError over a symbol that was never
+    // actually a failure.
+    test('a genuinely empty history never triggers a confirmatory health check at all', () async {
+      final primary = FakeProvider('twelveData', healthy: true)..candlesResult = const [];
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+      primary.healthCheckCalls = 0; // reset the count from connect()'s own probe
+
+      final result = await manager.getHistoricalCandles('AAPL', Timeframe.h1);
+
+      expect(result, isEmpty);
+      expect(primary.healthCheckCalls, 0); // no confirmatory health check was made
+    });
+
+    test('even if an unrelated health check would fail right now, a genuinely empty history never spuriously flips the manager to providerError', () async {
+      final primary = FakeProvider('twelveData', healthy: true)..candlesResult = const [];
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      // Simulates the "unrelated health check blip" Known Issue D warns
+      // about: if the old code still called _handleFailure here, this
+      // flips it to unhealthy and (with no secondary enabled) the whole
+      // manager would incorrectly transition to providerError, even though
+      // the candle fetch itself was a genuine, healthy empty result.
+      primary.healthy = false;
+
+      final result = await manager.getHistoricalCandles('AAPL', Timeframe.h1);
+
+      expect(result, isEmpty);
+      expect(manager.mode, MarketDataMode.live); // never spuriously flipped
+      expect(manager.activeProvider, primary);
+    });
+
     test('a real candle fetch failure fails over to a healthy secondary and returns its data', () async {
       final primary = FakeProvider('twelveData', healthy: true)
         ..candlesException = const MarketFetchException(MarketFetchFailureKind.providerError, 'boom');

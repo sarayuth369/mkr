@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mkr/core/network/api_state.dart';
 import 'package:mkr/core/widgets/price_chart.dart';
 import 'package:mkr/domain/asset_class.dart';
 import 'package:mkr/domain/market_candle.dart';
@@ -27,11 +30,20 @@ MarketQuote _quote(String symbol, double price) => MarketQuote(
     );
 
 class _FakeMarketService implements MarketService {
-  _FakeMarketService({this.quote, this.seriesResult = const [], this.seriesError});
+  _FakeMarketService({this.quote, this.seriesResult = const [], this.seriesError, this.watchQuotesStream, this.getPriceSeriesImpl});
 
   MarketQuote? quote;
   List<double> seriesResult;
   Object? seriesError;
+
+  /// Overrides [watchQuotes]'s returned stream when set - lets a test
+  /// control exactly when/what the live subscription emits (or errors).
+  Stream<List<MarketQuote>>? watchQuotesStream;
+
+  /// Overrides [getPriceSeries] entirely when set - lets a test control
+  /// exactly when each individual call resolves (e.g. via per-timeframe
+  /// `Completer`s) to simulate out-of-order responses.
+  Future<List<double>> Function(String symbol, ChartTimeframe timeframe)? getPriceSeriesImpl;
 
   @override
   MarketDataMode mode = MarketDataMode.live;
@@ -53,6 +65,8 @@ class _FakeMarketService implements MarketService {
 
   @override
   Future<List<double>> getPriceSeries(String symbol, ChartTimeframe timeframe) async {
+    final impl = getPriceSeriesImpl;
+    if (impl != null) return impl(symbol, timeframe);
     final error = seriesError;
     if (error != null) throw error;
     return seriesResult;
@@ -62,7 +76,7 @@ class _FakeMarketService implements MarketService {
   Future<MarketFetchResult> search(String query) async => const MarketFetchEmpty();
 
   @override
-  Stream<List<MarketQuote>> watchQuotes(List<String> symbols) => const Stream.empty();
+  Stream<List<MarketQuote>> watchQuotes(List<String> symbols) => watchQuotesStream ?? const Stream.empty();
 
   @override
   Stream<List<MarketCandle>> watchCandles(String symbol, Timeframe timeframe) => const Stream.empty();
@@ -136,6 +150,76 @@ void main() {
 
       expect(controller.series, [1, 2, 3]);
       expect(controller.seriesUnavailable, isFalse);
+    });
+  });
+
+  group('MarketDetailController — 2026-09-15 pre-Closed-Testing audit', () {
+    test('a live-stream error surfaces as ApiState.error, never a silently stale/live-looking quote - Known Issue B', () async {
+      final liveController = StreamController<List<MarketQuote>>();
+      final service = _FakeMarketService(quote: _quote('AAPL', 100), watchQuotesStream: liveController.stream);
+      final controller = MarketDetailController(
+        symbol: 'AAPL',
+        marketService: service,
+        aiService: MockMarketAIService(),
+        newsService: MockNewsService(),
+        calendarService: MockEconomicCalendarService(),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      // Initial REST load succeeded - quote is showing.
+      expect(controller.quoteState, isA<ApiSuccess<MarketQuote>>());
+
+      // The live subscription then genuinely fails (e.g. a catalog
+      // re-check inside watchQuotes failing) - previously this had no
+      // onError handler at all, so the quote would stay looking "live"
+      // forever with no indication the subscription actually died.
+      liveController.addError(Exception('live stream broke'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.quoteState, isA<ApiError<MarketQuote>>());
+
+      await liveController.close();
+    });
+
+    test('a late (slower) loadSeries response never overwrites a newer (faster) one - Known Issue C', () async {
+      final w1Completer = Completer<List<double>>();
+      final m1Completer = Completer<List<double>>();
+      final service = _FakeMarketService(
+        quote: _quote('AAPL', 100),
+        getPriceSeriesImpl: (symbol, timeframe) {
+          if (timeframe == ChartTimeframe.d1) return Future.value(const [1.0]); // initial _load() call
+          return (timeframe == ChartTimeframe.w1 ? w1Completer : m1Completer).future;
+        },
+      );
+      final controller = MarketDetailController(
+        symbol: 'AAPL',
+        marketService: service,
+        aiService: MockMarketAIService(),
+        newsService: MockNewsService(),
+        calendarService: MockEconomicCalendarService(),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      // Rapidly switch timeframe twice before either resolves - simulates
+      // tapping "1W" then "1M" before the first fetch comes back.
+      final w1Future = controller.loadSeries(ChartTimeframe.w1);
+      final m1Future = controller.loadSeries(ChartTimeframe.m1);
+
+      // The newer request (1M) resolves first.
+      m1Completer.complete([9.0, 9.5]);
+      await m1Future;
+      expect(controller.timeframe, ChartTimeframe.m1);
+      expect(controller.series, [9.0, 9.5]);
+
+      // The older, now-stale request (1W) resolves LATE, after 1M already
+      // applied - it must be discarded, not overwrite the newer state.
+      w1Completer.complete([1.0, 2.0]);
+      await w1Future;
+
+      expect(controller.timeframe, ChartTimeframe.m1);
+      expect(controller.series, [9.0, 9.5]);
     });
   });
 }
