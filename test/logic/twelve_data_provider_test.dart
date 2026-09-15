@@ -85,4 +85,51 @@ void main() {
       );
     });
   });
+
+  group('TwelveDataProvider.getHistoricalCandles — candle element validation correction', () {
+    // 2026-09-15 candle element validation correction task — a valid
+    // top-level `data` array containing ONLY malformed candle entries (bad
+    // OHLC/timestamp) must not be silently collapsed into the same `[]` a
+    // genuinely empty array produces - TwelveDataParser.parseCandles()
+    // itself still just skips unparseable entries (unchanged), so the
+    // provider distinguishes the two cases using the raw pre-parse list.
+
+    test('data: [] is a genuine empty history, never an exception', () async {
+      final provider = _providerFor({'success': true, 'data': []});
+
+      final result = await provider.getHistoricalCandles('AAPL', Timeframe.d1);
+
+      expect(result, isEmpty);
+    });
+
+    test('non-empty data with every entry malformed throws MarketFetchException, never []', () async {
+      final provider = _providerFor({
+        'success': true,
+        'data': [
+          {'open': 1, 'high': 2, 'low': 0.5}, // missing close + timestamp
+          {'timestamp': 1700000000000}, // missing OHLC entirely
+        ],
+      });
+
+      await expectLater(
+        provider.getHistoricalCandles('AAPL', Timeframe.d1),
+        throwsA(isA<MarketFetchException>()),
+      );
+    });
+
+    test('mixed valid + malformed entries returns only the valid candles, never throws, never fabricates', () async {
+      final provider = _providerFor({
+        'success': true,
+        'data': [
+          {'open': 1, 'high': 2, 'low': 0.5, 'close': 1.5, 'timestamp': 1700000000000},
+          {'open': 1}, // malformed - missing high/low/close/timestamp
+        ],
+      });
+
+      final result = await provider.getHistoricalCandles('AAPL', Timeframe.d1);
+
+      expect(result, hasLength(1));
+      expect(result.single.close, 1.5);
+    });
+  });
 }

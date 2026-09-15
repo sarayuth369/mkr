@@ -172,10 +172,27 @@ class TwelveDataProvider implements MarketDataProvider {
       final message = (json['error'] as Map?)?['message']?.toString() ?? 'The market data provider is currently unavailable.';
       throw MarketFetchException(MarketFetchFailureKind.providerError, message);
     }
-    if (json['data'] is! List) {
+    final rawData = json['data'];
+    if (rawData is! List) {
       throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
     }
-    return TwelveDataParser.parseCandles(json);
+    final candles = TwelveDataParser.parseCandles(json);
+    // 2026-09-15 candle element validation correction: [TwelveDataParser.parseCandles]
+    // intentionally skips (never throws on) an entry missing OHLC/timestamp
+    // - that keeps the parser simple, but on its own left a non-empty `data`
+    // array containing ONLY malformed entries indistinguishable from a
+    // genuinely empty one, since both collapse to `[]`. The provider
+    // already has the raw (pre-parse) list right here, so it - not the
+    // parser - is what distinguishes them: `rawData` empty means genuine
+    // empty history (`[]`, unchanged); `rawData` non-empty but `candles`
+    // empty means every entry was unparseable, a real fetch fault. A mixed
+    // list (some valid, some malformed) still returns just the valid
+    // candles - never fabricated, matching the existing per-entry
+    // validation `parseCandles` already does.
+    if (rawData.isNotEmpty && candles.isEmpty) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a market data response with no valid candle entries.');
+    }
+    return candles;
   }
 
   @override

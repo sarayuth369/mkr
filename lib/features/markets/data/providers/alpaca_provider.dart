@@ -166,10 +166,24 @@ class AlpacaProvider implements MarketDataProvider {
       final message = (json['message'] as Object?)?.toString() ?? 'The market data provider is currently unavailable.';
       throw MarketFetchException(MarketFetchFailureKind.providerError, message);
     }
-    if (json['bars'] is! List) {
+    final rawBars = json['bars'];
+    if (rawBars is! List) {
       throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
     }
-    return AlpacaParser.parseBars(json);
+    final candles = AlpacaParser.parseBars(json);
+    // 2026-09-15 candle element validation correction: same gap as
+    // TwelveDataProvider - [AlpacaParser.parseBars] skips (never throws on)
+    // a malformed bar entry, so a non-empty `bars` array containing ONLY
+    // malformed entries was indistinguishable from a genuinely empty one.
+    // The provider distinguishes them using the raw (pre-parse) list:
+    // `rawBars` empty means genuine empty history (unchanged); non-empty
+    // `rawBars` with zero surviving `candles` means every entry was
+    // unparseable, a real fetch fault. A mixed list still returns just the
+    // valid candles.
+    if (rawBars.isNotEmpty && candles.isEmpty) {
+      throw const MarketFetchException(MarketFetchFailureKind.providerError, 'Received a market data response with no valid candle entries.');
+    }
+    return candles;
   }
 
   @override

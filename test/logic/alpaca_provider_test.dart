@@ -66,4 +66,49 @@ void main() {
       expect(result, isEmpty);
     });
   });
+
+  group('AlpacaProvider.getHistoricalCandles — candle element validation correction', () {
+    // 2026-09-15 candle element validation correction task — same gap as
+    // TwelveDataProvider: a non-empty `bars` array containing ONLY
+    // malformed entries must not be silently collapsed into the same `[]`
+    // a genuinely empty array produces. AlpacaParser.parseBars() itself
+    // still just skips unparseable entries (unchanged); the provider
+    // distinguishes the two cases using the raw pre-parse list.
+
+    test('bars: [] is a genuine empty history, never an exception', () async {
+      final provider = _activatedProviderFor({'bars': []});
+
+      final result = await provider.getHistoricalCandles('AAPL', Timeframe.d1);
+
+      expect(result, isEmpty);
+    });
+
+    test('non-empty bars with every entry malformed throws MarketFetchException, never []', () async {
+      final provider = _activatedProviderFor({
+        'bars': [
+          {'o': 1, 'h': 2, 'l': 0.5}, // missing c + t
+          {'t': '2026-01-01T00:00:00Z'}, // missing OHLC entirely
+        ],
+      });
+
+      await expectLater(
+        provider.getHistoricalCandles('AAPL', Timeframe.d1),
+        throwsA(isA<MarketFetchException>()),
+      );
+    });
+
+    test('mixed valid + malformed entries returns only the valid candles, never throws, never fabricates', () async {
+      final provider = _activatedProviderFor({
+        'bars': [
+          {'o': 1, 'h': 2, 'l': 0.5, 'c': 1.5, 't': '2026-01-01T00:00:00Z'},
+          {'o': 1}, // malformed - missing h/l/c/t
+        ],
+      });
+
+      final result = await provider.getHistoricalCandles('AAPL', Timeframe.d1);
+
+      expect(result, hasLength(1));
+      expect(result.single.close, 1.5);
+    });
+  });
 }
