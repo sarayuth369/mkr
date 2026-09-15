@@ -72,6 +72,13 @@ class DemoMarketDataProvider implements MarketDataProvider {
     return _quoteController.stream.where((q) => symbols.contains(q.symbol));
   }
 
+  /// Demo simulation ticks every seeded symbol unconditionally regardless of
+  /// who's currently watching — there is no per-symbol upstream
+  /// subscription to release, so this is a no-op (2026-09-15 post-audit
+  /// task, Finding 2).
+  @override
+  void unsubscribeQuotes(List<String> symbols) {}
+
   @override
   Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) {
     return _quoteController.stream

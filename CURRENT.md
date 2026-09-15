@@ -2,132 +2,136 @@ PROJECT: MKR
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: 2026-09-15 MKR Pre-Closed-Testing Full Stability Audit
-TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_PRE_CLOSED_TESTING_FULL_STABILITY_AUDIT_TASK.md
+TASK: 2026-09-15 MKR Post-Audit Final Stability Pass
+TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_POST_AUDIT_FINAL_STABILITY_TASK.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_PRE_CLOSED_TESTING_FULL_STABILITY_AUDIT_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_POST_AUDIT_FINAL_STABILITY_REPORT.md
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
 PREVIOUS STATE:
-MKR Candle Numeric Validation Correction, completed, was
-WAITING_FOR_GPT_REVIEW (commit b064a8d). Mac then asked for one
-comprehensive, single-pass audit of the entire real-mode market-data path
-instead of another serial small-bug patch, covering 11 audit areas plus 4
-explicitly named Known Issues (A-D).
+MKR Pre-Closed-Testing Full Stability Audit, completed, was
+WAITING_FOR_GPT_REVIEW (commit 9410719). Mac raised 4 concrete findings
+against that post-audit code for one consolidated final pass.
 
-WORKING-TREE NOTE: the task's premise listed 6 files as "currently
-uncommitted... do not discard" - those were already reviewed, tested, and
-committed as b064a8d in the immediately preceding turn before this audit
-started (the task's snapshot predates that commit landing). Nothing was
-discarded; this audit's commit builds on top of b064a8d.
+THIS PASS - fixed all 4 findings in one coherent change:
 
-THIS PASS - found and fixed 4 concrete defects (the 4 named Known Issues)
-plus 1 additional defect of the same class found during the audit:
+Finding 1 - _handleFailure() discarded chained future:
+`_failureHandlingFuture ??= _doHandleFailure(failed).whenComplete(...)` -
+the exact unlistened-chained-future hygiene bug already fixed elsewhere
+in this codebase (quote single-flight, MarketCatalogRepository). Fixed
+with the identical single-async-wrapper + try/finally pattern. De-dup
+semantics unchanged.
 
-Known Issue A - watchQuotes()/watchCandles() silently hung on catalog
-failure: onListen's catch block just `return`'d with no event at all -
-confirmed a listener (e.g. MarketDetailController, which also had no
-onError - see B) would wait forever with zero signal. Fixed: both now
-call controller.addError(MarketFetchException(...)) before returning.
+Finding 2 - live subscriptions leaked after cancellation:
+TwelveDataProvider._subscribedSymbols only ever grew -
+TwelveDataProvider.unsubscribe(symbol) existed but was NEVER CALLED
+anywhere (confirmed dead code via grep before touching it); AlpacaProvider
+had no such method at all. A symbol, once watched by any screen, stayed
+subscribed on the backend for the rest of the session regardless of
+whether anyone still needed it. Fixed: added
+unsubscribeQuotes(List<String>) to the MarketDataProvider interface
+(batch-shaped like watchQuotes), implemented it in both real providers
+(the dead single-symbol method became the real batch one for Twelve
+Data; new symmetric no-op-when-inactive implementation for Alpaca) and
+as a no-op in DemoMarketDataProvider. MarketProviderManager.watchQuotes/
+watchCandles converted from thin async* pass-throughs into explicit
+StreamController-based methods with a shared per-symbol reference count
+- a symbol is only released (unsubscribeQuotes called) once the LAST
+subscriber referencing it cancels; watchCandles shares the SAME counter
+as watchQuotes since both providers' watchCandles rides the same
+per-symbol quote subscription internally.
 
-Known Issue B - MarketDetailController._watchLiveQuote() had no onError:
-a live-stream fault (including the one A now correctly emits) became an
-unhandled zone error, leaving the quote state frozen looking "live"
-forever with no signal. Fixed: onError now sets ApiState.error, reusing
-this screen's existing error+retry UI.
+Finding 3 - stream controllers left open on cancellation:
+ProviderBackedMarketService.watchQuotes/watchCandles's onCancel only
+cancelled the inner subscription, never closed the controller itself -
+an abandoned controller could accumulate across repeated screen
+creation/cancellation. Fixed: onCancel now explicitly closes the
+controller too, at BOTH the service layer AND the new manager-layer
+controllers introduced for Finding 2 (so Finding 2's fix didn't
+introduce a fresh instance of Finding 3's own bug at a different layer).
+Once closed, a controller can never be re-listened to - a genuine
+re-subscribe always goes through a fresh watchQuotes()/watchCandles()
+call, matching how every real caller already uses these methods.
 
-Known Issue C - MarketDetailController.loadSeries() late-response race:
-rapidly switching timeframe before the first fetch resolves let a
-slower, stale response silently overwrite a faster, newer one -
-_timeframe would read correctly while _series held wrong data, an
-inconsistent state invisible to the UI. Fixed with a _seriesRequestId
-guard - a result only applies if no newer loadSeries call has started
-since. SAME-CLASS BUG FOUND DURING AUDIT (not separately named): 
-home_screen.dart's _PulseSectionState._selectSymbol/_changeTimeframe had
-the identical shape and race - fixed with the identical guard pattern.
+Finding 4 - asset-class classification still depended on
+MockMarketCatalog: TwelveDataProvider._assetClassFor()/
+AlpacaProvider._assetClassFor() both fell back to
+MockMarketCatalog.bySymbol(...)?.assetClass ?? AssetClass.usStock - a
+symbol the BACKEND catalog enables but the mock registry never carried
+was silently misclassified as usStock, including for live quotes. Fixed
+by reusing the existing real-mode authority: MarketCatalogRepository
+gained a synchronous cachedSymbols getter (a peek at whatever was last
+successfully loaded, ignoring the 5-minute price-freshness TTL since
+asset class doesn't go stale like price does); both providers now take a
+required MarketCatalogRepository and classify from cachedSymbols,
+falling back to usStock only as a genuine last resort - never a second
+hard-coded production catalog. app.dart now builds the catalog FIRST and
+shares it with both providers (previously only built afterward for
+ProviderBackedMarketService).
 
-Known Issue D - MarketProviderManager.getHistoricalCandles() spurious
-providerError risk: a genuinely empty history (provider returned
-normally, no exception) still unconditionally called _handleFailure,
-which performs a real confirmatory health check - pure waste in the
-healthy case (result was already []), and if THAT unrelated health
-check happened to blip, it would spuriously flip the WHOLE manager to
-providerError over a symbol that was never actually a failure. Fixed:
-skip _handleFailure entirely when the empty result is confirmed genuine
-(no primaryError) - only call it when there's an actual fault to
-investigate. Traced: happy-path behavior is provably unchanged.
+ALSO RE-CHECKED (per the task's explicit list), found already clean: no
+false success/empty/stale-LIVE regressions (full prior regression suite
+still green, unchanged); no new mock contamination (final grep re-audit
+below); no new unhandled futures/timers/subscriptions in changed paths
+(every new async callback fully awaited, no discarded chained futures);
+candle validation/envelope behavior from b064a8d and later fully intact
+(those test files pass unchanged, only the constructor signature update
+was mechanical).
 
-ADDITIONAL FINDING (hygiene, not user-visible) - HomeController._watchLiveQuotes()
-also had no onError. Unlike MarketDetailController (one quote), Home
-shows a grid of already-loaded cards - wiping all of it on a live-ticker
-hiccup would be worse than leaving good data visible, so fixed with a
-lightweight debugPrint-only onError (matches AlertsController's existing
-logging convention) instead of ApiState.error - prevents the unhandled
-zone exception without discarding good data.
-
-AUDIT AREAS RE-CHECKED, FOUND ALREADY CLEAN (no fix needed): mock/demo
-contamination (MockMarketCatalog re-grep unchanged from prior pass),
-catalog authority/bypass (all paths already authorized), candle cache
-(failure-never-cached already correct), live tick merge (no corrupting
-computation), MarketsController (synchronous client-side filters, no
-async race possible), every .listen( call site in lib/features
-enumerated (only Home/MarketDetail consume watchQuotes/watchCandles
-directly, both fixed; market_detail_screen.dart's candlestick
-StreamBuilder already error-aware from a prior pass).
+FINAL GREP RE-AUDIT: MockMarketCatalog usage across lib/features is
+identical to every prior audit's classification EXCEPT the two provider
+_assetClassFor methods, whose real code usage is now gone entirely -
+only doc-comment mentions remain. Zero remaining real-mode
+price/chart/trend/P&L/alert/classification use.
 
 REGRESSION:
-- Backend: 525/525 passing (unchanged - no backend files touched this
-  pass). TypeScript typecheck clean.
-- Flutter: 318/318 passing (9 new/updated: 2 pre-existing
-  provider_backed_market_service_test.dart tests corrected to assert the
-  FIXED contract (stream error, not silence) rather than the bug itself;
-  2 new market_detail_controller_test.dart tests (Issues B, C); 2 new
-  market_provider_manager_test.dart tests (Issue D); 1 new
-  home_controller_test.dart test (the additional finding)). No test was
-  weakened or deleted. `flutter analyze`: no issues. `flutter build apk
-  --debug`: succeeds.
+- Backend: 525/525 passing, read/verified only - no backend files
+  touched. TypeScript typecheck clean.
+- Flutter: 330/330 passing (13 new across 5 test files: 2 for Finding 1,
+  4 for Finding 2, 1+2 for Finding 3 (manager + service layer), 4 for
+  Finding 4 in new test/logic/provider_asset_class_test.dart). No
+  existing test weakened or deleted - 4 existing test files needed a
+  mechanical constructor-argument update (the new required catalog:
+  param), zero assertions changed. `flutter analyze`: no issues.
+  `flutter build apk --debug`: succeeds.
 - Security scan (established pattern) against the diff: no secrets.
-- git diff reviewed - scoped to exactly 5 production files and 4 test
-  files (300 insertions, 59 deletions total); no Market Pool, Firebase/
-  FCM, Economic Calendar, News Radar, Supabase, or backend changes;
+- git diff reviewed - scoped to exactly 8 production files and 6 test
+  files (618 insertions, 36 deletions); no Market Pool, Firebase/FCM,
+  Economic Calendar, News Radar, Supabase, or backend changes;
   auc/backend untouched.
 
 PRODUCTION:
-- No backend changes this pass - nothing to deploy. This audit is
-  entirely frontend-only.
+- No backend changes this pass - nothing to deploy. Entirely
+  frontend-only.
 - Live smoke check performed: /api/mkr/health OK; /api/mkr/market/symbols
-  OK; /api/mkr/market/quotes?symbols=AAPL,XAU/USD OK real data;
-  /api/mkr/market/candles?symbol=AAPL&interval=d1 OK real OHLC data.
+  OK; /api/mkr/market/quotes?symbols=AAPL,BTC OK real live data.
 
 REMAINING LIMITATIONS (real, not hand-waved):
-1. No dedicated test for the home_screen.dart race fix - same algorithm
-   as the fully-tested MarketDetailController fix, but the underlying
-   widget is a line chart (not inspectable text), so coverage here is by
-   code inspection + the full-app widget_test.dart smoke suite passing,
-   not a dedicated unit/widget test.
-2. getQuote/getQuotes share Issue D's exact structural pattern (an
-   unconditional confirmatory health check on any empty/failed result) -
-   the same fix would apply there too, but was intentionally left out of
-   scope (task named getHistoricalCandles specifically; touching two more
-   methods would exceed "minimal local fixes"). Flagged for a possible
-   future task.
-3. The internal _manager.watchQuotes/watchCandles subscriptions inside
-   ProviderBackedMarketService still have no onError, but no reachable
-   path in the current TwelveDataProvider/AlpacaProvider implementations
-   ever calls addError on those specific streams - left unchanged rather
-   than adding untestable defensive code for a currently-unreachable
-   case.
-4. Previously flagged, still open, still out of scope: Portfolio/Alerts
-   symbol pickers use MockMarketCatalog for symbol-name text only (not
-   price) - reviewed again this pass, unchanged, still an accepted
-   "symbol-name registry" allowance.
+1. No wire-level (WebSocket message) test for either provider's
+   unsubscribeQuotes - this codebase has no existing WebSocket-channel-
+   faking harness for either provider (subscribe was never wire-tested
+   either), and building one just for this fix would be disproportionate.
+   Coverage is via the manager-level reference-counting tests (where the
+   actual decision logic lives) plus direct code inspection of the two
+   simple, symmetric implementations.
+2. AlpacaProvider's asset-class test uses a deliberately artificial
+   stubbed category (BTC as "forex" instead of its real "crypto") to
+   prove the classification source changed, since every symbol Alpaca's
+   SymbolMapper covers already exists in MockMarketCatalog with the same
+   category in practice - there is no currently-real "Alpaca-mapped
+   symbol absent from the mock registry" scenario to test non-
+   artificially. Documented in the test's own comment.
+3. MarketCatalogRepository.cachedSymbols deliberately ignores the
+   5-minute freshness TTL (asset class doesn't go stale like price does)
+   - meaning a provider could theoretically classify from a catalog
+   snapshot technically past the TTL used for pricing decisions
+   elsewhere. Considered acceptable, noted rather than silently assumed
+   away.
 
 NEXT:
-Claude has completed this audit and stopped, per its own instruction. No
-further improvement loop started. Items 2 and 3 above are flagged for
-GPT/Mac to decide whether they warrant a future task. Waiting for GPT/Mac
-review.
+Claude has completed this pass and stopped, per its own instruction. No
+further improvement loop started. Waiting for GPT/Mac review.

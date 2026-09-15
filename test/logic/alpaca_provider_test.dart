@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:mkr/features/markets/data/market_catalog_repository.dart';
 import 'package:mkr/features/markets/data/providers/alpaca_provider.dart';
 import 'package:mkr/features/markets/domain/market_fetch_result.dart';
 import 'package:mkr/features/markets/domain/timeframe.dart';
@@ -18,9 +19,17 @@ import 'package:mkr/features/markets/domain/timeframe.dart';
 http.Response _jsonResponse(Object body, {int status = 200}) =>
     http.Response(jsonEncode(body), status, headers: const {'content-type': 'application/json'});
 
+/// These tests exercise candle parsing only, which never consults asset-
+/// class classification - an unloaded (never-`load()`-ed) catalog is fine;
+/// see `test/logic/provider_asset_class_test.dart` for the dedicated
+/// real-catalog-classification regression coverage (Finding 4).
+MarketCatalogRepository _unloadedCatalog() =>
+    MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: MockClient((r) async => http.Response('', 500)));
+
 AlpacaProvider _activatedProviderFor(Object body) {
   return AlpacaProvider(
     backendBaseUrl: 'https://backend.example.com',
+    catalog: _unloadedCatalog(),
     activated: true,
     httpClient: MockClient((request) async => _jsonResponse(body)),
   );
@@ -59,7 +68,7 @@ void main() {
     });
 
     test('a non-activated provider still returns [] without contacting the network - unrelated to the envelope fix', () async {
-      final provider = AlpacaProvider(backendBaseUrl: 'https://backend.example.com'); // activated defaults to false
+      final provider = AlpacaProvider(backendBaseUrl: 'https://backend.example.com', catalog: _unloadedCatalog()); // activated defaults to false
 
       final result = await provider.getHistoricalCandles('AAPL', Timeframe.d1);
 

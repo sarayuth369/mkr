@@ -59,9 +59,16 @@ class _RecordingProvider implements MarketDataProvider {
   List<String>? lastWatchQuotesSymbols;
   Stream<MarketQuote> watchQuotesResult = const Stream.empty();
 
+  /// How many times [watchQuotes] was actually called - 2026-09-15
+  /// post-audit task (Finding 3): lets a test prove a cancelled-then-
+  /// re-listened stream opens exactly one fresh upstream call, never a
+  /// duplicate left over from before cancellation.
+  int watchQuotesCallCount = 0;
+
   String? lastWatchCandlesSymbol;
   Timeframe? lastWatchCandlesTimeframe;
   Stream<MarketCandle> watchCandlesResult = const Stream.empty();
+  int watchCandlesCallCount = 0;
 
   @override
   Future<bool> healthCheck() async => true;
@@ -97,16 +104,23 @@ class _RecordingProvider implements MarketDataProvider {
 
   @override
   Stream<MarketQuote> watchQuotes(List<String> symbols) {
+    watchQuotesCallCount++;
     lastWatchQuotesSymbols = symbols;
     return watchQuotesResult;
   }
 
   @override
   Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) {
+    watchCandlesCallCount++;
     lastWatchCandlesSymbol = symbol;
     lastWatchCandlesTimeframe = timeframe;
     return watchCandlesResult;
   }
+
+  final List<String> unsubscribedSymbols = [];
+
+  @override
+  void unsubscribeQuotes(List<String> symbols) => unsubscribedSymbols.addAll(symbols);
 }
 
 void main() {
@@ -524,6 +538,64 @@ void main() {
       expect(receivedError, isNull);
       expect(updates, isNotEmpty);
       expect(updates.first, isEmpty);
+    });
+  });
+
+  group('2026-09-15 post-audit task (Finding 3) — watchQuotes/watchCandles controllers are explicitly closed on cancel', () {
+    test('watchQuotes: after the listener cancels, re-listening to the same stream reference never re-opens an upstream subscription', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL']));
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final stream = service.watchQuotes(['AAPL']);
+      final sub = stream.listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.watchQuotesCallCount, 1);
+
+      await sub.cancel();
+
+      // The controller must now be closed - re-listening to the SAME
+      // stream reference must be permanently done, never silently opening
+      // a second upstream subscription.
+      final events = <String>[];
+      final resub = stream.listen((_) => events.add('data'), onDone: () => events.add('done'));
+      await Future<void>.delayed(Duration.zero);
+      await resub.cancel();
+
+      expect(events, ['done']);
+      expect(provider.watchQuotesCallCount, 1); // never called a second time
+
+      // A genuinely fresh call, on the other hand, works normally.
+      final sub2 = service.watchQuotes(['AAPL']).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.watchQuotesCallCount, 2);
+      await sub2.cancel();
+    });
+
+    test('watchCandles: after the listener cancels, re-listening to the same stream reference never re-opens an upstream subscription', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL']));
+      final provider = _RecordingProvider();
+      final manager = MarketProviderManager(primary: provider);
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      final stream = service.watchCandles('AAPL', Timeframe.h1);
+      final sub = stream.listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(provider.watchCandlesCallCount, 1);
+
+      await sub.cancel();
+
+      final events = <String>[];
+      final resub = stream.listen((_) => events.add('data'), onDone: () => events.add('done'));
+      await Future<void>.delayed(Duration.zero);
+      await resub.cancel();
+
+      expect(events, ['done']);
+      expect(provider.watchCandlesCallCount, 1);
     });
   });
 }

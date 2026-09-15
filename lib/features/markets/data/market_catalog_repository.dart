@@ -81,6 +81,18 @@ class MarketCatalogRepository {
 
   Uri get _uri => Uri.parse('$backendBaseUrl/api/mkr/market/symbols');
 
+  /// A synchronous peek at whatever catalog was last successfully loaded —
+  /// `null` only if nothing has ever loaded successfully yet. Deliberately
+  /// ignores [load]'s 5-minute price-freshness TTL (a symbol's asset class
+  /// essentially never changes, unlike its price) and never triggers a
+  /// fetch itself. 2026-09-15 post-audit task (Finding 4): lets a provider
+  /// classify a symbol's [AssetClass] from the real backend catalog without
+  /// an async round-trip inside otherwise-synchronous parsing code — by the
+  /// time a provider is asked to parse a quote/candle, the catalog-
+  /// authorization check one layer up (see [ProviderBackedMarketService])
+  /// has almost always already awaited [load], so this is warm in practice.
+  List<CatalogSymbol>? get cachedSymbols => _cache;
+
   /// Loads the enabled backend catalog, using the cache when fresh.
   /// Throws [MarketCatalogException] on any failure — callers must NOT
   /// catch this and silently substitute [MockMarketCatalog]; the correct

@@ -211,7 +211,18 @@ class ProviderBackedMarketService implements MarketService {
           }
         });
       },
-      onCancel: () => subscription?.cancel(),
+      // 2026-09-15 post-audit task (Finding 3): previously only cancelled
+      // the inner subscription, leaving this per-call controller open
+      // (never closed) across repeated screen creation/cancellation. Now
+      // explicitly closed too - once closed it can never be re-listened to,
+      // so a caller cannot accidentally create a duplicate upstream
+      // subscription by re-using an already-cancelled stream reference; a
+      // genuine re-subscribe always goes through a fresh [watchQuotes] call.
+      onCancel: () async {
+        await subscription?.cancel();
+        subscription = null;
+        if (!controller.isClosed) await controller.close();
+      },
     );
     return controller.stream;
   }
@@ -269,7 +280,15 @@ class ProviderBackedMarketService implements MarketService {
           if (!controller.isClosed) controller.add(history);
         });
       },
-      onCancel: () => subscription?.cancel(),
+      // 2026-09-15 post-audit task (Finding 3): same fix as [watchQuotes] -
+      // explicitly closes this per-call controller on cancel, not just the
+      // inner subscription, so re-subscribing always goes through a fresh
+      // [watchCandles] call rather than a stale, already-cancelled stream.
+      onCancel: () async {
+        await subscription?.cancel();
+        subscription = null;
+        if (!controller.isClosed) await controller.close();
+      },
     );
     return controller.stream;
   }

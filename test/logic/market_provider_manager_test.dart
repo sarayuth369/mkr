@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mkr/domain/asset_class.dart';
 import 'package:mkr/domain/market_candle.dart';
@@ -95,11 +97,36 @@ class FakeProvider implements MarketDataProvider {
   @override
   Future<MarketSessionStatus> getMarketStatus(String market) async => MarketSessionStatus.open;
 
+  /// Controllable per-symbol tick source so tests can push ticks and
+  /// observe exactly which symbols are currently subscribed/released -
+  /// 2026-09-15 post-audit task (Finding 2).
+  final _tickController = StreamController<MarketQuote>.broadcast();
+  int watchQuotesCalls = 0;
+  List<String>? lastWatchQuotesSymbols;
+
+  void emitTick(MarketQuote quote) => _tickController.add(quote);
+
   @override
-  Stream<MarketQuote> watchQuotes(List<String> symbols) => const Stream.empty();
+  Stream<MarketQuote> watchQuotes(List<String> symbols) {
+    watchQuotesCalls++;
+    lastWatchQuotesSymbols = symbols;
+    return _tickController.stream.where((q) => symbols.contains(q.symbol));
+  }
 
   @override
   Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) => const Stream.empty();
+
+  /// Every symbol ever passed to [unsubscribeQuotes], in call order -
+  /// 2026-09-15 post-audit task (Finding 2): previously nothing in
+  /// [MarketProviderManager] ever called this at all.
+  final List<String> unsubscribedSymbols = [];
+  int unsubscribeQuotesCalls = 0;
+
+  @override
+  void unsubscribeQuotes(List<String> symbols) {
+    unsubscribeQuotesCalls++;
+    unsubscribedSymbols.addAll(symbols);
+  }
 }
 
 void main() {
@@ -464,6 +491,140 @@ void main() {
       final result = await manager.getHistoricalCandles('AAPL', Timeframe.h1);
 
       expect(result, hasLength(1));
+    });
+  });
+
+  group('2026-09-15 post-audit task (Finding 1) — _handleFailure never leaks an unhandled chained future', () {
+    test('the shared failure-handling future clears after a successful (transient) confirmation, allowing a fresh call next time', () async {
+      final primary = FakeProvider('twelveData', healthy: true, quoteResult: null); // healthy but empty - triggers _handleFailure
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+      primary.healthCheckCalls = 0;
+
+      await manager.getQuote('AAPL'); // triggers _handleFailure -> healthCheck() confirms healthy, no state change
+      expect(primary.healthCheckCalls, 1);
+
+      // A second, independent call must trigger its OWN confirmatory check
+      // - if the shared future had never cleared, this would silently reuse
+      // the first (already-settled) future instead of checking again.
+      await manager.getQuote('AAPL');
+      expect(primary.healthCheckCalls, 2);
+    });
+
+    test('the shared failure-handling future clears after failing over (the error path), allowing a fresh call next time', () async {
+      final primary = FakeProvider('twelveData', healthy: true, quoteResult: null)..quoteException = const MarketFetchException(MarketFetchFailureKind.providerError, 'boom');
+      final secondary = FakeProvider('alpaca', healthy: true, quoteResult: _quote('AAPL', 1));
+      final manager = MarketProviderManager(primary: primary, secondary: secondary, secondaryEnabled: true);
+      await manager.connect();
+
+      // Primary faults - _handleFailure fails over to secondary.
+      primary.healthy = false;
+      final first = await manager.getQuote('AAPL');
+      expect(first?.price, 1);
+      expect(manager.activeProvider, secondary);
+
+      // Secondary now also goes unhealthy - a second, independent
+      // _handleFailure call must run its own fresh confirmation rather than
+      // reusing a future left dangling from the first call.
+      secondary.healthy = false;
+      secondary.quoteResult = null;
+      await manager.getQuote('AAPL');
+      expect(manager.activeProvider, isNull);
+      expect(manager.mode, MarketDataMode.providerError);
+    });
+  });
+
+  group('2026-09-15 post-audit task (Finding 2 & 3) — watchQuotes/watchCandles reference counting and controller lifecycle', () {
+    test('two simultaneous listeners for the same symbol: cancelling one keeps it subscribed; cancelling the last releases it', () async {
+      final primary = FakeProvider('twelveData', healthy: true);
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      final receivedA = <MarketQuote>[];
+      final receivedB = <MarketQuote>[];
+      final subA = manager.watchQuotes(['AAPL']).listen(receivedA.add);
+      await Future<void>.delayed(Duration.zero);
+      final subB = manager.watchQuotes(['AAPL']).listen(receivedB.add);
+      await Future<void>.delayed(Duration.zero);
+
+      primary.emitTick(_quote('AAPL', 100));
+      await Future<void>.delayed(Duration.zero);
+      expect(receivedA, hasLength(1));
+      expect(receivedB, hasLength(1));
+
+      // Cancel the FIRST listener - AAPL is still needed by B, so it must
+      // stay subscribed: no unsubscribeQuotes call yet.
+      await subA.cancel();
+      expect(primary.unsubscribeQuotesCalls, 0);
+
+      primary.emitTick(_quote('AAPL', 200));
+      await Future<void>.delayed(Duration.zero);
+      expect(receivedB, hasLength(2)); // B still receives ticks after A cancelled
+
+      // Cancel the LAST listener - now AAPL must actually be released.
+      await subB.cancel();
+      expect(primary.unsubscribeQuotesCalls, 1);
+      expect(primary.unsubscribedSymbols, ['AAPL']);
+    });
+
+    test('watchCandles shares the same per-symbol reference count as watchQuotes', () async {
+      final primary = FakeProvider('twelveData', healthy: true);
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      final quoteSub = manager.watchQuotes(['XAU/USD']).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      final candleSub = manager.watchCandles('XAU/USD', Timeframe.h1).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+
+      // The quote listener cancels first - the candle listener still needs
+      // XAU/USD, so it must not be released yet.
+      await quoteSub.cancel();
+      expect(primary.unsubscribeQuotesCalls, 0);
+
+      await candleSub.cancel();
+      expect(primary.unsubscribeQuotesCalls, 1);
+      expect(primary.unsubscribedSymbols, ['XAU/USD']);
+    });
+
+    test('unrelated symbols are never released early - only the cancelled subscription\'s own symbols are considered', () async {
+      final primary = FakeProvider('twelveData', healthy: true);
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      final subAapl = manager.watchQuotes(['AAPL']).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      final subBtc = manager.watchQuotes(['BTC']).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+
+      await subAapl.cancel();
+
+      expect(primary.unsubscribedSymbols, ['AAPL']);
+      expect(primary.unsubscribedSymbols, isNot(contains('BTC')));
+
+      await subBtc.cancel();
+      expect(primary.unsubscribedSymbols, containsAll(['AAPL', 'BTC']));
+    });
+
+    test('cancellation closes the manager\'s own per-call controller - re-listening requires a fresh watchQuotes call', () async {
+      final primary = FakeProvider('twelveData', healthy: true);
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      final stream = manager.watchQuotes(['AAPL']);
+      final sub = stream.listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      // The SAME stream reference must now be permanently done - it must
+      // never silently re-open a second upstream subscription for AAPL.
+      final events = <String>[];
+      final resub = stream.listen((_) => events.add('data'), onDone: () => events.add('done'));
+      await Future<void>.delayed(Duration.zero);
+      await resub.cancel();
+
+      expect(events, ['done']);
+      expect(primary.watchQuotesCalls, 1); // never a second upstream call via the closed controller
     });
   });
 }

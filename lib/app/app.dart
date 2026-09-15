@@ -81,16 +81,20 @@ MarketService _buildMarketService() {
   final config = MarketDataConfig.fromEnvironment();
   if (config.mode == MarketDataRunMode.demo) return MockMarketService();
 
-  final manager = MarketProviderManager(
-    primary: TwelveDataProvider(backendBaseUrl: config.backendBaseUrl),
-    secondary: AlpacaProvider(backendBaseUrl: config.backendBaseUrl, activated: config.secondaryEnabled),
-    secondaryEnabled: config.secondaryEnabled,
-  );
-  unawaited(manager.connect());
   // 2026-09-15 hardening task: real mode now sources its symbol list from
   // the backend's own catalog (`GET /api/mkr/market/symbols`), never
   // MockMarketCatalog - see MarketCatalogRepository's doc comment.
+  //
+  // 2026-09-15 post-audit task (Finding 4): built FIRST and shared with
+  // both providers below (not just ProviderBackedMarketService) - they use
+  // it to classify a symbol's real AssetClass instead of MockMarketCatalog.
   final catalog = MarketCatalogRepository(backendBaseUrl: config.backendBaseUrl);
+  final manager = MarketProviderManager(
+    primary: TwelveDataProvider(backendBaseUrl: config.backendBaseUrl, catalog: catalog),
+    secondary: AlpacaProvider(backendBaseUrl: config.backendBaseUrl, catalog: catalog, activated: config.secondaryEnabled),
+    secondaryEnabled: config.secondaryEnabled,
+  );
+  unawaited(manager.connect());
   return ProviderBackedMarketService(manager, catalog);
 }
 

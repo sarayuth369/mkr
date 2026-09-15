@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/asset_class.dart';
 import '../../../../domain/market_candle.dart';
 import '../../../../domain/market_quote.dart';
@@ -12,6 +11,7 @@ import '../../../../domain/market_session_status.dart';
 import '../../domain/market_data_provider.dart';
 import '../../domain/market_fetch_result.dart';
 import '../../domain/timeframe.dart';
+import '../market_catalog_repository.dart';
 import 'twelve_data_parser.dart';
 
 /// The PRIMARY market-data provider. Calls the MKR backend gateway
@@ -28,15 +28,18 @@ import 'twelve_data_parser.dart';
 class TwelveDataProvider implements MarketDataProvider {
   TwelveDataProvider({
     required this.backendBaseUrl,
+    required MarketCatalogRepository catalog,
     http.Client? httpClient,
     WebSocketChannel Function(Uri uri)? webSocketFactory,
-  })  : _http = httpClient ?? http.Client(),
+  })  : _catalog = catalog,
+        _http = httpClient ?? http.Client(),
         _openWebSocket = webSocketFactory ?? WebSocketChannel.connect;
 
   @override
   final String id = 'twelveData';
 
   final String backendBaseUrl;
+  final MarketCatalogRepository _catalog;
   final http.Client _http;
   final WebSocketChannel Function(Uri uri) _openWebSocket;
 
@@ -48,7 +51,22 @@ class TwelveDataProvider implements MarketDataProvider {
   int _reconnectAttempt = 0;
   bool _disconnectedByUser = false;
 
-  AssetClass _assetClassFor(String symbol) => MockMarketCatalog.bySymbol(symbol)?.assetClass ?? AssetClass.usStock;
+  /// 2026-09-15 post-audit task (Finding 4): sourced from the real backend
+  /// catalog ([MarketCatalogRepository], the established real-mode
+  /// authority), never `MockMarketCatalog` — a symbol the backend catalog
+  /// enables but the old mock registry didn't happen to carry was
+  /// previously misclassified as [AssetClass.usStock] by default, including
+  /// for live quotes. `AssetClass.usStock` remains only as the last-resort
+  /// fallback when the catalog hasn't loaded yet or genuinely doesn't carry
+  /// this symbol — never a second hard-coded production catalog.
+  AssetClass _assetClassFor(String symbol) {
+    final catalog = _catalog.cachedSymbols;
+    if (catalog == null) return AssetClass.usStock;
+    for (final entry in catalog) {
+      if (entry.symbol == symbol) return entry.assetClass;
+    }
+    return AssetClass.usStock;
+  }
 
   Uri _restUri(String path, Map<String, String> query) => Uri.parse('$backendBaseUrl$path').replace(queryParameters: query);
 
@@ -281,11 +299,18 @@ class TwelveDataProvider implements MarketDataProvider {
     return _quoteController.stream.where((q) => symbols.contains(q.symbol));
   }
 
-  /// Drops a symbol from the shared subscription once nothing on screen
-  /// still needs it, so the backend stream doesn't keep pushing ticks no
-  /// one is listening to.
-  void unsubscribe(String symbol) {
-    if (_subscribedSymbols.remove(symbol)) _sendUnsubscribe([symbol]);
+  /// Drops [symbols] from the shared subscription once nothing on screen
+  /// still needs them, so the backend stream doesn't keep pushing ticks no
+  /// one is listening to. 2026-09-15 post-audit task (Finding 2): batch-
+  /// shaped to match [watchQuotes]'s own batch shape and to let
+  /// [MarketProviderManager]'s reference counting release several symbols
+  /// in one upstream message. A symbol still referenced by another live
+  /// listener is simply absent from [symbols] — the manager only calls this
+  /// once a symbol's count has actually reached zero.
+  @override
+  void unsubscribeQuotes(List<String> symbols) {
+    final removed = symbols.where(_subscribedSymbols.remove).toList();
+    if (removed.isNotEmpty) _sendUnsubscribe(removed);
   }
 
   @override

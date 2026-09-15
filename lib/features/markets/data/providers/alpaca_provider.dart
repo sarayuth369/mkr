@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../../../../data/mock_market_catalog.dart';
 import '../../../../domain/asset_class.dart';
 import '../../../../domain/market_candle.dart';
 import '../../../../domain/market_quote.dart';
@@ -12,6 +11,7 @@ import '../../../../domain/market_session_status.dart';
 import '../../domain/market_data_provider.dart';
 import '../../domain/market_fetch_result.dart';
 import '../../domain/timeframe.dart';
+import '../market_catalog_repository.dart';
 import '../market_data_config.dart';
 import '../symbol_mapping.dart';
 import 'alpaca_parser.dart';
@@ -26,11 +26,13 @@ import 'alpaca_parser.dart';
 class AlpacaProvider implements MarketDataProvider {
   AlpacaProvider({
     required this.backendBaseUrl,
+    required MarketCatalogRepository catalog,
     this.activated = false,
     http.Client? httpClient,
     WebSocketChannel Function(Uri uri)? webSocketFactory,
     SymbolMapper? symbolMapper,
-  })  : _http = httpClient ?? http.Client(),
+  })  : _catalog = catalog,
+        _http = httpClient ?? http.Client(),
         _openWebSocket = webSocketFactory ?? WebSocketChannel.connect,
         _symbolMapper = symbolMapper ?? const SymbolMapper();
 
@@ -38,6 +40,7 @@ class AlpacaProvider implements MarketDataProvider {
   final String id = 'alpaca';
 
   final String backendBaseUrl;
+  final MarketCatalogRepository _catalog;
 
   /// Set `true` only once licensing/redistribution rights are confirmed —
   /// see the class doc comment. Left `false` for Phase 1.
@@ -52,7 +55,17 @@ class AlpacaProvider implements MarketDataProvider {
   final _quoteController = StreamController<MarketQuote>.broadcast();
   final Set<String> _subscribedSymbols = {};
 
-  AssetClass _assetClassFor(String symbol) => MockMarketCatalog.bySymbol(symbol)?.assetClass ?? AssetClass.usStock;
+  /// 2026-09-15 post-audit task (Finding 4): same fix as
+  /// [TwelveDataProvider._assetClassFor] — sourced from the real backend
+  /// catalog, never `MockMarketCatalog`. See that method's doc comment.
+  AssetClass _assetClassFor(String symbol) {
+    final catalog = _catalog.cachedSymbols;
+    if (catalog == null) return AssetClass.usStock;
+    for (final entry in catalog) {
+      if (entry.symbol == symbol) return entry.assetClass;
+    }
+    return AssetClass.usStock;
+  }
 
   Uri _restUri(String path, Map<String, String> query) => Uri.parse('$backendBaseUrl$path').replace(queryParameters: query);
 
@@ -234,6 +247,21 @@ class AlpacaProvider implements MarketDataProvider {
       }
     }
     return _quoteController.stream.where((q) => symbols.contains(q.symbol));
+  }
+
+  /// 2026-09-15 post-audit task (Finding 2): same batch-unsubscribe shape
+  /// as [TwelveDataProvider.unsubscribeQuotes] — a no-op when not
+  /// [activated] (there is nothing subscribed to release) or for a symbol
+  /// with no Alpaca mapping.
+  @override
+  void unsubscribeQuotes(List<String> symbols) {
+    if (!activated) return;
+    final removed = symbols.where(_subscribedSymbols.remove).toList();
+    if (removed.isEmpty) return;
+    final providerSymbols = removed.map((s) => _symbolMapper.toProviderSymbol(s, MarketDataProviderId.alpaca)).whereType<String>().toList();
+    if (providerSymbols.isNotEmpty) {
+      _channel?.sink.add(jsonEncode({'action': 'unsubscribe', 'trades': providerSymbols}));
+    }
   }
 
   @override

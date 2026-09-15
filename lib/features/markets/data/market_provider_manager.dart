@@ -129,7 +129,25 @@ class MarketProviderManager {
   /// status chip, caused by exactly this concurrent-storm race). Collapsing
   /// concurrent calls into one shared in-flight check removes the storm.
   Future<void> _handleFailure(MarketDataProvider failed) {
-    return _failureHandlingFuture ??= _doHandleFailure(failed).whenComplete(() => _failureHandlingFuture = null);
+    return _failureHandlingFuture ??= _handleFailureAndClear(failed);
+  }
+
+  // 2026-09-15 post-audit task (Finding 1): a single async wrapper (not
+  // `.whenComplete()` with the chained future discarded) - the identical
+  // fix already applied to the quote single-flight path
+  // (`_getQuotesAndClearInFlight`) and `MarketCatalogRepository`: an
+  // unlistened chained future is "unhandled" in Dart even when the
+  // ORIGINAL future (returned by `_handleFailure` above, and properly
+  // awaited by every real caller) is caught correctly. Preserves the exact
+  // same de-duplication semantics - concurrent `_handleFailure` calls still
+  // share the one in-flight `_doHandleFailure`, and the shared future field
+  // still clears once it settles, on both the success and error path.
+  Future<void> _handleFailureAndClear(MarketDataProvider failed) async {
+    try {
+      await _doHandleFailure(failed);
+    } finally {
+      _failureHandlingFuture = null;
+    }
   }
 
   Future<void> _doHandleFailure(MarketDataProvider failed) async {
@@ -309,23 +327,98 @@ class MarketProviderManager {
     return active.getMarketStatus(market);
   }
 
-  /// A single shared subscription per requested symbol set — reused across
-  /// every caller (Home/Markets/Watchlist/Detail) rather than opening a new
-  /// provider stream per screen.
-  Stream<MarketQuote> watchQuotes(List<String> symbols) async* {
-    await ensureConnected();
-    final active = _active;
-    if (active == null) return;
-    yield* active.watchQuotes(symbols).map((quote) {
-      _lastUpdated = DateTime.now();
-      return quote;
-    });
+  /// Reference count per symbol across every live [watchQuotes]/
+  /// [watchCandles] subscriber — 2026-09-15 post-audit task (Finding 2):
+  /// candles internally ride the same per-symbol quote subscription at the
+  /// provider level (see [TwelveDataProvider.watchCandles]), so both share
+  /// one counter here. A symbol is only released (unsubscribed from the
+  /// active provider, via [MarketDataProvider.unsubscribeQuotes]) once the
+  /// LAST subscriber referencing it cancels — two screens watching the same
+  /// symbol correctly share one upstream subscription, and cancelling one
+  /// doesn't cut off the other; previously nothing ever called
+  /// `unsubscribeQuotes` at all, so a provider kept every symbol ever
+  /// watched subscribed for the rest of the session.
+  final Map<String, int> _symbolRefCounts = {};
+
+  void _addSymbolRefs(Iterable<String> symbols) {
+    for (final s in symbols) {
+      _symbolRefCounts[s] = (_symbolRefCounts[s] ?? 0) + 1;
+    }
   }
 
-  Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) async* {
-    await ensureConnected();
-    final active = _active;
-    if (active == null) return;
-    yield* active.watchCandles(symbol, timeframe);
+  void _releaseSymbolRefs(Iterable<String> symbols) {
+    final toRelease = <String>[];
+    for (final s in symbols) {
+      final current = _symbolRefCounts[s];
+      if (current == null) continue;
+      if (current <= 1) {
+        _symbolRefCounts.remove(s);
+        toRelease.add(s);
+      } else {
+        _symbolRefCounts[s] = current - 1;
+      }
+    }
+    if (toRelease.isNotEmpty) _active?.unsubscribeQuotes(toRelease);
+  }
+
+  /// A single shared subscription per requested symbol set — reused across
+  /// every caller (Home/Markets/Watchlist/Detail) rather than opening a new
+  /// provider stream per screen. 2026-09-15 post-audit task (Findings 2 &
+  /// 3): each symbol is reference-counted (see [_addSymbolRefs]/
+  /// [_releaseSymbolRefs]) and this call's own controller is explicitly
+  /// closed once its subscriber cancels, so cancellation both releases only
+  /// the symbols no other caller still needs AND leaves no abandoned
+  /// controller alive across repeated screen creation/cancellation. Once
+  /// closed, this specific controller can never be re-listened to (a fresh
+  /// call to [watchQuotes] is required), so cancellation can never leave a
+  /// duplicate upstream subscription behind.
+  Stream<MarketQuote> watchQuotes(List<String> symbols) {
+    late StreamController<MarketQuote> controller;
+    StreamSubscription<MarketQuote>? subscription;
+    controller = StreamController<MarketQuote>.broadcast(
+      onListen: () async {
+        _addSymbolRefs(symbols);
+        await ensureConnected();
+        final active = _active;
+        if (active == null || controller.isClosed) return;
+        subscription = active.watchQuotes(symbols).listen((quote) {
+          _lastUpdated = DateTime.now();
+          if (!controller.isClosed) controller.add(quote);
+        });
+      },
+      onCancel: () async {
+        await subscription?.cancel();
+        subscription = null;
+        _releaseSymbolRefs(symbols);
+        if (!controller.isClosed) await controller.close();
+      },
+    );
+    return controller.stream;
+  }
+
+  /// Same lifecycle discipline as [watchQuotes] (reference-counted release,
+  /// controller explicitly closed on cancel) — see that method's doc
+  /// comment.
+  Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) {
+    late StreamController<MarketCandle> controller;
+    StreamSubscription<MarketCandle>? subscription;
+    controller = StreamController<MarketCandle>.broadcast(
+      onListen: () async {
+        _addSymbolRefs([symbol]);
+        await ensureConnected();
+        final active = _active;
+        if (active == null || controller.isClosed) return;
+        subscription = active.watchCandles(symbol, timeframe).listen((candle) {
+          if (!controller.isClosed) controller.add(candle);
+        });
+      },
+      onCancel: () async {
+        await subscription?.cancel();
+        subscription = null;
+        _releaseSymbolRefs([symbol]);
+        if (!controller.isClosed) await controller.close();
+      },
+    );
+    return controller.stream;
   }
 }

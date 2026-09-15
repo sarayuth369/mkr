@@ -44,6 +44,17 @@ abstract class MarketDataProvider {
   /// connection — callers must not open one of these per screen/widget.
   Stream<MarketQuote> watchQuotes(List<String> symbols);
 
+  /// Releases [symbols] from the shared live subscription once no caller
+  /// needs them anymore — the counterpart to [watchQuotes]/[watchCandles].
+  /// A no-op for a symbol that was never subscribed (or, for a standby
+  /// provider, was never actually subscribed upstream at all). 2026-09-15
+  /// post-audit task (Finding 2): batch-shaped to match [watchQuotes]'s own
+  /// shape — [MarketProviderManager] calls this only once a symbol's
+  /// reference count (across every concurrent [watchQuotes]/[watchCandles]
+  /// caller) has actually reached zero, so a symbol still watched by
+  /// another live listener is never released out from under it.
+  void unsubscribeQuotes(List<String> symbols);
+
   Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe);
 
   Future<MarketSessionStatus> getMarketStatus(String market);

@@ -72,6 +72,9 @@ class _FakeCandleProvider implements MarketDataProvider {
   Stream<MarketQuote> watchQuotes(List<String> symbols) => const Stream.empty();
 
   @override
+  void unsubscribeQuotes(List<String> symbols) {}
+
+  @override
   Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) => _tickController.stream;
 }
 
