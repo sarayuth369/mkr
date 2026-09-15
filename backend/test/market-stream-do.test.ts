@@ -511,8 +511,28 @@ describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Ta
   });
 
   describe('historical reconciliation (Decision 8) - single-flight, no REST-per-tick', () => {
-    it('concurrent candle subscriptions to the same (symbol, timeframe) coalesce into ONE REST call', async () => {
+    // Root cause of this suite's previously-red test (2026-09-15 review):
+    // NOT a coalescing bug - `cachedFetch`'s single-flight already worked
+    // correctly (the `fetchSpy` call-count assertion always passed). The
+    // real bug was test determinism: `reconcileIfNeeded` decides current-
+    // vs-already-closed by comparing the fixture candle's fixed timestamp
+    // against REAL `Date.now()` (`mostRecent.timestamp >=
+    // resolveBucketStart(now, timeframe, policy)`), but the fixture
+    // (`M1_BUCKET`, a hardcoded past instant) was never pinned to the
+    // clock the way the sibling "Task 5" tests below correctly do with
+    // `vi.useFakeTimers()`/`vi.setSystemTime()`. As real wall-clock time
+    // moved past `M1_BUCKET`, the fixture candle stopped being "current"
+    // relative to real `now` and silently started routing to
+    // `seedLastClosed` instead of `seed` - never touching production
+    // code's coalescing logic at all. Fixed by pinning the clock here too,
+    // exactly like the Task 5 tests already establish as this file's
+    // pattern for this exact class of comparison.
+    afterEach(() => vi.useRealTimers());
+
+    it('concurrent candle subscriptions to the same (symbol, timeframe) coalesce into ONE REST call (A)', async () => {
       const currentBucketStart = M1_BUCKET;
+      vi.useFakeTimers();
+      vi.setSystemTime(currentBucketStart + 30_000); // 30s into the m1 bucket - the fixture candle is genuinely "current" now, deterministically
       const fetchSpy = vi.fn(async () =>
         new Response(
           JSON.stringify({
@@ -539,6 +559,136 @@ describe('MarketStreamRoom - server-side candle aggregation + WS Protocol V2 (Ta
 
       expect(fetchSpy).toHaveBeenCalledTimes(1); // single-flight coalesced via cachedFetch, not one call per subscriber
       expect(room.candleAggregator.getCurrent('AAPL', 'm1', 'twelve_data')?.open).toBe(150);
+    });
+
+    it('same symbol + different timeframe reconcile independently - NOT coalesced together (B)', async () => {
+      const currentBucketStart = M1_BUCKET;
+      vi.useFakeTimers();
+      vi.setSystemTime(currentBucketStart + 30_000);
+      const fetchSpy = vi.fn(async (url: string) =>
+        new Response(
+          JSON.stringify({
+            values: [{ datetime: new Date(currentBucketStart).toISOString(), open: url.includes('interval=1min') ? '150' : '160', high: '161', low: '149', close: '150.5', volume: '1000' }],
+          }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const env = makeEnv({ TWELVE_DATA_API_KEY: 'fake-key-not-real', MKR_CONFIG: createFakeKv() });
+      const room = new MarketStreamRoom(fakeState() as never, env) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socketA = fakeSocket();
+      socketA.send = () => {};
+      const socketB = fakeSocket();
+      socketB.send = () => {};
+
+      await Promise.all([room.subscribeCandles(socketA, ['AAPL'], ['m1']), room.subscribeCandles(socketB, ['AAPL'], ['m5'])]);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2); // different cache key per timeframe - each reconciles on its own
+      expect(room.candleAggregator.getCurrent('AAPL', 'm1', 'twelve_data')).not.toBeNull();
+      expect(room.candleAggregator.getCurrent('AAPL', 'm5', 'twelve_data')).not.toBeNull();
+    });
+
+    it('different symbols reconcile independently - NOT coalesced together (C)', async () => {
+      const currentBucketStart = M1_BUCKET;
+      vi.useFakeTimers();
+      vi.setSystemTime(currentBucketStart + 30_000);
+      const fetchSpy = vi.fn(async () =>
+        new Response(
+          JSON.stringify({ values: [{ datetime: new Date(currentBucketStart).toISOString(), open: '150', high: '151', low: '149', close: '150.5', volume: '1000' }] }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const env = makeEnv({ TWELVE_DATA_API_KEY: 'fake-key-not-real', MKR_CONFIG: createFakeKv() });
+      const room = new MarketStreamRoom(fakeState() as never, env) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socketA = fakeSocket();
+      socketA.send = () => {};
+      const socketB = fakeSocket();
+      socketB.send = () => {};
+
+      await Promise.all([room.subscribeCandles(socketA, ['AAPL'], ['m1']), room.subscribeCandles(socketB, ['XAU/USD'], ['m1'])]);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2); // different cache key per symbol - each reconciles on its own
+      expect(room.candleAggregator.getCurrent('AAPL', 'm1', 'twelve_data')).not.toBeNull();
+      expect(room.candleAggregator.getCurrent('XAU/USD', 'm1', 'twelve_data')).not.toBeNull();
+    });
+
+    it('a failed shared reconciliation does not poison later retries - a subsequent subscribe can still seed successfully (D)', async () => {
+      const currentBucketStart = M1_BUCKET;
+      vi.useFakeTimers();
+      vi.setSystemTime(currentBucketStart + 30_000);
+      // A genuine failure (a real Twelve Data error-shaped body, not an
+      // unparseable status code that `request()` would silently normalize
+      // to `{}`/empty-success - see the root-cause note above) that
+      // `cachedFetch`'s fetcher rejects with, never getting written to
+      // cache. Using a symbol-specific ('not_found') shape keeps this test
+      // isolated to the single-flight/retry behavior this task owns -
+      // circuit-breaker/failover timing (a separate, pre-existing, already
+      // -tested concern) never engages for this error kind.
+      const fetchSpy = vi
+        .fn()
+        .mockImplementationOnce(async () => new Response(JSON.stringify({ status: 'error', code: 400, message: 'symbol not found' }), { status: 200 }))
+        .mockImplementation(
+          async () =>
+            new Response(JSON.stringify({ values: [{ datetime: new Date(currentBucketStart).toISOString(), open: '150', high: '151', low: '149', close: '150.5', volume: '1000' }] }), {
+              status: 200,
+            }),
+        );
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const env = makeEnv({ TWELVE_DATA_API_KEY: 'fake-key-not-real', MKR_CONFIG: createFakeKv() });
+      const room = new MarketStreamRoom(fakeState() as never, env) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const socketA = fakeSocket();
+      socketA.send = () => {};
+
+      await room.subscribeCandles(socketA, ['AAPL'], ['m1']);
+      expect(room.candleAggregator.getCurrent('AAPL', 'm1', 'twelve_data')).toBeNull(); // first attempt failed - never fabricated a seed from bad data
+
+      const socketB = fakeSocket();
+      socketB.send = () => {};
+      await room.subscribeCandles(socketB, ['AAPL'], ['m1']);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2); // the failed attempt's in-flight entry was cleared, not stuck forever
+      expect(room.candleAggregator.getCurrent('AAPL', 'm1', 'twelve_data')?.open).toBe(150); // the retry succeeded normally
+    });
+
+    it('a successful shared reconciliation gives every concurrent caller the same correct snapshot (E)', async () => {
+      const currentBucketStart = M1_BUCKET;
+      vi.useFakeTimers();
+      vi.setSystemTime(currentBucketStart + 30_000);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          new Response(
+            JSON.stringify({ values: [{ datetime: new Date(currentBucketStart).toISOString(), open: '150', high: '151', low: '149', close: '150.5', volume: '1000' }] }),
+            { status: 200 },
+          ),
+        ),
+      );
+
+      const env = makeEnv({ TWELVE_DATA_API_KEY: 'fake-key-not-real', MKR_CONFIG: createFakeKv() });
+      const room = new MarketStreamRoom(fakeState() as never, env) as RoomInternals;
+      room.symbolRowsCache = { rows: [XAU, AAPL], fetchedAt: Date.now() };
+      const sentA: string[] = [];
+      const sentB: string[] = [];
+      const socketA = fakeSocket();
+      socketA.send = (p: string) => sentA.push(p);
+      const socketB = fakeSocket();
+      socketB.send = (p: string) => sentB.push(p);
+
+      await Promise.all([room.subscribeCandles(socketA, ['AAPL'], ['m1']), room.subscribeCandles(socketB, ['AAPL'], ['m1'])]);
+
+      expect(sentA).toHaveLength(1);
+      expect(sentB).toHaveLength(1);
+      const dataA = JSON.parse(sentA[0]!).data.current;
+      const dataB = JSON.parse(sentB[0]!).data.current;
+      expect(dataA).toEqual(dataB); // both callers observed the exact same seeded candle, not two independently-derived copies
+      expect(dataA.open).toBe(150);
     });
 
     it('a normal tick never triggers a REST call - no per-tick request explosion', () => {

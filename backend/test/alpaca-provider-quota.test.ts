@@ -5,7 +5,9 @@ import { _resetQuotaUsageForTests, budgetSnapshot } from '../src/providers/quota
 // Task 6 review correction: proves REST-call accounting is exact against
 // the REAL provider implementation - this is the second class the review
 // flagged (getBatchQuotes issues one real /snapshot request PER symbol,
-// via Promise.all over individual getQuote calls).
+// sequentially over individual getQuote calls - see
+// alpaca-batch-quotes-safety.test.ts for the 2026-09-15 review's
+// concurrency/isolation/circuit-breaker correction to that loop).
 
 function snapshotJson(price = 100) {
   return { latestTrade: { p: price } };
@@ -81,12 +83,14 @@ describe('AlpacaProvider - REST call accounting (Task 6 review correction)', () 
     );
     const provider = new AlpacaProvider('fake-key-id', 'fake-secret-not-real');
 
-    // getBatchQuotes uses Promise.all internally - a single rejected symbol
-    // rejects the whole batch (unlike Twelve Data's Promise.allSettled
-    // chunking), but every attempt made before the rejection still counted.
+    // getBatchQuotes now isolates per-symbol failures (2026-09-15 review
+    // fix - see alpaca-batch-quotes-safety.test.ts) rather than the old
+    // Promise.all failing the whole batch on one rejection - all 5
+    // symbols are still attempted regardless. Every real attempt still
+    // counts exactly once each either way.
     await provider.getBatchQuotes(symbolMap(5)).catch(() => {});
 
-    expect(calls).toBeGreaterThan(0);
+    expect(calls).toBe(5);
     expect(usedCount()).toBe(calls); // every real attempt counted, exactly once each
   });
 

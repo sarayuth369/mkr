@@ -1,3 +1,4 @@
+import { logError } from '../../logging';
 import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, NormalizedQuote } from '../../types';
 import { recordProviderRequest } from '../quota-manager';
 import { ProviderError, type MarketDataProvider } from '../types';
@@ -74,15 +75,65 @@ export class AlpacaProvider implements MarketDataProvider {
 
   /**
    * Alpaca's snapshot endpoint is per-symbol only (no documented
-   * comma-separated batch form used here) - standby-only anyway, so this
-   * stays a simple concurrent loop rather than adding batching complexity
-   * for a provider that isn't in the live traffic path.
+   * comma-separated batch form used here), so N symbols genuinely need N
+   * real HTTP requests - this cannot be reduced to fewer calls the way
+   * TwelveDataProvider's chunking does. What it CAN control is
+   * concurrency and failure isolation, which the original implementation
+   * got wrong the same way TwelveDataProvider originally did:
+   *
+   * - `Promise.all` over N concurrent `getQuote()` calls fires every
+   *   request at once with no concurrency limit - unsafe under an unknown
+   *   real Alpaca rate limit (this provider has never been activated in
+   *   production, so no real limit has ever been observed/confirmed - see
+   *   the class doc comment; "do not invent provider quota values" means
+   *   not assuming N-way concurrency is safe either).
+   * - `Promise.all` is also fail-fast: ONE symbol throwing a transient
+   *   ProviderError (timeout/network/rate_limit) would reject the whole
+   *   batch immediately, discarding every other symbol's already-fetched
+   *   result - the exact "one bad element takes the whole batch down"
+   *   failure class TwelveDataProvider's chunk-batching fix addressed,
+   *   just via a different mechanism (there: one bad chunk poisoning up
+   *   to 7 sibling symbols; here: one bad symbol poisoning all of them).
+   *
+   * Fixed the same way: sequential requests (matching the primary
+   * provider's now-sequential chunking - the safe default absent a known
+   * real concurrency limit), with per-symbol failure isolated via
+   * try/catch rather than letting one rejection cancel the rest. A
+   * symbol whose own parseAlpacaSnapshot/isAlpacaError already resolves
+   * to a graceful `null` (see alpaca-parser.ts - Alpaca's own "invalid
+   * symbol" responses were already handled this way, never thrown) is
+   * unaffected either way; this specifically fixes a genuine transient
+   * failure (timeout/network/rate_limit) on one symbol no longer taking
+   * every other symbol's result down with it. Only a TOTAL failure
+   * (every symbol threw) propagates to the caller, exactly mirroring
+   * TwelveDataProvider.getBatchQuotes's "any chunk succeeded" rule - this
+   * is what MarketProviderManager's existing confirmed-unhealthy/circuit
+   * logic keys off of.
    */
   async getBatchQuotes(providerToMkr: Record<string, string>): Promise<Record<string, NormalizedQuote | null>> {
-    const entries = await Promise.all(
-      Object.entries(providerToMkr).map(async ([providerSymbol, mkrSymbol]) => [mkrSymbol, await this.getQuote(providerSymbol, mkrSymbol)] as const),
-    );
-    return Object.fromEntries(entries);
+    const entries = Object.entries(providerToMkr);
+    if (entries.length === 0) return {};
+
+    const result: Record<string, NormalizedQuote | null> = {};
+    let anySucceeded = false;
+    let lastFailure: unknown;
+    for (const [providerSymbol, mkrSymbol] of entries) {
+      try {
+        result[mkrSymbol] = await this.getQuote(providerSymbol, mkrSymbol);
+        anySucceeded = true;
+      } catch (err) {
+        lastFailure = err;
+        // Deliberately not thrown here - only a genuine, total failure
+        // (every symbol threw) should look like a provider fault to the
+        // caller's failover logic; a per-symbol failure just leaves that
+        // one symbol out of `result`, which the route handler already
+        // treats as "no data for this symbol". Logged so a recurring
+        // per-symbol failure is actually visible server-side.
+        logError('batch quote symbol failed', { symbol: providerSymbol, message: (err as Error).message });
+      }
+    }
+    if (!anySucceeded) throw lastFailure;
+    return result;
   }
 
   async getMarketStatus(_providerSymbol: string, mkrSymbol: string): Promise<NormalizedMarketStatus> {
