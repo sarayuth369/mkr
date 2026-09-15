@@ -54,13 +54,21 @@ class HomeController extends ChangeNotifier {
 
   StreamSubscription<List<MarketQuote>>? _liveSubscription;
 
-  /// Subscribes Home's visible symbols to [MarketService.watchQuotes] so the
-  /// Market Pulse / Market Snapshot rows visibly tick during a session —
-  /// always sourced from a service whose [MarketDataMode] is surfaced via
-  /// the status chip, so this never implies real-time data that isn't there.
-  void _watchLiveQuotes() {
-    final symbols = {...pulseSymbols, ...snapshotSymbols}.toList();
+  /// Subscribes to live ticks for exactly [symbols] so the Market Pulse /
+  /// Market Snapshot rows visibly tick during a session — always sourced
+  /// from a service whose [MarketDataMode] is surfaced via the status
+  /// chip, so this never implies real-time data that isn't there.
+  ///
+  /// 2026-09-15 correction task: [symbols] must be the set ALREADY resolved
+  /// from a catalog-authorized REST fetch (see [refresh]), never
+  /// [pulseSymbols]/[snapshotSymbols] directly — those are a desired hero
+  /// selection, not a second production symbol authority, and several of
+  /// them can be backend-disabled at any time. Requesting a live
+  /// subscription for a disabled symbol would bypass the same
+  /// backend-catalog rule the initial REST load already enforces.
+  void _watchLiveQuotes(List<String> symbols) {
     _liveSubscription?.cancel();
+    if (symbols.isEmpty) return; // nothing currently resolvable - omit honestly, never subscribe to a guess
     _liveSubscription = _marketService.watchQuotes(symbols).listen((updates) {
       final bySymbol = {for (final q in updates) q.symbol: q};
 
@@ -112,16 +120,18 @@ class HomeController extends ChangeNotifier {
         case MarketFetchPartial(:final quotes):
           final bySymbol = {for (final q in quotes) q.symbol: q};
           final isPartial = result is MarketFetchPartial;
-          _pulseState = ApiState.success(
-            [for (final s in pulseSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
-            isPartial: isPartial,
-          );
-          _snapshotState = ApiState.success(
-            [for (final s in snapshotSymbols) bySymbol[s]].whereType<MarketQuote>().toList(),
-            isPartial: isPartial,
-          );
+          // Only symbols that ACTUALLY resolved from the catalog-authorized
+          // fetch above - a desired hero symbol that's currently disabled/
+          // unavailable is simply omitted here, never requested anyway.
+          final resolvedPulse = [for (final s in pulseSymbols) bySymbol[s]].whereType<MarketQuote>().toList();
+          final resolvedSnapshot = [for (final s in snapshotSymbols) bySymbol[s]].whereType<MarketQuote>().toList();
+          _pulseState = ApiState.success(resolvedPulse, isPartial: isPartial);
+          _snapshotState = ApiState.success(resolvedSnapshot, isPartial: isPartial);
           _gold = bySymbol['XAU/USD'];
-          _watchLiveQuotes();
+          // 2026-09-15 correction task: watch exactly what resolved above,
+          // never the raw pulseSymbols/snapshotSymbols selection - see
+          // _watchLiveQuotes' doc comment.
+          _watchLiveQuotes({...resolvedPulse.map((q) => q.symbol), ...resolvedSnapshot.map((q) => q.symbol)}.toList());
         case MarketFetchEmpty():
           _pulseState = const ApiState.empty();
           _snapshotState = const ApiState.empty();

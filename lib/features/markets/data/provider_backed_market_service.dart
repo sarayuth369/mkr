@@ -66,10 +66,53 @@ class ProviderBackedMarketService implements MarketService {
   @override
   Future<MarketQuote?> getQuote(String symbol) => _manager.getQuote(symbol);
 
+  /// 2026-09-15 correction task: a caller-supplied symbol list (e.g. a
+  /// saved Watchlist, which can retain a symbol the backend later disables
+  /// or removes) is now validated against [MarketCatalogRepository] before
+  /// anything reaches [MarketProviderManager] - a disabled/unknown symbol
+  /// is filtered out here and NEVER requested from the provider, matching
+  /// [getAllQuotes]/[getQuotesByCategory]/[search]'s existing rule.
+  ///
+  /// A filtered-out symbol is represented honestly rather than silently
+  /// dropped: if at least one requested symbol resolves, the result is a
+  /// [MarketFetchPartial] whose `failedSymbols` includes every catalog-
+  /// disabled/unknown symbol alongside any genuine provider-level failure -
+  /// the caller (e.g. [WatchlistController]) already renders that the same
+  /// way it renders any other partial result, without needing to know
+  /// WHY a symbol didn't come back.
   @override
-  Future<MarketFetchResult> getQuotesFor(List<String> symbols) {
-    if (symbols.isEmpty) return Future.value(const MarketFetchEmpty());
-    return _manager.getQuotes(symbols);
+  Future<MarketFetchResult> getQuotesFor(List<String> symbols) async {
+    if (symbols.isEmpty) return const MarketFetchEmpty();
+
+    final List<CatalogSymbol> catalog;
+    try {
+      catalog = await _catalog.load();
+    } on MarketCatalogException catch (e) {
+      return MarketFetchFailure(MarketFetchFailureKind.offline, e.message);
+    }
+
+    final enabled = catalog.map((s) => s.symbol).toSet();
+    final requestable = symbols.where(enabled.contains).toList();
+    final filteredOut = symbols.where((s) => !enabled.contains(s)).toList();
+
+    if (requestable.isEmpty) {
+      // Every requested symbol is disabled/unknown - never contact the
+      // provider for a symbol the backend catalog doesn't currently allow.
+      return const MarketFetchEmpty();
+    }
+
+    final result = await _manager.getQuotes(requestable);
+    if (filteredOut.isEmpty) return result;
+
+    return switch (result) {
+      MarketFetchSuccess(:final quotes) => MarketFetchPartial(quotes, filteredOut),
+      MarketFetchPartial(:final quotes, :final failedSymbols) => MarketFetchPartial(quotes, [...failedSymbols, ...filteredOut]),
+      // A genuinely empty or hard-failed provider result already carries
+      // its own honest state - catalog-filtered symbols add no further
+      // signal there (a provider outage/empty result is the dominant fact).
+      MarketFetchEmpty() => result,
+      MarketFetchFailure() => result,
+    };
   }
 
   @override
