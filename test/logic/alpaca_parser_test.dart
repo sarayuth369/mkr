@@ -66,6 +66,38 @@ void main() {
       });
       expect(candles, isEmpty);
     });
+
+    // 2026-09-15 candle numeric validation correction task — a NaN/Infinity
+    // OHLC value must be treated as malformed and skipped, never fabricated
+    // or silently accepted into a candle.
+    test('a NaN OHLC value is treated as malformed and skipped', () {
+      final candles = AlpacaParser.parseBars(const {
+        'bars': [
+          {'t': '2026-01-01T00:00:00Z', 'o': double.nan, 'h': 2, 'l': 0.5, 'c': 1.8},
+        ],
+      });
+      expect(candles, isEmpty);
+    });
+
+    test('an Infinity OHLC value is treated as malformed and skipped', () {
+      final candles = AlpacaParser.parseBars(const {
+        'bars': [
+          {'t': '2026-01-01T00:00:00Z', 'o': 1, 'h': double.infinity, 'l': 0.5, 'c': 1.8},
+        ],
+      });
+      expect(candles, isEmpty);
+    });
+
+    test('mixed valid + non-finite entries returns only the valid candle - never fabricated', () {
+      final candles = AlpacaParser.parseBars(const {
+        'bars': [
+          {'t': '2026-01-01T00:00:00Z', 'o': 1, 'h': 2, 'l': 0.5, 'c': 1.8},
+          {'t': '2026-01-02T00:00:00Z', 'o': double.infinity, 'h': 3, 'l': 1, 'c': 2.5},
+        ],
+      });
+      expect(candles, hasLength(1));
+      expect(candles.single.close, 1.8);
+    });
   });
 
   group('parseWsTrade', () {

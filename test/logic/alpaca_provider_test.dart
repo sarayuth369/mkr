@@ -111,4 +111,39 @@ void main() {
       expect(result.single.close, 1.5);
     });
   });
+
+  group('AlpacaProvider.getHistoricalCandles — candle numeric validation correction', () {
+    // 2026-09-15 candle numeric validation correction task — same gap as
+    // TwelveDataProvider: a NaN/Infinity OHLC value must be treated as
+    // malformed. Strict JSON can't encode a literal NaN/Infinity number,
+    // but a malformed backend CAN send one as a string (e.g. "NaN"), which
+    // `_num()`'s string branch genuinely converts to a non-finite double.
+
+    test('non-empty bars where the only entry has a "NaN" OHLC string throws MarketFetchException, never []', () async {
+      final provider = _activatedProviderFor({
+        'bars': [
+          {'o': 'NaN', 'h': 2, 'l': 0.5, 'c': 1.5, 't': '2026-01-01T00:00:00Z'},
+        ],
+      });
+
+      await expectLater(
+        provider.getHistoricalCandles('AAPL', Timeframe.d1),
+        throwsA(isA<MarketFetchException>()),
+      );
+    });
+
+    test('mixed valid + non-finite ("Infinity") entries returns only the valid candle', () async {
+      final provider = _activatedProviderFor({
+        'bars': [
+          {'o': 1, 'h': 2, 'l': 0.5, 'c': 1.5, 't': '2026-01-01T00:00:00Z'},
+          {'o': 'Infinity', 'h': 3, 'l': 1, 'c': 2.5, 't': '2026-01-02T00:00:00Z'},
+        ],
+      });
+
+      final result = await provider.getHistoricalCandles('AAPL', Timeframe.d1);
+
+      expect(result, hasLength(1));
+      expect(result.single.close, 1.5);
+    });
+  });
 }

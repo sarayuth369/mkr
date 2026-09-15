@@ -118,6 +118,43 @@ void main() {
       expect(TwelveDataParser.parseCandles({'success': true}), isEmpty);
       expect(TwelveDataParser.parseCandles(_envelope(null)), isEmpty);
     });
+
+    // 2026-09-15 candle numeric validation correction task — a NaN/Infinity
+    // OHLC value, or a non-finite numeric timestamp, must be treated as a
+    // malformed entry exactly like a missing field already was, never
+    // silently accepted. `double.tryParse('NaN'/'Infinity')` genuinely
+    // returns a non-finite double for a malformed string value from the
+    // wire, so this covers both a raw-JSON-number and a string-encoded
+    // non-finite value reaching the parser.
+    test('a NaN OHLC value is treated as malformed and skipped', () {
+      final candles = TwelveDataParser.parseCandles(_listEnvelope([
+        {'timestamp': 1735689600000, 'open': double.nan, 'high': 2, 'low': 0.5, 'close': 1.8},
+      ]));
+      expect(candles, isEmpty);
+    });
+
+    test('an Infinity OHLC value is treated as malformed and skipped', () {
+      final candles = TwelveDataParser.parseCandles(_listEnvelope([
+        {'timestamp': 1735689600000, 'open': 1, 'high': double.infinity, 'low': 0.5, 'close': 1.8},
+      ]));
+      expect(candles, isEmpty);
+    });
+
+    test('a non-finite numeric timestamp is treated as malformed and skipped', () {
+      final candles = TwelveDataParser.parseCandles(_listEnvelope([
+        {'timestamp': double.nan, 'open': 1, 'high': 2, 'low': 0.5, 'close': 1.8},
+      ]));
+      expect(candles, isEmpty);
+    });
+
+    test('mixed valid + non-finite entries returns only the valid candle - never fabricated', () {
+      final candles = TwelveDataParser.parseCandles(_listEnvelope([
+        {'timestamp': 1735689600000, 'open': 1, 'high': 2, 'low': 0.5, 'close': 1.8},
+        {'timestamp': 1735776000000, 'open': double.infinity, 'high': 3, 'low': 1, 'close': 2.5},
+      ]));
+      expect(candles, hasLength(1));
+      expect(candles.single.close, 1.8);
+    });
   });
 
   group('parseMarketStatus', () {

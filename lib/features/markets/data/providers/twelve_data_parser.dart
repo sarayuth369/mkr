@@ -158,7 +158,25 @@ class TwelveDataParser {
       final low = _num(map['low']);
       final close = _num(map['close']);
       final timestamp = map['timestamp'];
-      if (open == null || high == null || low == null || close == null || timestamp is! num) continue;
+      // 2026-09-15 candle numeric validation correction: NaN/Infinity are
+      // rejected here (not in the shared `_num()` helper, which quote
+      // parsing also uses and stays untouched - out of scope for this fix)
+      // - a non-finite OHLC value, or a non-finite numeric `timestamp`
+      // (which would otherwise reach DateTime.fromMillisecondsSinceEpoch
+      // with a garbage/overflowing int from `.toInt()`), is treated as a
+      // malformed entry exactly like a missing field already was.
+      if (open == null ||
+          high == null ||
+          low == null ||
+          close == null ||
+          !open.isFinite ||
+          !high.isFinite ||
+          !low.isFinite ||
+          !close.isFinite ||
+          timestamp is! num ||
+          !timestamp.isFinite) {
+        continue;
+      }
       candles.add(MarketCandle(
         time: DateTime.fromMillisecondsSinceEpoch(timestamp.toInt()),
         open: open,

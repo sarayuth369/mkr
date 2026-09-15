@@ -83,7 +83,24 @@ class AlpacaParser {
       final low = _num(map['l']);
       final close = _num(map['c']);
       final t = (map['t'] as Object?)?.toString();
-      if (open == null || high == null || low == null || close == null || t == null) continue;
+      // 2026-09-15 candle numeric validation correction: NaN/Infinity OHLC
+      // are rejected here (not in the shared `_num()` helper, which quote
+      // parsing also uses and stays untouched - out of scope) - treated as
+      // a malformed entry exactly like a missing field already was. `t` is
+      // an ISO8601 string parsed below via `DateTime.tryParse`, which is
+      // already inherently finite when it succeeds - no separate numeric-
+      // timestamp concern here (that's Twelve Data's numeric `timestamp`).
+      if (open == null ||
+          high == null ||
+          low == null ||
+          close == null ||
+          !open.isFinite ||
+          !high.isFinite ||
+          !low.isFinite ||
+          !close.isFinite ||
+          t == null) {
+        continue;
+      }
       final time = DateTime.tryParse(t);
       if (time == null) continue;
       candles.add(MarketCandle(

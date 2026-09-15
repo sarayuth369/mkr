@@ -132,4 +132,45 @@ void main() {
       expect(result.single.close, 1.5);
     });
   });
+
+  group('TwelveDataProvider.getHistoricalCandles — candle numeric validation correction', () {
+    // 2026-09-15 candle numeric validation correction task — a NaN/Infinity
+    // OHLC value must be treated as malformed, never accepted as a real
+    // candle value. Strict JSON can't encode a literal NaN/Infinity number,
+    // but a malformed backend CAN send one as a string (e.g. "NaN"), which
+    // `_num()`'s string branch (`double.tryParse`) genuinely converts to a
+    // non-finite double - exactly the real-wire vector this closes. (A
+    // non-finite NUMERIC `timestamp` specifically can't be produced through
+    // real JSON encode/decode at all - that case is covered directly
+    // against the parser in twelve_data_parser_test.dart.)
+
+    test('non-empty data where the only entry has a "NaN" OHLC string throws MarketFetchException, never []', () async {
+      final provider = _providerFor({
+        'success': true,
+        'data': [
+          {'open': 'NaN', 'high': 2, 'low': 0.5, 'close': 1.5, 'timestamp': 1700000000000},
+        ],
+      });
+
+      await expectLater(
+        provider.getHistoricalCandles('AAPL', Timeframe.d1),
+        throwsA(isA<MarketFetchException>()),
+      );
+    });
+
+    test('mixed valid + non-finite ("Infinity") entries returns only the valid candle', () async {
+      final provider = _providerFor({
+        'success': true,
+        'data': [
+          {'open': 1, 'high': 2, 'low': 0.5, 'close': 1.5, 'timestamp': 1700000000000},
+          {'open': 'Infinity', 'high': 3, 'low': 1, 'close': 2.5, 'timestamp': 1700086400000},
+        ],
+      });
+
+      final result = await provider.getHistoricalCandles('AAPL', Timeframe.d1);
+
+      expect(result, hasLength(1));
+      expect(result.single.close, 1.5);
+    });
+  });
 }
