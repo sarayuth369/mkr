@@ -3,6 +3,9 @@ import '../domain/news_article.dart';
 import '../domain/news_service.dart';
 
 class MockNewsService implements NewsService {
+  @override
+  bool get isMock => true;
+
   static final List<NewsArticle> _articles = [
     NewsArticle(
       id: 'n1',

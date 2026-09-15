@@ -33,8 +33,10 @@ class CalendarScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Column(
                   children: [
-                    const MockDataBanner(),
-                    const SizedBox(height: 12),
+                    if (controller.isMock) ...[
+                      const MockDataBanner(),
+                      const SizedBox(height: 12),
+                    ],
                     _FilterRow<ImpactLevel?>(
                       selected: controller.impactFilter,
                       options: [

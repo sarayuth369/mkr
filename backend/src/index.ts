@@ -33,6 +33,7 @@ import { ApiError, errorResponse } from './errors';
 import { handleHealth, handleVersion } from './health';
 import { logError } from './logging';
 import { handleCandles, handleMarketHealth, handleMarketStatus, handleQuote, handleQuotes } from './market/market-routes';
+import { handleCalendarEvents, handleNews, handleNewsRelated } from './news/news-routes';
 import { checkRateLimit, clientKeyFromRequest, rateLimitedResponse, rateLimitEnv } from './ratelimit';
 import type { Env } from './types';
 import { fetchPoolStatus, triggerAlertRefSync } from './ws/market-stream-do';
@@ -141,6 +142,18 @@ async function routeAi(request: Request, env: Env, path: string, id: string): Pr
   throw new ApiError('NOT_FOUND', `No AI route for ${request.method} ${path}`);
 }
 
+async function routeNews(request: Request, env: Env, path: string): Promise<Response> {
+  const { limit } = rateLimitEnv(env, 'public');
+  const rl = await checkRateLimit(env.RATE_LIMITER, `public:${clientKeyFromRequest(request)}`, limit, 60);
+  if (!rl.allowed) return rateLimitedResponse(rl);
+
+  if (path === '/api/mkr/news' && request.method === 'GET') return handleNews(request, env);
+  if (path === '/api/mkr/news/related' && request.method === 'GET') return handleNewsRelated(request, env);
+  if (path === '/api/mkr/calendar/events' && request.method === 'GET') return handleCalendarEvents(request, env);
+
+  throw new ApiError('NOT_FOUND', `No news/calendar route for ${request.method} ${path}`);
+}
+
 export default {
   /** Refreshes the Alert Engine's KV-cached alert index (see alerts/alert-index.ts)
    * every minute (see wrangler.toml [triggers]) - a no-op when Supabase isn't
@@ -182,6 +195,8 @@ export default {
       else if (path === '/api/mkr/version') response = handleVersion();
       else if (path.startsWith('/api/mkr/market/')) response = await routeMarket(request, env, path, id);
       else if (path.startsWith('/api/mkr/ai/')) response = await routeAi(request, env, path, id);
+      else if (path === '/api/mkr/news' || path === '/api/mkr/news/related' || path === '/api/mkr/calendar/events')
+        response = await routeNews(request, env, path);
       else if (isAdminRoute) response = await routeAdmin(request, env, path, id);
       else throw new ApiError('NOT_FOUND', `No route for ${request.method} ${path}`);
 

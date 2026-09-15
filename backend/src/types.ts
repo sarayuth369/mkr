@@ -48,6 +48,13 @@ export interface Env {
   FCM_PROJECT_ID?: string;
   FCM_CLIENT_EMAIL?: string;
   FCM_PRIVATE_KEY?: string;
+
+  // News Radar / Economic Calendar (src/news/, src/calendar-events/) - both
+  // gated by their own feature flag (newsEnabled/economicCalendarEnabled)
+  // AND this secret; missing either means MockNewsService/
+  // MockEconomicCalendarService stay in use client-side (see
+  // MKR-EXTERNAL-INTEGRATIONS.md).
+  FINNHUB_API_KEY?: string;
 }
 
 /** Which upstream actually produced a quote/candle. */

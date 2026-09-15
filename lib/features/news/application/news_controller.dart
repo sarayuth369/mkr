@@ -11,6 +11,8 @@ class NewsController extends ChangeNotifier {
 
   final NewsService _service;
 
+  bool get isMock => _service.isMock;
+
   ApiState<List<NewsArticle>> _state = const ApiState.loading();
   ApiState<List<NewsArticle>> get state => _state;
 

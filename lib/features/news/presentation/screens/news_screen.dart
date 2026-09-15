@@ -34,11 +34,11 @@ class NewsScreen extends StatelessWidget {
           ),
           success: (articles, isStale, lastUpdated) => ListView.separated(
             padding: const EdgeInsets.all(16),
-            itemCount: articles.length + 1,
+            itemCount: articles.length + (controller.isMock ? 1 : 0),
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
-              if (index == 0) return const MockDataBanner();
-              final article = articles[index - 1];
+              if (controller.isMock && index == 0) return const MockDataBanner();
+              final article = articles[controller.isMock ? index - 1 : index];
               return NewsCard(article: article);
             },
           ),

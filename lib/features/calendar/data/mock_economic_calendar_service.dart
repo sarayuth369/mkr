@@ -4,6 +4,9 @@ import '../domain/economic_event.dart';
 
 class MockEconomicCalendarService implements EconomicCalendarService {
   @override
+  bool get isMock => true;
+
+  @override
   Future<List<EconomicEvent>> getEvents() async {
     await Future.delayed(const Duration(milliseconds: 300));
     final today = DateTime.now();

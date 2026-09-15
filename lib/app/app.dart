@@ -36,6 +36,7 @@ import '../features/billing/application/entitlement_controller.dart';
 import '../features/billing/data/mock_billing_repository.dart';
 import '../features/billing/domain/billing_repository.dart';
 import '../features/calendar/application/calendar_controller.dart';
+import '../features/calendar/data/finnhub_economic_calendar_service.dart';
 import '../features/calendar/data/mock_economic_calendar_service.dart';
 import '../features/calendar/domain/economic_calendar_service.dart';
 import '../features/gold/application/gold_radar_controller.dart';
@@ -49,6 +50,7 @@ import '../features/markets/data/providers/alpaca_provider.dart';
 import '../features/markets/data/providers/twelve_data_provider.dart';
 import '../features/markets/domain/market_service.dart';
 import '../features/news/application/news_controller.dart';
+import '../features/news/data/finnhub_news_service.dart';
 import '../features/news/data/mock_news_service.dart';
 import '../features/news/domain/news_service.dart';
 import '../features/onboarding/presentation/screens/onboarding_screen.dart';
@@ -112,6 +114,23 @@ PushNotificationService _buildPushNotificationService() {
   return Firebase.apps.isNotEmpty ? FirebaseMessagingPushService() : const NoopPushNotificationService();
 }
 
+/// Real [FinnhubNewsService]/[FinnhubEconomicCalendarService] whenever real
+/// mode is on - reusing [MarketDataConfig]'s real/demo signal and backend
+/// URL, same reasoning as [_buildMarketAIService]: one backend deployment,
+/// each surface independently gated server-side by its own feature flag
+/// (newsEnabled/economicCalendarEnabled), off until an admin verifies it.
+NewsService _buildNewsService() {
+  final config = MarketDataConfig.fromEnvironment();
+  if (config.mode == MarketDataRunMode.demo) return MockNewsService();
+  return FinnhubNewsService(backendBaseUrl: config.backendBaseUrl);
+}
+
+EconomicCalendarService _buildEconomicCalendarService() {
+  final config = MarketDataConfig.fromEnvironment();
+  if (config.mode == MarketDataRunMode.demo) return MockEconomicCalendarService();
+  return FinnhubEconomicCalendarService(backendBaseUrl: config.backendBaseUrl);
+}
+
 class MkrApp extends StatelessWidget {
   const MkrApp({super.key, required this.store});
 
@@ -129,8 +148,8 @@ class MkrApp extends StatelessWidget {
         // behind these same interfaces in Phase 2.
         Provider<MarketService>(create: (_) => _buildMarketService()),
         Provider<MarketAIService>(create: (_) => _buildMarketAIService()),
-        Provider<NewsService>(create: (_) => MockNewsService()),
-        Provider<EconomicCalendarService>(create: (_) => MockEconomicCalendarService()),
+        Provider<NewsService>(create: (_) => _buildNewsService()),
+        Provider<EconomicCalendarService>(create: (_) => _buildEconomicCalendarService()),
         Provider<NotificationService>(create: (_) => MockNotificationService()),
         Provider<PortfolioRepository>(create: (_) => MockPortfolioRepository(store)),
         Provider<BillingRepository>(create: (_) => MockBillingRepository(store)),

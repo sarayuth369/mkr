@@ -12,6 +12,8 @@ class CalendarController extends ChangeNotifier {
 
   final EconomicCalendarService _service;
 
+  bool get isMock => _service.isMock;
+
   ApiState<List<EconomicEvent>> _state = const ApiState.loading();
   ApiState<List<EconomicEvent>> get state => _state;
 
