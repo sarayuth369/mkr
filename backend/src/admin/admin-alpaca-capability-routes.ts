@@ -1,5 +1,6 @@
 import { jsonResponse } from '../errors';
 import { AlpacaProvider } from '../providers/alpaca/alpaca-provider';
+import { isAlpacaCryptoSymbol } from '../providers/alpaca/alpaca-parser';
 import { ProviderError } from '../providers/types';
 import type { Env } from '../types';
 
@@ -42,6 +43,15 @@ type CapabilityOutcome = 'works' | 'no_data' | 'capability' | 'auth' | 'rate_lim
 interface SymbolCapabilityResult {
   mkrSymbol: string;
   alpacaSymbol: string;
+  /**
+   * Which Alpaca API family this symbol was actually routed through -
+   * 'stock' (/v2/stocks) or 'crypto' (/v1beta3/crypto/us). Derived from
+   * the same `isAlpacaCryptoSymbol` check AlpacaProvider itself uses
+   * internally (2026-09-16 hybrid capability validation task) - reported
+   * here, not hard-coded per test symbol, so this field is always exactly
+   * what the provider actually did, never an assumption.
+   */
+  family: 'stock' | 'crypto';
   quote: CapabilityOutcome;
   quoteDetail?: string;
   candles: CapabilityOutcome;
@@ -77,7 +87,7 @@ export async function handleAdminAlpacaCapabilityTest(_request: Request, env: En
   const results: SymbolCapabilityResult[] = [];
 
   for (const { mkrSymbol, alpacaSymbol } of CAPABILITY_TEST_SYMBOLS) {
-    const result: SymbolCapabilityResult = { mkrSymbol, alpacaSymbol, quote: 'error', candles: 'error' };
+    const result: SymbolCapabilityResult = { mkrSymbol, alpacaSymbol, family: isAlpacaCryptoSymbol(alpacaSymbol) ? 'crypto' : 'stock', quote: 'error', candles: 'error' };
 
     try {
       const quote = await provider.getQuote(alpacaSymbol, mkrSymbol);

@@ -54,14 +54,26 @@ describe('handleAdminAlpacaCapabilityTest', () => {
     expect(body.data.message).not.toMatch(/[A-Za-z0-9]{20,}/);
   });
 
-  it('tests every representative symbol SEQUENTIALLY against the real AlpacaProvider code and classifies each outcome, without changing any config', async () => {
+  it('tests every representative symbol SEQUENTIALLY against the real AlpacaProvider code, routes stock vs crypto through the correct API family, and classifies each outcome, without changing any config', async () => {
     const requestedUrls: string[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
         requestedUrls.push(url);
         const u = new URL(url);
-        if (u.pathname.includes('/BOGUS404/')) return new Response(JSON.stringify({ code: 40410000, message: 'symbol not found' }), { status: 404 });
+        // Crypto family (v1beta3/crypto/us) - always keyed by the
+        // requested symbol, even for a single-symbol request - see
+        // alpaca-parser.test.ts's parseAlpacaCryptoSnapshot/Bars tests for
+        // why this shape matters.
+        if (u.pathname === '/v1beta3/crypto/us/snapshots') {
+          const symbol = u.searchParams.get('symbols') ?? '';
+          return new Response(JSON.stringify({ snapshots: { [symbol]: { latestTrade: { p: 100 } } } }), { status: 200 });
+        }
+        if (u.pathname === '/v1beta3/crypto/us/bars') {
+          const symbol = u.searchParams.get('symbols') ?? '';
+          return new Response(JSON.stringify({ bars: { [symbol]: [{ o: 1, h: 2, l: 0.5, c: 1.5, t: '2026-01-01T00:00:00Z' }] } }), { status: 200 });
+        }
+        // Stock family (v2/stocks) - flat body, unchanged from before this task.
         if (u.pathname.endsWith('/snapshot')) return new Response(JSON.stringify({ latestTrade: { p: 100 } }), { status: 200 });
         if (u.pathname.endsWith('/bars')) return new Response(JSON.stringify({ bars: [{ o: 1, h: 2, l: 0.5, c: 1.5, t: '2026-01-01T00:00:00Z' }] }), { status: 200 });
         return new Response('{}', { status: 200 });
@@ -71,7 +83,7 @@ describe('handleAdminAlpacaCapabilityTest', () => {
 
     const response = await handleAdminAlpacaCapabilityTest(new Request('https://x/api/mkr/admin/alpaca-capability-test'), env);
     const body = (await response.json()) as {
-      data: { configured: boolean; results: { mkrSymbol: string; alpacaSymbol: string; quote: string; candles: string }[]; healthCheck: { healthy: boolean } };
+      data: { configured: boolean; results: { mkrSymbol: string; alpacaSymbol: string; family: string; quote: string; candles: string }[]; healthCheck: { healthy: boolean } };
     };
 
     expect(body.data.configured).toBe(true);
@@ -80,7 +92,21 @@ describe('handleAdminAlpacaCapabilityTest', () => {
       expect(r.quote).toBe('works');
       expect(r.candles).toBe('works');
     }
+    // Family is reported truthfully per symbol, derived from the same
+    // symbol-shape check the provider itself uses - never hard-coded here.
+    const byMkrSymbol = Object.fromEntries(body.data.results.map((r) => [r.mkrSymbol, r.family]));
+    expect(byMkrSymbol.AAPL).toBe('stock');
+    expect(byMkrSymbol.TSLA).toBe('stock');
+    expect(byMkrSymbol.BTC).toBe('crypto');
+    expect(byMkrSymbol.ETH).toBe('crypto');
     expect(body.data.healthCheck.healthy).toBe(true);
+    // Every crypto request actually hit the crypto API family, every stock
+    // request the stock family - proves this isn't hard-coded only in the
+    // admin route, the provider itself dispatched correctly.
+    expect(requestedUrls.some((u) => u.includes('/v1beta3/crypto/us/snapshots?symbols=BTC%2FUSD'))).toBe(true);
+    expect(requestedUrls.some((u) => u.includes('/v1beta3/crypto/us/snapshots?symbols=ETH%2FUSD'))).toBe(true);
+    expect(requestedUrls.some((u) => u.includes('/v1beta3/crypto/us/bars?symbols=BTC%2FUSD'))).toBe(true);
+    expect(requestedUrls.some((u) => u.includes('/v1beta3/crypto/us/bars?symbols=ETH%2FUSD'))).toBe(true);
     // Never any request-level concurrency for this test - every fetch call
     // is a distinct, real HTTP call to Alpaca's per-symbol snapshot/bars
     // endpoints (2 per symbol x 7 symbols + 1 health probe = 15), issued

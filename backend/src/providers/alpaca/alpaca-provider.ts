@@ -2,9 +2,21 @@ import { logError } from '../../logging';
 import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, NormalizedQuote } from '../../types';
 import { recordProviderRequest } from '../quota-manager';
 import { ProviderError, type MarketDataProvider } from '../types';
-import { alpacaMarketStatusUnavailable, alpacaTimeframe, parseAlpacaBars, parseAlpacaSnapshot } from './alpaca-parser';
+import {
+  alpacaMarketStatusUnavailable,
+  alpacaTimeframe,
+  isAlpacaCryptoSymbol,
+  parseAlpacaBars,
+  parseAlpacaCryptoBars,
+  parseAlpacaCryptoSnapshot,
+  parseAlpacaSnapshot,
+} from './alpaca-parser';
 
-const BASE_URL = 'https://data.alpaca.markets/v2/stocks';
+const STOCK_BASE_URL = 'https://data.alpaca.markets/v2/stocks';
+// Crypto market data is a separate API family from stocks - not a
+// path/query variant of the same one. See alpaca-parser.ts's
+// isAlpacaCryptoSymbol doc comment for how a symbol is routed here.
+const CRYPTO_BASE_URL = 'https://data.alpaca.markets/v1beta3/crypto/us';
 
 /**
  * SECONDARY/standby provider. Fully implemented and wired the same way as
@@ -43,13 +55,13 @@ export class AlpacaProvider implements MarketDataProvider {
    * makes no HTTP call at all (Alpaca has no market-status endpoint used
    * here) and correctly records nothing, for the same reason.
    */
-  private async request(path: string, timeoutMs = 8000): Promise<Record<string, unknown>> {
+  private async request(url: string, timeoutMs = 8000): Promise<Record<string, unknown>> {
     recordProviderRequest(this.id);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
     try {
-      response = await this.fetchImpl(`${BASE_URL}${path}`, { headers: this.headers(), signal: controller.signal });
+      response = await this.fetchImpl(url, { headers: this.headers(), signal: controller.signal });
     } catch (err) {
       if ((err as Error).name === 'AbortError') throw new ProviderError('Alpaca request timed out', 'timeout');
       throw new ProviderError('Alpaca network error', 'network');
@@ -63,61 +75,69 @@ export class AlpacaProvider implements MarketDataProvider {
   }
 
   async getQuote(providerSymbol: string, mkrSymbol: string): Promise<NormalizedQuote | null> {
-    const json = await this.request(`/${encodeURIComponent(providerSymbol)}/snapshot`);
+    if (isAlpacaCryptoSymbol(providerSymbol)) {
+      const json = await this.request(`${CRYPTO_BASE_URL}/snapshots?symbols=${encodeURIComponent(providerSymbol)}`);
+      return parseAlpacaCryptoSnapshot(json, providerSymbol, mkrSymbol);
+    }
+    const json = await this.request(`${STOCK_BASE_URL}/${encodeURIComponent(providerSymbol)}/snapshot`);
     return parseAlpacaSnapshot(json, mkrSymbol);
   }
 
   async getCandles(providerSymbol: string, mkrSymbol: string, timeframe: MkrTimeframe, outputSize: number): Promise<NormalizedCandle[]> {
     const limit = Math.min(Math.max(outputSize, 1), 1000);
-    const json = await this.request(`/${encodeURIComponent(providerSymbol)}/bars?timeframe=${alpacaTimeframe(timeframe)}&limit=${limit}`);
+    if (isAlpacaCryptoSymbol(providerSymbol)) {
+      const json = await this.request(`${CRYPTO_BASE_URL}/bars?symbols=${encodeURIComponent(providerSymbol)}&timeframe=${alpacaTimeframe(timeframe)}&limit=${limit}`);
+      return parseAlpacaCryptoBars(json, providerSymbol, mkrSymbol, timeframe);
+    }
+    const json = await this.request(`${STOCK_BASE_URL}/${encodeURIComponent(providerSymbol)}/bars?timeframe=${alpacaTimeframe(timeframe)}&limit=${limit}`);
     return parseAlpacaBars(json, mkrSymbol, timeframe);
   }
 
   /**
-   * Alpaca's snapshot endpoint is per-symbol only (no documented
-   * comma-separated batch form used here), so N symbols genuinely need N
-   * real HTTP requests - this cannot be reduced to fewer calls the way
-   * TwelveDataProvider's chunking does. What it CAN control is
-   * concurrency and failure isolation, which the original implementation
-   * got wrong the same way TwelveDataProvider originally did:
+   * Splits by asset family before doing anything else - crypto and stock
+   * are different API families with different batch semantics, not a
+   * single loop with a per-symbol branch:
    *
-   * - `Promise.all` over N concurrent `getQuote()` calls fires every
-   *   request at once with no concurrency limit - unsafe under an unknown
-   *   real Alpaca rate limit (this provider has never been activated in
-   *   production, so no real limit has ever been observed/confirmed - see
-   *   the class doc comment; "do not invent provider quota values" means
-   *   not assuming N-way concurrency is safe either).
-   * - `Promise.all` is also fail-fast: ONE symbol throwing a transient
-   *   ProviderError (timeout/network/rate_limit) would reject the whole
-   *   batch immediately, discarding every other symbol's already-fetched
-   *   result - the exact "one bad element takes the whole batch down"
-   *   failure class TwelveDataProvider's chunk-batching fix addressed,
-   *   just via a different mechanism (there: one bad chunk poisoning up
-   *   to 7 sibling symbols; here: one bad symbol poisoning all of them).
-   *
-   * Fixed the same way: sequential requests (matching the primary
-   * provider's now-sequential chunking - the safe default absent a known
-   * real concurrency limit), with per-symbol failure isolated via
-   * try/catch rather than letting one rejection cancel the rest. A
-   * symbol whose own parseAlpacaSnapshot/isAlpacaError already resolves
-   * to a graceful `null` (see alpaca-parser.ts - Alpaca's own "invalid
-   * symbol" responses were already handled this way, never thrown) is
-   * unaffected either way; this specifically fixes a genuine transient
-   * failure (timeout/network/rate_limit) on one symbol no longer taking
-   * every other symbol's result down with it. Only a TOTAL failure
-   * (every symbol threw) propagates to the caller, exactly mirroring
-   * TwelveDataProvider.getBatchQuotes's "any chunk succeeded" rule - this
-   * is what MarketProviderManager's existing confirmed-unhealthy/circuit
-   * logic keys off of.
+   * - Crypto: Alpaca's `/v1beta3/crypto/us/snapshots` genuinely accepts a
+   *   comma-separated `symbols` list and returns all of them from ONE real
+   *   HTTP request (https://docs.alpaca.markets/us/reference/
+   *   cryptosnapshots-1) - using that materially reduces request count for
+   *   a multi-crypto batch, so all crypto symbols in this call share a
+   *   single request. A symbol missing from the returned map resolves to
+   *   `null` (parseAlpacaCryptoSnapshot) without affecting siblings; only
+   *   a totally failed HTTP request (thrown) drops the whole crypto group
+   *   from `result`, isolated from the stock group below.
+   * - Stock: unchanged from before this task - Alpaca's stock snapshot
+   *   endpoint has no documented batch form, so N stock symbols still need
+   *   N sequential, per-symbol-isolated requests (see the class's original
+   *   2026-09-15 review fix, preserved as-is here).
    */
   async getBatchQuotes(providerToMkr: Record<string, string>): Promise<Record<string, NormalizedQuote | null>> {
     const entries = Object.entries(providerToMkr);
     if (entries.length === 0) return {};
 
+    const cryptoEntries = entries.filter(([providerSymbol]) => isAlpacaCryptoSymbol(providerSymbol));
+    const stockEntries = entries.filter(([providerSymbol]) => !isAlpacaCryptoSymbol(providerSymbol));
+
     const result: Record<string, NormalizedQuote | null> = {};
     let anySucceeded = false;
     let lastFailure: unknown;
-    for (const [providerSymbol, mkrSymbol] of entries) {
+
+    if (cryptoEntries.length > 0) {
+      try {
+        const symbolsParam = cryptoEntries.map(([providerSymbol]) => encodeURIComponent(providerSymbol)).join(',');
+        const json = await this.request(`${CRYPTO_BASE_URL}/snapshots?symbols=${symbolsParam}`);
+        for (const [providerSymbol, mkrSymbol] of cryptoEntries) {
+          result[mkrSymbol] = parseAlpacaCryptoSnapshot(json, providerSymbol, mkrSymbol);
+        }
+        anySucceeded = true;
+      } catch (err) {
+        lastFailure = err;
+        logError('crypto batch quote group failed', { symbols: cryptoEntries.map(([p]) => p).join(','), message: (err as Error).message });
+      }
+    }
+
+    for (const [providerSymbol, mkrSymbol] of stockEntries) {
       try {
         result[mkrSymbol] = await this.getQuote(providerSymbol, mkrSymbol);
         anySucceeded = true;
@@ -143,7 +163,7 @@ export class AlpacaProvider implements MarketDataProvider {
   async healthCheck(): Promise<{ healthy: boolean; latencyMs: number; error?: string }> {
     const start = Date.now();
     try {
-      await this.request('/AAPL/snapshot', 4000);
+      await this.request(`${STOCK_BASE_URL}/AAPL/snapshot`, 4000);
       return { healthy: true, latencyMs: Date.now() - start };
     } catch (err) {
       return { healthy: false, latencyMs: Date.now() - start, error: (err as Error).message };
