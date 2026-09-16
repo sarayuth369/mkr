@@ -212,6 +212,70 @@ describe('MarketProviderManager', () => {
       expect(result).toEqual({ UNMAPPED: null });
       expect(primary.batchCalls).toBe(0);
     });
+
+    describe('2026-09-16 post-phone Closed Testing correction task (root cause, deeper layer)', () => {
+      // Live-confirmed on the deployed backend: with no secondary
+      // configured (MKR's actual production config -
+      // MARKET_SECONDARY_ENABLED=false), a confirmed-unhealthy primary
+      // previously made this method silently return every requested
+      // symbol mapped to `null` - identical in shape to a genuine
+      // provider-confirmed "no data" answer - instead of throwing.
+      // market-routes.ts then reported NEITHER an item NOR an error for
+      // those symbols, and (worse) cached the false null for the full
+      // quote TTL. These tests pin the fix: a symbol that WAS actually
+      // mapped to a provider that turns out unavailable must always
+      // surface as a real fault.
+
+      it('a confirmed-unhealthy primary with no secondary configured throws, never silently resolves all-null for a genuinely mapped symbol', async () => {
+        const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+        const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+        await expect(manager.getBatchQuotes(['AAPL', 'MSFT'], providerSymbolFor)).rejects.toThrow('No healthy provider available');
+      });
+
+      it('a confirmed-unhealthy primary with a DISABLED (not merely absent) secondary throws the same way', async () => {
+        const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+        const secondary = new FakeProvider('alpaca', { quoteResult: quote(1) });
+        // secondaryEnabled: false - secondary exists but is deliberately
+        // disabled (matches MKR's real default config), so it must never
+        // be contacted, and must never quietly excuse the primary's fault.
+        const manager = new MarketProviderManager(primary, secondary, false, UNCONFIGURED_BUDGETS);
+
+        await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor)).rejects.toThrow('No healthy provider available');
+        expect(secondary.batchCalls).toBe(0);
+      });
+
+      it('the primary circuit already being open (from a PRIOR confirmed failure) still throws for a later call with something genuinely mapped - never resolves all-null', async () => {
+        const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+        const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+        // First call: confirms unhealthy, trips the circuit.
+        await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor)).rejects.toThrow();
+        expect(circuitStatus('twelve_data')).toBe('open');
+
+        // Second call: circuit is already open - primary is skipped
+        // entirely this time (never re-contacted), but this call DID have
+        // a real symbol to ask for. Must still throw, not silently
+        // resolve as if nothing had ever been mapped.
+        await expect(manager.getBatchQuotes(['MSFT'], providerSymbolFor)).rejects.toThrow('No healthy provider available');
+        expect(primary.batchCalls).toBe(1); // not contacted again - circuit correctly skipped it
+      });
+
+      it('the "nothing mapped for either provider" case is unaffected - still resolves all-null even when the primary circuit is open', async () => {
+        const primary = new FakeProvider('twelve_data', { throwKind: 'network', healthy: false });
+        const manager = new MarketProviderManager(primary, null, false, UNCONFIGURED_BUDGETS);
+
+        await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor)).rejects.toThrow();
+        expect(circuitStatus('twelve_data')).toBe('open');
+
+        // This call's symbol genuinely has no provider mapping at all -
+        // the circuit being open is irrelevant since nothing would have
+        // been asked of it anyway.
+        const { result, source } = await manager.getBatchQuotes(['UNMAPPED'], () => null);
+        expect(source).toBeNull();
+        expect(result).toEqual({ UNMAPPED: null });
+      });
+    });
   });
 
   describe('symbol-specific ("not_found") errors never affect provider health', () => {
@@ -559,14 +623,18 @@ describe('MarketProviderManager', () => {
       await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1')).rejects.toThrow('alpaca failed');
       expect(secondary.batchCalls).toBe(1);
 
-      // Both circuits are now open - getBatchQuotes treats "no provider
-      // reachable" as a mapping outcome, not a fault (matches its
-      // pre-existing "no provider maps this symbol" behavior) - all-null,
-      // not a throw. The behavior under test is that secondary is SKIPPED,
-      // not contacted a second time.
-      const { result, source } = await manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1');
-      expect(source).toBeNull();
-      expect(result).toEqual({ AAPL: null });
+      // 2026-09-16 post-phone Closed Testing correction task: both circuits
+      // are now open - a symbol that WAS actually mapped to a provider
+      // that's confirmed unhealthy must surface as a real fault, exactly
+      // like getQuote's sibling test above ('No healthy provider
+      // available') - never silently resolve as if nothing had been
+      // mapped at all. This test previously asserted the OLD, buggy
+      // fall-through (`{result: {AAPL: null}, source: null}`, no throw),
+      // which is exactly the "silently missing from both items and
+      // errors" root cause this task traces live on the deployed backend.
+      // The property still under test - secondary is SKIPPED, not
+      // contacted a second time - is unchanged.
+      await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1')).rejects.toThrow('No healthy provider available');
       expect(secondary.batchCalls).toBe(1); // skipped this time - confirmed-unhealthy trip carried over
     });
   });
@@ -681,15 +749,16 @@ describe('MarketProviderManager', () => {
       const hc = countHealthChecks(primary);
       const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
 
-      // No secondary configured - a confirmed-unhealthy primary with
-      // nothing to fall through to resolves all-null rather than throwing
-      // (getBatchQuotes' own pre-existing, documented "no provider
-      // reachable" behavior - see the Finding 2 describe block above). The
-      // property under test is the confirmation probe's own
-      // admission/recording, not the exact resolved shape.
-      const { source } = await manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1');
+      // 2026-09-16 post-phone Closed Testing correction task: no secondary
+      // configured - a confirmed-unhealthy primary with nothing to fall
+      // through to now throws (matching withFailover's equivalent case),
+      // never silently resolves all-null as if nothing had been mapped at
+      // all - see this method's own doc comment for the live-confirmed
+      // root cause this fixes. The property under test is still the
+      // confirmation probe's own admission/recording, not the exact
+      // resolved shape.
+      await expect(manager.getBatchQuotes(['AAPL'], providerSymbolFor, 'P1')).rejects.toThrow('No healthy provider available');
 
-      expect(source).toBeNull();
       expect(hc.calls()).toBe(1);
       expect(usedCount('twelve_data', 100)).toBe(2);
       expect(circuitStatus('twelve_data')).toBe('open');

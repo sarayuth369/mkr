@@ -7,6 +7,7 @@ import '../../../domain/asset_class.dart';
 import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import '../../../domain/market_symbol_info.dart';
 import '../domain/market_fetch_result.dart';
 import '../domain/market_service.dart';
 import '../domain/timeframe.dart';
@@ -67,6 +68,18 @@ class MockMarketService implements MarketService {
 
   @override
   DateTime? get lastUpdated => _lastUpdated;
+
+  /// `featured` is always `false` — demo mode has no backend curation
+  /// concept, and [HomeController]'s featured-set-with-fallback selection
+  /// already handles an empty featured set by falling back to the first
+  /// catalog entries in order (see its own doc comment).
+  @override
+  Future<List<MarketSymbolInfo>> getCatalog() async {
+    return [
+      for (var i = 0; i < MockMarketCatalog.all.length; i++)
+        MarketSymbolInfo(symbol: MockMarketCatalog.all[i].symbol, displayName: MockMarketCatalog.all[i].name, assetClass: MockMarketCatalog.all[i].assetClass, featured: false, sortOrder: i),
+    ];
+  }
 
   @override
   Future<MarketFetchResult> getAllQuotes() async {

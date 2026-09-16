@@ -113,7 +113,18 @@ class _MarketsScreenState extends State<MarketsScreen> {
                       if (controller.state.isPartial) _PartialDataBanner(message: l10n.marketsPartialData),
                       Expanded(
                         child: ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          // 2026-09-16 post-phone Closed Testing correction
+                          // task: this list sits directly above the fixed
+                          // MkrBottomBannerAd (bottomNavigationBar already
+                          // reserves that separate space, so nothing is
+                          // literally hidden behind it - but with zero
+                          // bottom padding here, the last row's bottom edge
+                          // touched the ad's top edge with no breathing
+                          // room at all, unlike every sibling screen using
+                          // this same ad slot pattern (Home/News/Calendar/
+                          // Market Detail all already use `all(16)`,
+                          // matched here on the bottom edge).
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                           itemCount: quotes.length,
                           itemBuilder: (context, index) {
                             final quote = quotes[index];

@@ -191,16 +191,14 @@ describe('AlpacaProvider.getBatchQuotes - total transient failure still fails ov
     // 429 fetch) - genuinely confirmed unhealthy, so the circuit trips
     // exactly like any other real transient-failure path. With no
     // secondary configured (same as production - secondaryEnabled stays
-    // false), the manager's existing, pre-existing "nothing left to try"
-    // behavior degrades to an honest null result rather than throwing
-    // (see provider-manager.ts: "Nothing mapped for either provider - a
-    // mapping outcome, not a fault") - this test's point is the circuit
-    // trip, not the resolve/reject shape, which this deliberately does
-    // not change.
-    const { result, source } = await manager.getBatchQuotes(['AAPL'], () => 'AAPL');
+    // false), the manager now throws (2026-09-16 post-phone Closed
+    // Testing correction task: previously degraded to a silent `{AAPL:
+    // null}` result indistinguishable from a genuine provider-confirmed
+    // "no data" answer - see provider-manager.ts's getBatchQuotes doc
+    // comment for the live-confirmed root cause this fixes) - this test's
+    // point is still the circuit trip, which is unchanged.
+    await expect(manager.getBatchQuotes(['AAPL'], () => 'AAPL')).rejects.toThrow('No healthy provider available');
 
-    expect(result).toEqual({ AAPL: null });
-    expect(source).toBeNull();
     expect(circuitStatus('alpaca')).toBe('open');
   });
 

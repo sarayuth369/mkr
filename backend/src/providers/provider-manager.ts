@@ -303,6 +303,39 @@ export class MarketProviderManager {
    * Same failover discipline as [withFailover]: only falls to secondary
    * after the primary throws AND a healthCheck confirms it's genuinely
    * down, never merely because some symbols in the batch came back null.
+   *
+   * 2026-09-16 post-phone Closed Testing correction task (root cause,
+   * deeper layer): unlike [withFailover] (whose final fallback always
+   * throws - `throw new ProviderError('No healthy provider available...',
+   * 'unknown')`), this method's final fallback returns EVERY requested
+   * symbol mapped to `null`, deliberately treating "nothing mapped for
+   * either provider" (a real, non-fault case: a symbol simply has no
+   * provider coverage at all) as distinct from "a provider WAS mapped and
+   * genuinely failed." The bug: the primary's own catch block, on a
+   * confirmed-unhealthy or half-open-trial failure, recorded the circuit
+   * failure and fell through WITHOUT throwing or otherwise flagging that a
+   * real attempt failed - with MKR's secondary disabled by default
+   * (MARKET_SECONDARY_ENABLED=false), execution always reached the bottom
+   * fallback next, silently returning `{symbol: null}` for every symbol as
+   * if it were the benign "nothing mapped" case. `market-routes.ts`
+   * treats `result[symbol] === null` identically to a confirmed
+   * provider-verified empty answer - never reported as an error, and
+   * (worse) cached as such for the full quote TTL. Confirmed live
+   * (2026-09-16): a batch request that hit this path returned symbols
+   * present in NEITHER `items` NOR `errors`, exactly the "opens with no
+   * market content, no explanation" symptom this task traces to its root.
+   * [primaryAttemptFailed] now tracks whether the primary was actually
+   * ASKED for something and failed (or its circuit was already open with
+   * something to ask) - the bottom fallback throws [withFailover]'s own
+   * generic "no healthy provider" error instead of silently defaulting to
+   * null-for-everyone whenever it's set, exactly matching that method's
+   * "always throw once anything was genuinely attempted" contract (the
+   * original underlying error is already recorded via [recordFailure]
+   * above; the generic message here matches what a caller already gets
+   * from every OTHER method on this class in the equivalent situation).
+   * The secondary path is unaffected - it already unconditionally throws
+   * on its own failure (see its own catch block below), so it never
+   * reaches this fallback at all.
    */
   async getBatchQuotes(
     mkrSymbols: string[],
@@ -318,6 +351,7 @@ export class MarketProviderManager {
       return map;
     };
     let budgetDeniedTier: string | null = null;
+    let primaryAttemptFailed = false;
 
     if (this.primary) {
       const admission = admitCircuitRequest(this.primary.id);
@@ -339,10 +373,12 @@ export class MarketProviderManager {
               }
               if (admission.isProbe) {
                 recordCircuitFailure(this.primary.id); // the trial's own failure is the confirmation
+                primaryAttemptFailed = true;
               } else {
                 const confirmation = await this.confirmUnhealthy(this.primary.id, this.primary);
                 if (confirmation !== 'unhealthy') throw err; // 'healthy' (transient) or 'unknown' (unverified) - propagate, don't fail over, don't trip
                 recordCircuitFailure(this.primary.id);
+                primaryAttemptFailed = true;
               }
             }
           } else {
@@ -352,6 +388,12 @@ export class MarketProviderManager {
         } else if (admission.isProbe) {
           releaseCircuitProbe(this.primary.id);
         }
+      } else if (Object.keys(buildMap(this.primary.id)).length > 0) {
+        // Circuit already open - the primary is known-unhealthy from a
+        // recent confirmation and wasn't even contacted this call, but
+        // this call DID have something to ask it for. Same "a real
+        // provider was needed and unavailable" fault as an in-call failure.
+        primaryAttemptFailed = true;
       }
     }
 
@@ -391,7 +433,12 @@ export class MarketProviderManager {
     }
 
     if (budgetDeniedTier) throw budgetErrorFor(budgetDeniedTier);
-    // Nothing mapped for either provider - a mapping outcome, not a fault.
+    // 2026-09-16 post-phone Closed Testing correction task: a real fault
+    // (see [primaryAttemptFailed]'s doc comment above) must surface as an
+    // error, never be silently absorbed into the "nothing mapped" fallback
+    // below - matches [withFailover]'s own final fallback message exactly.
+    if (primaryAttemptFailed) throw new ProviderError('No healthy provider available for these symbols', 'unknown');
+    // Nothing mapped for either provider - a genuine mapping outcome, not a fault.
     return { result: Object.fromEntries(mkrSymbols.map((s) => [s, null])), source: null };
   }
 

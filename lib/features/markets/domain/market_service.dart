@@ -3,6 +3,7 @@ import '../../../domain/asset_class.dart';
 import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import '../../../domain/market_symbol_info.dart';
 import 'market_fetch_result.dart';
 import 'timeframe.dart';
 
@@ -18,6 +19,29 @@ import 'timeframe.dart';
 /// result. See [ProviderBackedMarketService]/[MarketProviderManager] for how
 /// this is produced in real mode.
 abstract class MarketService {
+  /// The full symbol universe (metadata only — never a quote/price, and for
+  /// the real-mode implementation never a provider request) this service
+  /// currently has enabled.
+  ///
+  /// 2026-09-16 post-phone Closed Testing correction task (root cause):
+  /// exists specifically so a caller (e.g. [MarketsController]) can show
+  /// every known symbol's identity immediately and decide WHICH controlled
+  /// subset to actually request quotes for — instead of every screen load
+  /// requesting quotes for the entire catalog via [getAllQuotes], which
+  /// vastly exceeds Twelve Data Basic's 8-credits-per-minute cap for MKR's
+  /// ~20-symbol catalog and was confirmed (physical-device testing,
+  /// 2026-09-16) to be the actual cause of Home/Markets intermittently
+  /// showing little or no content. Throws [MarketFetchException] on a
+  /// genuine catalog-load fault — same contract as [getQuote]/
+  /// [getPriceSeries] — never silently empty.
+  Future<List<MarketSymbolInfo>> getCatalog();
+
+  /// Full-catalog quote fetch. 2026-09-16 post-phone Closed Testing
+  /// correction task: still here for [MarketService]'s own contract
+  /// completeness and any narrow caller that genuinely wants it, but
+  /// neither [HomeController] nor [MarketsController] call this anymore —
+  /// see [getCatalog]'s doc comment for why. Prefer [getCatalog] + a
+  /// controlled [getQuotesFor]/[getQuotesByCategory] call instead.
   Future<MarketFetchResult> getAllQuotes();
 
   Future<MarketFetchResult> getQuotesByCategory(AssetClass assetClass);

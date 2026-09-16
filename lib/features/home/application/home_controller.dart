@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_state.dart';
+import '../../../domain/asset_class.dart';
 import '../../../domain/impact_level.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import '../../../domain/market_symbol_info.dart';
 import '../../../domain/radar_item.dart';
 import '../../ai/domain/ai_insight.dart';
 import '../../ai/domain/market_ai_service.dart';
@@ -28,11 +30,34 @@ class HomeController extends ChangeNotifier {
   final MarketAIService _aiService;
   final EconomicCalendarService _calendarService;
 
-  /// Market Pulse — the 3 featured hero cards.
-  static const pulseSymbols = ['SPX', 'XAU/USD', 'BTC'];
+  /// 2026-09-16 post-phone Closed Testing correction task (root cause):
+  /// Home previously called [MarketService.getAllQuotes] (the WHOLE ~20-
+  /// symbol backend catalog) and filtered client-side against these two
+  /// hardcoded symbol lists — several of which (`SPX`, `NDX`, `DJI`) were
+  /// never even in the real catalog at all. Requesting the entire catalog
+  /// on every Home load/refresh vastly exceeds Twelve Data Basic's 8-
+  /// credits-per-minute cap for a 20-symbol catalog (confirmed live,
+  /// physical-device testing, 2026-09-16) — a large unreliable batch where
+  /// most symbols intermittently come back unavailable, which is exactly
+  /// the "Home often shows LIVE but no Market Pulse/Snapshot content"
+  /// symptom this task exists to fix. Home now derives a SMALL, catalog-
+  /// authorized set from [MarketService.getCatalog] instead: the backend's
+  /// own `featured` flag first (currently XAU/USD, NVDA, BTC — gold + a US
+  /// stock + crypto, preserving the product's "global market exposure +
+  /// gold + crypto" intent using symbols already confirmed resolvable),
+  /// filled out with the next catalog entries by `sortOrder` only if fewer
+  /// than [_snapshotLimit] symbols are featured. A small reliable first-
+  /// load set is preferable to a large unreliable one - see [refresh].
+  static const int _pulseLimit = 3;
+  static const int _snapshotLimit = 6;
 
-  /// Market Snapshot — compact list of the major markets at a glance.
-  static const snapshotSymbols = ['SPX', 'NDX', 'DJI', 'BTC', 'XAU/USD', 'SET'];
+  List<String> _selectHomeSymbols(List<MarketSymbolInfo> catalog, int limit) {
+    final ordered = [...catalog]..sort((a, b) {
+        if (a.featured != b.featured) return a.featured ? -1 : 1;
+        return a.sortOrder.compareTo(b.sortOrder);
+      });
+    return ordered.take(limit).map((s) => s.symbol).toList();
+  }
 
   MarketDataMode get mode => _marketService.mode;
   DateTime? get lastUpdated => _marketService.lastUpdated;
@@ -61,11 +86,11 @@ class HomeController extends ChangeNotifier {
   ///
   /// 2026-09-15 correction task: [symbols] must be the set ALREADY resolved
   /// from a catalog-authorized REST fetch (see [refresh]), never
-  /// [pulseSymbols]/[snapshotSymbols] directly — those are a desired hero
-  /// selection, not a second production symbol authority, and several of
-  /// them can be backend-disabled at any time. Requesting a live
-  /// subscription for a disabled symbol would bypass the same
-  /// backend-catalog rule the initial REST load already enforces.
+  /// [_selectHomeSymbols]'s raw output directly — that's a desired hero
+  /// selection, not a second production symbol authority, and any entry in
+  /// it can be backend-disabled or provider-unavailable at any time.
+  /// Requesting a live subscription for an unresolved symbol would bypass
+  /// the same backend-catalog rule the initial REST load already enforces.
   /// 2026-09-15 pre-Closed-Testing audit: previously had no `onError`
   /// handler - a genuine live-stream fault (e.g. a catalog re-check inside
   /// [MarketService.watchQuotes] failing) became an unhandled zone error
@@ -144,8 +169,19 @@ class HomeController extends ChangeNotifier {
     // ApiState.error for BOTH curated sections - never silently rendered
     // as an empty/success state just because Home only shows a filtered
     // subset of the full catalog result.
+    //
+    // 2026-09-16 post-phone Closed Testing correction task (root cause):
+    // getCatalog() (no provider cost) then ONE getQuotesFor() call for a
+    // small catalog-derived set (see _selectHomeSymbols) - never the whole
+    // catalog via getAllQuotes(). A catalog-load fault surfaces via the
+    // same catch block below as any other real fetch fault.
     try {
-      final result = await _marketService.getAllQuotes();
+      final catalog = await _marketService.getCatalog();
+      if (requestId != _refreshRequestId || _disposed) return;
+      final homeSymbols = _selectHomeSymbols(catalog, _snapshotLimit);
+      final pulseSymbolSet = homeSymbols.take(_pulseLimit).toSet();
+
+      final result = await _marketService.getQuotesFor(homeSymbols);
       if (requestId != _refreshRequestId || _disposed) return;
       switch (result) {
         case MarketFetchSuccess(:final quotes):
@@ -155,13 +191,15 @@ class HomeController extends ChangeNotifier {
           // Only symbols that ACTUALLY resolved from the catalog-authorized
           // fetch above - a desired hero symbol that's currently disabled/
           // unavailable is simply omitted here, never requested anyway.
-          final resolvedPulse = [for (final s in pulseSymbols) bySymbol[s]].whereType<MarketQuote>().toList();
-          final resolvedSnapshot = [for (final s in snapshotSymbols) bySymbol[s]].whereType<MarketQuote>().toList();
+          final resolvedPulse = [for (final s in homeSymbols) if (pulseSymbolSet.contains(s)) bySymbol[s]].whereType<MarketQuote>().toList();
+          final resolvedSnapshot = [for (final s in homeSymbols) bySymbol[s]].whereType<MarketQuote>().toList();
           _pulseState = ApiState.success(resolvedPulse, isPartial: isPartial);
           _snapshotState = ApiState.success(resolvedSnapshot, isPartial: isPartial);
-          _gold = bySymbol['XAU/USD'];
+          // The first resolved gold-class quote, never a hardcoded ticker -
+          // stays correct if the backend catalog's gold symbol ever changes.
+          _gold = quotes.cast<MarketQuote?>().firstWhere((q) => q?.assetClass == AssetClass.gold, orElse: () => null);
           // 2026-09-15 correction task: watch exactly what resolved above,
-          // never the raw pulseSymbols/snapshotSymbols selection - see
+          // never a raw hardcoded symbol selection - see
           // _watchLiveQuotes' doc comment.
           _watchLiveQuotes({...resolvedPulse.map((q) => q.symbol), ...resolvedSnapshot.map((q) => q.symbol)}.toList());
         case MarketFetchEmpty():

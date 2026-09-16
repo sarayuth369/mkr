@@ -6,6 +6,7 @@ import 'package:mkr/domain/asset_class.dart';
 import 'package:mkr/domain/market_candle.dart';
 import 'package:mkr/domain/market_data_mode.dart';
 import 'package:mkr/domain/market_quote.dart';
+import 'package:mkr/domain/market_symbol_info.dart';
 import 'package:mkr/features/alerts/application/alerts_controller.dart';
 import 'package:mkr/features/alerts/domain/alert.dart';
 import 'package:mkr/features/alerts/domain/alert_repository.dart';
@@ -71,6 +72,9 @@ class _FakeMarketService implements MarketService {
 
   @override
   DateTime? lastUpdated;
+
+  @override
+  Future<List<MarketSymbolInfo>> getCatalog() async => const [];
 
   @override
   Future<MarketFetchResult> getAllQuotes() async => const MarketFetchEmpty();

@@ -5,6 +5,7 @@ import '../../../domain/asset_class.dart';
 import '../../../domain/market_candle.dart';
 import '../../../domain/market_data_mode.dart';
 import '../../../domain/market_quote.dart';
+import '../../../domain/market_symbol_info.dart';
 import '../domain/market_fetch_result.dart';
 import '../domain/market_service.dart';
 import '../domain/timeframe.dart';
@@ -40,6 +41,24 @@ class ProviderBackedMarketService implements MarketService {
 
   @override
   DateTime? get lastUpdated => _manager.lastUpdated;
+
+  /// 2026-09-16 post-phone Closed Testing correction task (root cause): the
+  /// catalog endpoint (`GET /api/mkr/market/symbols`) is D1+KV-cache only —
+  /// no Twelve Data/Alpaca request, no provider credit cost — so calling
+  /// this freely (e.g. on every [MarketsController] construction) is safe
+  /// in a way calling a quote method never is.
+  @override
+  Future<List<MarketSymbolInfo>> getCatalog() async {
+    final List<CatalogSymbol> catalog;
+    try {
+      catalog = await _catalog.load();
+    } on MarketCatalogException catch (e) {
+      throw MarketFetchException(MarketFetchFailureKind.offline, e.message);
+    }
+    return catalog
+        .map((s) => MarketSymbolInfo(symbol: s.symbol, displayName: s.displayName, assetClass: s.assetClass, featured: s.featured, sortOrder: s.sortOrder))
+        .toList();
+  }
 
   Future<MarketFetchResult> _fetchSymbols(List<String> Function(List<CatalogSymbol>) select) async {
     final List<CatalogSymbol> catalog;
