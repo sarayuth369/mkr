@@ -627,4 +627,60 @@ void main() {
       expect(primary.watchQuotesCalls, 1); // never a second upstream call via the closed controller
     });
   });
+
+  group('2026-09-15 Home/Markets final user-visible audit (item 2) — no silent hang when no provider is available', () {
+    test('watchQuotes surfaces a real error instead of a silent hang when no provider is available', () async {
+      final primary = FakeProvider('twelveData', healthy: false); // no secondary configured - _active stays null after ensureConnected()
+
+      final manager = MarketProviderManager(primary: primary);
+
+      final events = <Object>[];
+      final sub = manager.watchQuotes(['AAPL']).listen(
+        events.add,
+        onError: events.add,
+        onDone: () => events.add('done'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, hasLength(1));
+      expect(events.single, isA<MarketFetchException>());
+      expect((events.single as MarketFetchException).kind, MarketFetchFailureKind.offline);
+      await sub.cancel();
+    });
+
+    test('watchCandles surfaces a real error instead of a silent hang when no provider is available', () async {
+      final primary = FakeProvider('twelveData', healthy: false);
+
+      final manager = MarketProviderManager(primary: primary);
+
+      final events = <Object>[];
+      final sub = manager.watchCandles('AAPL', Timeframe.h1).listen(
+        events.add,
+        onError: events.add,
+        onDone: () => events.add('done'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, hasLength(1));
+      expect(events.single, isA<MarketFetchException>());
+      expect((events.single as MarketFetchException).kind, MarketFetchFailureKind.offline);
+      await sub.cancel();
+    });
+
+    test('watchQuotes still streams ticks normally once a provider becomes available - unaffected by the error-surfacing fix', () async {
+      final primary = FakeProvider('twelveData', healthy: true);
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      final received = <MarketQuote>[];
+      final sub = manager.watchQuotes(['AAPL']).listen(received.add);
+      await Future<void>.delayed(Duration.zero);
+
+      primary.emitTick(_quote('AAPL', 100));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(received, hasLength(1));
+      await sub.cancel();
+    });
+  });
 }

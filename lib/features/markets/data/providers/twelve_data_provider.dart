@@ -149,7 +149,7 @@ class TwelveDataProvider implements MarketDataProvider {
     if (json is! Map<String, dynamic>) {
       return const MarketFetchFailure(MarketFetchFailureKind.providerError, 'Received a malformed response from the market data service.');
     }
-    return TwelveDataParser.parseQuotesBatchResult(json: json, assetClassFor: _assetClassFor);
+    return TwelveDataParser.parseQuotesBatchResult(json: json, assetClassFor: _assetClassFor, requestedSymbols: symbols);
   }
 
   /// 2026-09-15 FINAL FINAL correction task (Defect 3): matches [getQuote]'s

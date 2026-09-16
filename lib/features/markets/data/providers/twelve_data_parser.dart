@@ -70,9 +70,27 @@ class TwelveDataParser {
   /// as [MarketFetchPartial.failedSymbols] instead of being silently
   /// discarded — the exact gap that let a genuine partial/total provider
   /// failure look identical to "zero symbols matched".
+  ///
+  /// 2026-09-15 Home/Markets final user-visible audit (item 4/5): confirmed
+  /// LIVE against the deployed backend that a requested symbol can come
+  /// back in NEITHER `items` NOR `errors` at all — a `success: true`
+  /// envelope that silently has nothing to say about that symbol (e.g. a
+  /// batch of ~20 catalog symbols where only 2 actually resolved, with
+  /// `errors: []`). Without [requestedSymbols] to reconcile against, that
+  /// silent gap was invisible to this parser: a mostly-empty batch still
+  /// became a misleadingly "clean" [MarketFetchSuccess], and a WHOLLY
+  /// silent batch became a false [MarketFetchEmpty] — indistinguishable
+  /// from "the catalog is genuinely empty", the exact "opens with no
+  /// market content, no explanation" symptom this task investigates. Every
+  /// symbol in [requestedSymbols] that resolved to neither a quote nor an
+  /// explicit error is now folded into `failedSymbols` too — turning a
+  /// silently-incomplete "success" into an honest [MarketFetchPartial], and
+  /// a wholly-silent response into an honest [MarketFetchFailure] instead
+  /// of a false empty state.
   static MarketFetchResult parseQuotesBatchResult({
     required Map<String, dynamic> json,
     required AssetClass Function(String symbol) assetClassFor,
+    required List<String> requestedSymbols,
   }) {
     if (isErrorEnvelope(json)) {
       final message = (json['error'] as Map?)?['message']?.toString() ?? 'The market data provider is currently unavailable.';
@@ -88,22 +106,32 @@ class TwelveDataParser {
     }
 
     final quotes = <MarketQuote>[];
+    final resolvedSymbols = <String>{};
     for (final entry in items) {
       if (entry is! Map) continue;
       final map = entry.cast<String, dynamic>();
       final symbol = (map['symbol'] as Object?)?.toString();
       if (symbol == null) continue;
       final quote = _quoteFromData(map, symbol, assetClassFor(symbol));
-      if (quote != null) quotes.add(quote);
+      if (quote != null) {
+        quotes.add(quote);
+        resolvedSymbols.add(symbol);
+      }
     }
 
     final failedSymbols = <String>[];
+    final failedSymbolSet = <String>{};
     final errorsRaw = data['errors'];
     if (errorsRaw is List) {
       for (final entry in errorsRaw) {
         if (entry is! Map) continue;
         final symbol = (entry['symbol'] as Object?)?.toString();
-        if (symbol != null) failedSymbols.add(symbol);
+        if (symbol != null && failedSymbolSet.add(symbol)) failedSymbols.add(symbol);
+      }
+    }
+    for (final symbol in requestedSymbols) {
+      if (!resolvedSymbols.contains(symbol) && failedSymbolSet.add(symbol)) {
+        failedSymbols.add(symbol);
       }
     }
 

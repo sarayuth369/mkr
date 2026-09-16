@@ -123,6 +123,48 @@ class _RecordingProvider implements MarketDataProvider {
   void unsubscribeQuotes(List<String> symbols) => unsubscribedSymbols.addAll(symbols);
 }
 
+/// A provider that never reports healthy and has no secondary configured -
+/// forces [MarketProviderManager]'s `_active` to stay `null` after
+/// `ensureConnected()`, so its own [watchQuotes]/[watchCandles] methods are
+/// never actually reached (see [MarketProviderManager.watchQuotes]'s
+/// `active == null` branch). Used only to exercise the "no provider
+/// currently available" error path one layer up, at
+/// [ProviderBackedMarketService].
+class _UnhealthyProvider implements MarketDataProvider {
+  @override
+  final String id = 'unhealthy';
+
+  @override
+  Future<bool> healthCheck() async => false;
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<void> disconnect() async {}
+
+  @override
+  Future<MarketQuote?> getQuote(String symbol) => throw UnimplementedError();
+
+  @override
+  Future<MarketFetchResult> getQuotes(List<String> symbols) => throw UnimplementedError();
+
+  @override
+  Future<List<MarketCandle>> getHistoricalCandles(String symbol, Timeframe timeframe) => throw UnimplementedError();
+
+  @override
+  Future<MarketSessionStatus> getMarketStatus(String market) => throw UnimplementedError();
+
+  @override
+  Stream<MarketQuote> watchQuotes(List<String> symbols) => throw UnimplementedError();
+
+  @override
+  Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) => throw UnimplementedError();
+
+  @override
+  void unsubscribeQuotes(List<String> symbols) => throw UnimplementedError();
+}
+
 void main() {
   test('real mode never falls back to the mock catalog when the backend catalog fails to load - returns an honest offline failure', () async {
     final catalogClient = MockClient((request) async => _jsonResponse({'error': 'down'}, status: 500));
@@ -596,6 +638,38 @@ void main() {
 
       expect(events, ['done']);
       expect(provider.watchCandlesCallCount, 1);
+    });
+  });
+
+  group('2026-09-15 Home/Markets final user-visible audit (item 2) — manager-level "no provider available" errors are forwarded, never unhandled', () {
+    test('watchQuotes forwards the manager\'s error instead of hanging with no data/error/done', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL']));
+      final manager = MarketProviderManager(primary: _UnhealthyProvider()); // no secondary - _active stays null
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      Object? receivedError;
+      final updates = <List<MarketQuote>>[];
+      final sub = service.watchQuotes(['AAPL']).listen(updates.add, onError: (Object e) => receivedError = e);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(receivedError, isA<MarketFetchException>());
+      expect(updates, isEmpty);
+    });
+
+    test('watchCandles surfaces the manager\'s "no provider available" error instead of hanging with no data/error/done', () async {
+      final catalog = MarketCatalogRepository(backendBaseUrl: 'https://backend.example.com', httpClient: _catalogClientFor(['AAPL']));
+      final manager = MarketProviderManager(primary: _UnhealthyProvider());
+      final service = ProviderBackedMarketService(manager, catalog);
+
+      Object? receivedError;
+      final sub = service.watchCandles('AAPL', Timeframe.h1).listen((_) {}, onError: (Object e) => receivedError = e);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(receivedError, isA<MarketFetchException>());
     });
   });
 }

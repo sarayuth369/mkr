@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mkr/core/network/api_state.dart';
 import 'package:mkr/core/widgets/price_chart.dart';
@@ -39,8 +41,24 @@ class _FakeMarketService implements MarketService {
   MarketFetchResult allQuotesResult;
   MarketFetchResult quotesForResult;
 
+  /// When set, each successive [getAllQuotes] call resolves from the next
+  /// completer in order instead of returning [allQuotesResult] immediately -
+  /// 2026-09-15 Home/Markets final user-visible audit (item 3): lets a test
+  /// control exactly when each of two overlapping [MarketsController._load]
+  /// calls resolves, and in which order.
+  List<Completer<MarketFetchResult>>? getAllQuotesCompleters;
+  int getAllQuotesCallCount = 0;
+
   @override
-  Future<MarketFetchResult> getAllQuotes() async => allQuotesResult;
+  Future<MarketFetchResult> getAllQuotes() async {
+    final completers = getAllQuotesCompleters;
+    if (completers != null) {
+      final completer = completers[getAllQuotesCallCount];
+      getAllQuotesCallCount++;
+      return completer.future;
+    }
+    return allQuotesResult;
+  }
 
   @override
   Future<MarketFetchResult> getQuotesByCategory(AssetClass assetClass) async => allQuotesResult;
@@ -125,6 +143,55 @@ void main() {
       expect(controller.state, isA<ApiSuccess<List<MarketQuote>>>());
       expect(controller.state.isPartial, isFalse);
       expect(controller.mode.effectiveFor(controller.state), MarketDataMode.live);
+    });
+  });
+
+  group('MarketsController — 2026-09-15 Home/Markets final user-visible audit (item 3) — overlapping refresh() race guard', () {
+    test('a slower, older _load() call finishing after a newer one never overwrites the newer result', () async {
+      final firstCall = Completer<MarketFetchResult>();
+      final secondCall = Completer<MarketFetchResult>();
+      final service = _FakeMarketService(mode: MarketDataMode.live)..getAllQuotesCompleters = [firstCall, secondCall];
+
+      // The constructor fires the first _load() (consumes firstCall).
+      final controller = MarketsController(service);
+      await Future<void>.delayed(Duration.zero);
+
+      // A second refresh() (e.g. pull-to-refresh tapped again) starts
+      // before the first has resolved - consumes secondCall.
+      final secondRefresh = controller.refresh();
+      await Future<void>.delayed(Duration.zero);
+      expect(service.getAllQuotesCallCount, 2);
+
+      // The NEWER call resolves first with real data.
+      secondCall.complete(MarketFetchSuccess([_quote('AAPL', 999)]));
+      await secondRefresh;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state.dataOrNull?.single.price, 999);
+
+      // The OLDER, slower call now finally resolves too - it must be
+      // discarded, never overwriting the already-applied newer result.
+      firstCall.complete(MarketFetchSuccess([_quote('AAPL', 1)]));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state.dataOrNull?.single.price, 999);
+    });
+
+    test('a disposed controller never applies a still-in-flight _load() result', () async {
+      final pending = Completer<MarketFetchResult>();
+      final service = _FakeMarketService(mode: MarketDataMode.live)..getAllQuotesCompleters = [pending];
+
+      final controller = MarketsController(service);
+      await Future<void>.delayed(Duration.zero);
+
+      controller.dispose();
+      pending.complete(MarketFetchSuccess([_quote('AAPL', 1)]));
+
+      // Must not throw (e.g. notifyListeners()-after-dispose) when the
+      // in-flight fetch finally resolves after disposal.
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
     });
   });
 

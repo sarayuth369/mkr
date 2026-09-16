@@ -112,6 +112,16 @@ class AlpacaProvider implements MarketDataProvider {
     return AlpacaParser.parseSnapshot(json: json, mkrSymbol: symbol, assetClass: _assetClassFor(symbol));
   }
 
+  /// 2026-09-15 Home/Markets final user-visible audit (item 4/5): matches
+  /// [TwelveDataProvider.getQuotes]'s reconciliation fix - a requested
+  /// symbol that resolves to `null` here (never a thrown fault - see
+  /// [getQuote]'s own doc comment) is now folded into `failedSymbols` too,
+  /// whether that's because this deployment isn't [activated], the symbol
+  /// has no Alpaca mapping, or the backend genuinely had nothing for it.
+  /// From the caller's perspective (e.g. a Markets screen requesting the
+  /// full catalog) any of these mean "I asked for this symbol and didn't
+  /// get it", which should render as an honest degraded/partial indicator
+  /// rather than silently looking like a complete result.
   @override
   Future<MarketFetchResult> getQuotes(List<String> symbols) async {
     if (symbols.isEmpty) return const MarketFetchEmpty();
@@ -124,7 +134,11 @@ class AlpacaProvider implements MarketDataProvider {
     for (final symbol in symbols) {
       try {
         final quote = await getQuote(symbol);
-        if (quote != null) quotes.add(quote);
+        if (quote != null) {
+          quotes.add(quote);
+        } else {
+          failedSymbols.add(symbol);
+        }
       } on MarketFetchException catch (e) {
         failedSymbols.add(symbol);
         hardFailureKind = e.kind;
@@ -132,7 +146,12 @@ class AlpacaProvider implements MarketDataProvider {
       }
     }
     if (quotes.isEmpty && failedSymbols.isEmpty) return const MarketFetchEmpty();
-    if (quotes.isEmpty) return MarketFetchFailure(hardFailureKind!, hardFailureMessage!);
+    if (quotes.isEmpty) {
+      return MarketFetchFailure(
+        hardFailureKind ?? MarketFetchFailureKind.providerError,
+        hardFailureMessage ?? 'Market data is temporarily unavailable for the requested symbols.',
+      );
+    }
     if (failedSymbols.isNotEmpty) return MarketFetchPartial(quotes, failedSymbols);
     return MarketFetchSuccess(quotes);
   }

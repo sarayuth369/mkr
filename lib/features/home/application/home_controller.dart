@@ -111,18 +111,34 @@ class HomeController extends ChangeNotifier {
     );
   }
 
+  bool _disposed = false;
+
   @override
   void dispose() {
+    _disposed = true;
     _liveSubscription?.cancel();
     super.dispose();
   }
 
+  /// 2026-09-15 Home/Markets final user-visible audit (item 3): a slower,
+  /// older [refresh] call finishing AFTER a newer one must never overwrite
+  /// the newer (possibly already-successful) result - e.g. pull-to-refresh
+  /// tapped twice in quick succession, or a retry racing the initial load.
+  /// Each phase below checks [_refreshRequestId] before applying its
+  /// result and bails out (also covering [_disposed] - a defensive,
+  /// minimal guard against `notifyListeners()` after disposal, even though
+  /// today's DI wiring keeps this controller alive for the whole app
+  /// session) rather than calling `notifyListeners()` on stale/discarded
+  /// data.
+  int _refreshRequestId = 0;
+
   Future<void> refresh() async {
+    final requestId = ++_refreshRequestId;
     _pulseState = const ApiState.loading();
     _snapshotState = const ApiState.loading();
     _radarState = const ApiState.loading();
     _briefState = const ApiState.loading();
-    notifyListeners();
+    if (!_disposed) notifyListeners();
 
     // 2026-09-15 hardening task: a provider/offline failure becomes
     // ApiState.error for BOTH curated sections - never silently rendered
@@ -130,6 +146,7 @@ class HomeController extends ChangeNotifier {
     // subset of the full catalog result.
     try {
       final result = await _marketService.getAllQuotes();
+      if (requestId != _refreshRequestId || _disposed) return;
       switch (result) {
         case MarketFetchSuccess(:final quotes):
         case MarketFetchPartial(:final quotes):
@@ -155,13 +172,15 @@ class HomeController extends ChangeNotifier {
           _snapshotState = ApiState.error(message);
       }
     } catch (e) {
+      if (requestId != _refreshRequestId || _disposed) return;
       _pulseState = ApiState.error(e.toString());
       _snapshotState = ApiState.error(e.toString());
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
 
     try {
       final result = await _calendarService.getEvents();
+      if (requestId != _refreshRequestId || _disposed) return;
       final today = DateTime.now();
       final todays = result.events.where((e) =>
           e.dateTime.year == today.year && e.dateTime.month == today.month && e.dateTime.day == today.day);
@@ -171,16 +190,19 @@ class HomeController extends ChangeNotifier {
         ..sort((a, b) => a.impact.sortWeight.compareTo(b.impact.sortWeight));
       _radarState = items.isEmpty ? const ApiState.empty() : ApiState.success(items);
     } catch (e) {
+      if (requestId != _refreshRequestId || _disposed) return;
       _radarState = ApiState.error(e.toString());
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
 
     try {
       final brief = await _aiService.getDailyBrief();
+      if (requestId != _refreshRequestId || _disposed) return;
       _briefState = ApiState.success(brief);
     } catch (e) {
+      if (requestId != _refreshRequestId || _disposed) return;
       _briefState = ApiState.error(e.toString());
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 }

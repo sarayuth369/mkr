@@ -155,4 +155,102 @@ void main() {
       expect(result.single.close, 1.5);
     });
   });
+
+  group('AlpacaProvider.getQuotes — Home/Markets final user-visible audit (item 4/5)', () {
+    // A per-symbol MockClient: each request's ?symbol= query param picks
+    // the canned response, so a batch can mix a resolving symbol with a
+    // non-resolving one in the same getQuotes() call.
+    AlpacaProvider providerFor(Map<String, http.Response> responseBySymbol, {bool activated = true}) {
+      return AlpacaProvider(
+        backendBaseUrl: 'https://backend.example.com',
+        catalog: _unloadedCatalog(),
+        activated: activated,
+        httpClient: MockClient((request) async {
+          final symbol = request.url.queryParameters['symbol'];
+          final response = responseBySymbol[symbol];
+          if (response == null) throw StateError('Unexpected request for symbol: $symbol');
+          return response;
+        }),
+      );
+    }
+
+    test('every symbol resolves - a clean MarketFetchSuccess, unaffected by the reconciliation fix', () async {
+      final provider = providerFor({
+        'AAPL': _jsonResponse({
+          'latestTrade': {'p': 150.0},
+        }),
+        'MSFT': _jsonResponse({
+          'latestTrade': {'p': 300.0},
+        }),
+      });
+
+      final result = await provider.getQuotes(['AAPL', 'MSFT']);
+
+      expect(result, isA<MarketFetchSuccess>());
+      expect((result as MarketFetchSuccess).quotes.map((q) => q.symbol), containsAll(['AAPL', 'MSFT']));
+    });
+
+    test('a null (no exception) getQuote result folds into failedSymbols, not silently dropped', () async {
+      final provider = providerFor({
+        'AAPL': _jsonResponse({
+          'latestTrade': {'p': 150.0},
+        }),
+        // no `latestTrade.p` - AlpacaParser.parseSnapshot returns null, no exception thrown.
+        'MSFT': _jsonResponse(<String, dynamic>{}),
+      });
+
+      final result = await provider.getQuotes(['AAPL', 'MSFT']);
+
+      expect(result, isA<MarketFetchPartial>());
+      final partial = result as MarketFetchPartial;
+      expect(partial.quotes.single.symbol, 'AAPL');
+      expect(partial.failedSymbols, ['MSFT']);
+    });
+
+    test('every symbol silently resolving to null becomes MarketFetchFailure, never a null-check crash', () async {
+      // Proves the hardFailureKind/hardFailureMessage `??` fallback fix:
+      // no MarketFetchException is ever thrown here, so without the
+      // fallback this would have hit a null-check error on `!`.
+      final provider = providerFor({
+        'AAPL': _jsonResponse(<String, dynamic>{}),
+        'MSFT': _jsonResponse(<String, dynamic>{}),
+      });
+
+      final result = await provider.getQuotes(['AAPL', 'MSFT']);
+
+      expect(result, isA<MarketFetchFailure>());
+      final failure = result as MarketFetchFailure;
+      expect(failure.kind, MarketFetchFailureKind.providerError);
+      expect(failure.message, isNotEmpty);
+    });
+
+    test('a thrown MarketFetchException fault is preserved as the failure reason when nothing resolves', () async {
+      final provider = providerFor({
+        'AAPL': _jsonResponse({'code': 40410000, 'message': 'symbol not found'}, status: 500),
+      });
+
+      final result = await provider.getQuotes(['AAPL']);
+
+      expect(result, isA<MarketFetchFailure>());
+      final failure = result as MarketFetchFailure;
+      expect(failure.kind, MarketFetchFailureKind.providerError);
+      expect(failure.message, contains('HTTP 500'));
+    });
+
+    test('a non-activated provider still returns MarketFetchEmpty without contacting the network', () async {
+      final provider = AlpacaProvider(backendBaseUrl: 'https://backend.example.com', catalog: _unloadedCatalog()); // activated defaults to false
+
+      final result = await provider.getQuotes(['AAPL', 'MSFT']);
+
+      expect(result, isA<MarketFetchEmpty>());
+    });
+
+    test('an empty symbol list returns MarketFetchEmpty without contacting the network', () async {
+      final provider = providerFor(const {});
+
+      final result = await provider.getQuotes(const []);
+
+      expect(result, isA<MarketFetchEmpty>());
+    });
+  });
 }

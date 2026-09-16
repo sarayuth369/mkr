@@ -379,8 +379,18 @@ class MarketProviderManager {
       onListen: () async {
         _addSymbolRefs(symbols);
         await ensureConnected();
+        if (controller.isClosed) return;
         final active = _active;
-        if (active == null || controller.isClosed) return;
+        if (active == null) {
+          // 2026-09-15 Home/Markets final audit (item 2): previously just
+          // returned here - a listener already attached got NO event at
+          // all (no data, no error, no done) and stayed open forever with
+          // no way to tell "provider unavailable" from "no ticks yet
+          // because the market is quiet". Surfaced honestly instead, same
+          // pattern already used one layer up for a catalog load failure.
+          controller.addError(const MarketFetchException(MarketFetchFailureKind.offline, 'No market data provider is currently available.'));
+          return;
+        }
         subscription = active.watchQuotes(symbols).listen((quote) {
           _lastUpdated = DateTime.now();
           if (!controller.isClosed) controller.add(quote);
@@ -406,8 +416,14 @@ class MarketProviderManager {
       onListen: () async {
         _addSymbolRefs([symbol]);
         await ensureConnected();
+        if (controller.isClosed) return;
         final active = _active;
-        if (active == null || controller.isClosed) return;
+        if (active == null) {
+          // 2026-09-15 Home/Markets final audit (item 2): same fix as
+          // watchQuotes - never a silent hang.
+          controller.addError(const MarketFetchException(MarketFetchFailureKind.offline, 'No market data provider is currently available.'));
+          return;
+        }
         subscription = active.watchCandles(symbol, timeframe).listen((candle) {
           if (!controller.isClosed) controller.add(candle);
         });

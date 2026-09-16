@@ -204,12 +204,22 @@ class ProviderBackedMarketService implements MarketService {
         final enabled = catalog.map((s) => s.symbol).toSet();
         final authorized = symbols.where(enabled.contains).toList();
         if (authorized.isEmpty) return;
-        subscription = _manager.watchQuotes(authorized).listen((quote) {
-          latest[quote.symbol] = quote;
-          if (!controller.isClosed) {
-            controller.add(authorized.map((s) => latest[s]).whereType<MarketQuote>().toList());
-          }
-        });
+        subscription = _manager.watchQuotes(authorized).listen(
+          (quote) {
+            latest[quote.symbol] = quote;
+            if (!controller.isClosed) {
+              controller.add(authorized.map((s) => latest[s]).whereType<MarketQuote>().toList());
+            }
+          },
+          // 2026-09-15 Home/Markets final audit (item 2): forwards a real
+          // fault from the manager (e.g. "no provider currently available")
+          // to this stream's own listeners - previously had no onError, so
+          // that error became unhandled instead of reaching a real-mode
+          // consumer like [MarketDetailController]/[HomeController].
+          onError: (Object e) {
+            if (!controller.isClosed) controller.addError(e);
+          },
+        );
       },
       // 2026-09-15 post-audit task (Finding 3): previously only cancelled
       // the inner subscription, leaving this per-call controller open
@@ -275,10 +285,19 @@ class ProviderBackedMarketService implements MarketService {
           return;
         }
         if (!controller.isClosed) controller.add(history);
-        subscription = _manager.watchCandles(symbol, timeframe).listen((tick) {
-          history = _mergeTick(history, tick, timeframe);
-          if (!controller.isClosed) controller.add(history);
-        });
+        subscription = _manager.watchCandles(symbol, timeframe).listen(
+          (tick) {
+            history = _mergeTick(history, tick, timeframe);
+            if (!controller.isClosed) controller.add(history);
+          },
+          // 2026-09-15 Home/Markets final audit (item 2): same forwarding
+          // fix as watchQuotes - a fault on the live tail (after the
+          // initial historical fetch already succeeded) must still reach
+          // this stream's listeners, not vanish as an unhandled error.
+          onError: (Object e) {
+            if (!controller.isClosed) controller.addError(e);
+          },
+        );
       },
       // 2026-09-15 post-audit task (Finding 3): same fix as [watchQuotes] -
       // explicitly closes this per-call controller on cancel, not just the

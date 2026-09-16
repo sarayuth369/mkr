@@ -26,6 +26,14 @@ class MarketsController extends ChangeNotifier {
   String _query = '';
   String get query => _query;
 
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   /// 2026-09-15 hardening task: [MarketFetchResult] is mapped to
   /// [ApiState] explicitly per outcome — a provider/offline failure ALWAYS
   /// becomes `ApiState.error(...)`, never `ApiState.empty()`, so the UI can
@@ -33,11 +41,21 @@ class MarketsController extends ChangeNotifier {
   /// timeout, or malformed response. A partial result still renders as
   /// `ApiState.success` (the valid quotes stay visible) with `isPartial:
   /// true` so the screen can show a non-blocking degraded indicator.
+  ///
+  /// 2026-09-15 Home/Markets final user-visible audit (item 3): a slower,
+  /// older `_load()` call finishing AFTER a newer one must never overwrite
+  /// the newer result (e.g. pull-to-refresh tapped twice) - guarded with a
+  /// request-generation id, plus a minimal disposal guard before
+  /// `notifyListeners()`.
+  int _loadRequestId = 0;
+
   Future<void> _load() async {
+    final requestId = ++_loadRequestId;
     _state = const ApiState.loading();
-    notifyListeners();
+    if (!_disposed) notifyListeners();
     try {
       final result = await _service.getAllQuotes();
+      if (requestId != _loadRequestId || _disposed) return;
       _state = switch (result) {
         MarketFetchSuccess(:final quotes) => ApiState.success(quotes, lastUpdated: _service.lastUpdated),
         MarketFetchPartial(:final quotes) => ApiState.success(quotes, lastUpdated: _service.lastUpdated, isPartial: true),
@@ -45,9 +63,10 @@ class MarketsController extends ChangeNotifier {
         MarketFetchFailure(:final message) => ApiState.error(message),
       };
     } catch (e) {
+      if (requestId != _loadRequestId || _disposed) return;
       _state = ApiState.error(e.toString());
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> refresh() => _load();

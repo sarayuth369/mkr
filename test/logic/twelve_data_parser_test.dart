@@ -208,6 +208,7 @@ void main() {
           'errors': [],
         }),
         assetClassFor: (symbol) => symbol == 'XAU/USD' ? AssetClass.gold : AssetClass.usStock,
+        requestedSymbols: const ['AAPL', 'XAU/USD'],
       );
       expect(result, isA<MarketFetchSuccess>());
       final quotes = result.quotes;
@@ -229,6 +230,7 @@ void main() {
           ],
         }),
         assetClassFor: (_) => AssetClass.usStock,
+        requestedSymbols: const ['AAPL', 'MSFT'],
       );
       expect(result, isA<MarketFetchPartial>());
       final partial = result as MarketFetchPartial;
@@ -236,7 +238,7 @@ void main() {
       expect(partial.failedSymbols, ['MSFT']);
     });
 
-    test('an item missing a price is skipped, never fabricated - a zero-item, zero-error result is a genuine MarketFetchEmpty', () {
+    test('an item missing a price is skipped, never fabricated', () {
       final result = TwelveDataParser.parseQuotesBatchResult(
         json: _envelope({
           'items': [
@@ -245,8 +247,18 @@ void main() {
           'errors': [],
         }),
         assetClassFor: (_) => AssetClass.usStock,
+        requestedSymbols: const ['AAPL'],
       );
-      expect(result, isA<MarketFetchEmpty>());
+      // 2026-09-15 Home/Markets final user-visible audit: previously this
+      // asserted MarketFetchEmpty - correct back when this parser had no
+      // way to know AAPL was actually requested, but AAPL WAS requested
+      // and its only item entry is unusable (no price, never fabricated -
+      // that part is unchanged), so it's now correctly reconciled as a
+      // failed symbol: with nothing else requested, that's a genuine
+      // MarketFetchFailure ("I asked for this and got nothing usable"),
+      // not a misleadingly-neutral "empty" result.
+      expect(result, isA<MarketFetchFailure>());
+      expect(result.quotes, isEmpty);
     });
 
     test('every requested symbol failing (zero items, non-empty errors) is a MarketFetchFailure, not an empty result', () {
@@ -258,24 +270,95 @@ void main() {
           ],
         }),
         assetClassFor: (_) => AssetClass.usStock,
+        requestedSymbols: const ['AAPL'],
       );
       expect(result, isA<MarketFetchFailure>());
     });
 
     test('an error envelope (HTTP 429/5xx-classified) becomes MarketFetchFailure carrying the backend\'s message, never an empty result', () {
-      final result = TwelveDataParser.parseQuotesBatchResult(json: _errorEnvelope('PROVIDER_UNAVAILABLE', 'Market data provider is currently unavailable.'), assetClassFor: (_) => AssetClass.usStock);
+      final result = TwelveDataParser.parseQuotesBatchResult(
+        json: _errorEnvelope('PROVIDER_UNAVAILABLE', 'Market data provider is currently unavailable.'),
+        assetClassFor: (_) => AssetClass.usStock,
+        requestedSymbols: const ['AAPL'],
+      );
       expect(result, isA<MarketFetchFailure>());
       expect((result as MarketFetchFailure).message, 'Market data provider is currently unavailable.');
     });
 
     test('a malformed response (items missing or not a list) becomes MarketFetchFailure, never an empty result', () {
-      final result = TwelveDataParser.parseQuotesBatchResult(json: _envelope(const {}), assetClassFor: (_) => AssetClass.usStock);
+      final result = TwelveDataParser.parseQuotesBatchResult(json: _envelope(const {}), assetClassFor: (_) => AssetClass.usStock, requestedSymbols: const ['AAPL']);
       expect(result, isA<MarketFetchFailure>());
     });
 
     test('a non-Map data body becomes MarketFetchFailure', () {
-      final result = TwelveDataParser.parseQuotesBatchResult(json: _listEnvelope(const []), assetClassFor: (_) => AssetClass.usStock);
+      final result = TwelveDataParser.parseQuotesBatchResult(json: _listEnvelope(const []), assetClassFor: (_) => AssetClass.usStock, requestedSymbols: const ['AAPL']);
       expect(result, isA<MarketFetchFailure>());
+    });
+
+    // 2026-09-15 Home/Markets final user-visible audit (item 4/5) - the
+    // core reconciliation fix: confirmed LIVE against the deployed backend
+    // that a `success: true` batch response can list a requested symbol in
+    // NEITHER `items` NOR `errors` at all. Without reconciling against
+    // requestedSymbols, that was completely invisible to this parser.
+    group('requestedSymbols reconciliation - a symbol silently absent from both items and errors', () {
+      test('some symbols silently missing turns an otherwise-"clean" response into an honest MarketFetchPartial', () {
+        final result = TwelveDataParser.parseQuotesBatchResult(
+          json: _envelope({
+            'items': [
+              {'symbol': 'XAU/USD', 'price': 3412.8},
+            ],
+            'errors': [], // NVDA/AAPL/MSFT requested but silently absent from both lists
+          }),
+          assetClassFor: (_) => AssetClass.gold,
+          requestedSymbols: const ['XAU/USD', 'NVDA', 'AAPL', 'MSFT'],
+        );
+        expect(result, isA<MarketFetchPartial>());
+        final partial = result as MarketFetchPartial;
+        expect(partial.quotes.single.symbol, 'XAU/USD');
+        expect(partial.failedSymbols, containsAll(['NVDA', 'AAPL', 'MSFT']));
+        expect(partial.failedSymbols, hasLength(3)); // no duplicates
+      });
+
+      test('every symbol silently missing turns a false MarketFetchEmpty into an honest MarketFetchFailure', () {
+        final result = TwelveDataParser.parseQuotesBatchResult(
+          json: _envelope({'items': [], 'errors': []}),
+          assetClassFor: (_) => AssetClass.usStock,
+          requestedSymbols: const ['NVDA', 'AAPL', 'MSFT'],
+        );
+        expect(result, isA<MarketFetchFailure>());
+      });
+
+      test('a symbol already listed in errors is not duplicated into failedSymbols', () {
+        final result = TwelveDataParser.parseQuotesBatchResult(
+          json: _envelope({
+            'items': [
+              {'symbol': 'XAU/USD', 'price': 3412.8},
+            ],
+            'errors': [
+              {'symbol': 'MSFT', 'code': 'PROVIDER_UNAVAILABLE', 'message': 'unavailable'},
+            ],
+          }),
+          assetClassFor: (_) => AssetClass.gold,
+          requestedSymbols: const ['XAU/USD', 'MSFT'],
+        );
+        final partial = result as MarketFetchPartial;
+        expect(partial.failedSymbols, ['MSFT']); // exactly one entry, not two
+      });
+
+      test('no requested symbol is silently missing - still a clean MarketFetchSuccess, unaffected', () {
+        final result = TwelveDataParser.parseQuotesBatchResult(
+          json: _envelope({
+            'items': [
+              {'symbol': 'XAU/USD', 'price': 3412.8},
+              {'symbol': 'BTC', 'price': 76000.0},
+            ],
+            'errors': [],
+          }),
+          assetClassFor: (symbol) => symbol == 'XAU/USD' ? AssetClass.gold : AssetClass.crypto,
+          requestedSymbols: const ['XAU/USD', 'BTC'],
+        );
+        expect(result, isA<MarketFetchSuccess>());
+      });
     });
   });
 }

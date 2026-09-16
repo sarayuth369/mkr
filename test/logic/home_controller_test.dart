@@ -44,8 +44,24 @@ class _FakeMarketService implements MarketService {
 
   List<String>? lastWatchedSymbols;
 
+  /// When set, each successive [getAllQuotes] call resolves from the next
+  /// completer in order instead of returning [allQuotesResult] immediately -
+  /// 2026-09-15 Home/Markets final user-visible audit (item 3): lets a test
+  /// control exactly when each of two overlapping [HomeController.refresh]
+  /// calls resolves, and in which order.
+  List<Completer<MarketFetchResult>>? getAllQuotesCompleters;
+  int getAllQuotesCallCount = 0;
+
   @override
-  Future<MarketFetchResult> getAllQuotes() async => allQuotesResult;
+  Future<MarketFetchResult> getAllQuotes() async {
+    final completers = getAllQuotesCompleters;
+    if (completers != null) {
+      final completer = completers[getAllQuotesCallCount];
+      getAllQuotesCallCount++;
+      return completer.future;
+    }
+    return allQuotesResult;
+  }
 
   @override
   Future<MarketFetchResult> getQuotesByCategory(AssetClass assetClass) async => allQuotesResult;
@@ -174,6 +190,61 @@ void main() {
       expect(controller.pulseState.dataOrNull, pulseBefore);
 
       await liveController.close();
+    });
+  });
+
+  group('HomeController — 2026-09-15 Home/Markets final user-visible audit (item 3) — overlapping refresh() race guard', () {
+    test('a slower, older refresh() call finishing after a newer one never overwrites the newer result', () async {
+      final firstCall = Completer<MarketFetchResult>();
+      final secondCall = Completer<MarketFetchResult>();
+      final service = _FakeMarketService(
+        allQuotesResult: const MarketFetchEmpty(), // unused - getAllQuotesCompleters takes over
+        watchQuotesStream: const Stream.empty(),
+      )..getAllQuotesCompleters = [firstCall, secondCall];
+
+      // The constructor fires the first refresh() (consumes firstCall).
+      final controller = HomeController(marketService: service, aiService: MockMarketAIService(), calendarService: MockEconomicCalendarService());
+      await Future<void>.delayed(Duration.zero);
+
+      // A second refresh() (e.g. pull-to-refresh tapped again) starts
+      // before the first has resolved - consumes secondCall.
+      final secondRefresh = controller.refresh();
+      await Future<void>.delayed(Duration.zero);
+      expect(service.getAllQuotesCallCount, 2);
+
+      // The NEWER call resolves first with real data.
+      secondCall.complete(MarketFetchSuccess([_quote('XAU/USD', 999), _quote('BTC', 999)]));
+      await secondRefresh;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.pulseState.dataOrNull?.map((q) => q.price).toList(), [999, 999]);
+
+      // The OLDER, slower call now finally resolves too - it must be
+      // discarded, never overwriting the already-applied newer result.
+      firstCall.complete(MarketFetchSuccess([_quote('XAU/USD', 1), _quote('BTC', 1)]));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.pulseState.dataOrNull?.map((q) => q.price).toList(), [999, 999]);
+    });
+
+    test('a disposed controller never applies a still-in-flight refresh() result', () async {
+      final pending = Completer<MarketFetchResult>();
+      final service = _FakeMarketService(
+        allQuotesResult: const MarketFetchEmpty(),
+        watchQuotesStream: const Stream.empty(),
+      )..getAllQuotesCompleters = [pending];
+
+      final controller = HomeController(marketService: service, aiService: MockMarketAIService(), calendarService: MockEconomicCalendarService());
+      await Future<void>.delayed(Duration.zero);
+
+      controller.dispose();
+      pending.complete(MarketFetchSuccess([_quote('XAU/USD', 1), _quote('BTC', 1)]));
+
+      // Must not throw (e.g. notifyListeners()-after-dispose) when the
+      // in-flight fetch finally resolves after disposal.
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
     });
   });
 }
