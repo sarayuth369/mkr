@@ -6,7 +6,7 @@ TASK: 2026-09-16 MKR Final Full-System One-Pass Audit + Integrated Fix
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_FINAL_FULL_SYSTEM_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded below after commit)
+COMMIT: 07ae0b4
 BACKEND DEPLOYS: mkr-backend Cloudflare Worker deployed once this pass -
 Version ID af70184d-de35-4daf-a954-b4df48c0f39d. Confirmed live bindings:
 HYBRID_ROUTING_ENABLED="false", HYBRID_CRYPTO_ROUTING_ENABLED="false",
