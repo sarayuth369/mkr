@@ -2,148 +2,154 @@ PROJECT: MKR
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: 2026-09-16 MKR Hybrid Capability Validation + Crypto Endpoint Correction
-TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_HYBRID_CAPABILITY_VALIDATION_TASK.md
+TASK: 2026-09-16 MKR Final Full-System One-Pass Audit + Integrated Fix
+TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_FINAL_FULL_SYSTEM_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: 8e72d6a
+COMMIT: (recorded below after commit)
 BACKEND DEPLOYS: mkr-backend Cloudflare Worker deployed once this pass -
-Version ID d7dce600-1f16-4223-ab16-5188656be076. Confirmed live bindings:
+Version ID af70184d-de35-4daf-a954-b4df48c0f39d. Confirmed live bindings:
 HYBRID_ROUTING_ENABLED="false", HYBRID_CRYPTO_ROUTING_ENABLED="false",
-MARKET_SECONDARY_ENABLED="false" (all unchanged/off - safe deploy). MKR's
-own isolated Worker only; no other app/account resource affected.
+MARKET_SECONDARY_ENABLED="false" (all unchanged/off - safe deploy).
 
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_HYBRID_CAPABILITY_VALIDATION_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_FINAL_FULL_SYSTEM_ONE_PASS_REPORT.md
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
 PREVIOUS STATE:
-MKR Hybrid Provider Architecture pass, completed, was
-WAITING_FOR_GPT_REVIEW (commit 6db63ce). Mac's review found a material
-issue: AlpacaProvider used the stock API base URL for the crypto
-capability-test symbols BTC/USD and ETH/USD too, which is wrong for
-Alpaca's real crypto market data endpoints.
+MKR Hybrid Capability Validation + Crypto Endpoint Correction pass,
+completed, was WAITING_FOR_GPT_REVIEW (commit 8e72d6a). This task
+SUPERSEDES the prior serial-style approach: one full-system parallel audit
+across 10 tracks, all findings collected before any edit, then every
+material finding integrated into ONE fix pass - no stopping mid-way, no
+sub-task chain.
 
-THIS PASS - one consolidated fix: corrected AlpacaProvider to route by
-asset/data family (stock vs crypto), so the capability test can eventually
-give a truthful crypto result once real credentials are provisioned.
+METHOD: 5 background audit agents launched in parallel (Market Pool/cache/
+quota/circuit; API routes + Calendar/News/AI; Flutter Home/Markets/Detail/
+Watchlist/Portfolio; Flutter Alerts/Calendar/News/AI/Premium; Closed
+Testing readiness) plus direct audit of the Hybrid provider/critical-batch-
+check/streaming-boundary tracks (fresh context from the prior 3 passes).
+All findings consolidated before any code change.
 
-ROOT CAUSE (confirmed exactly as Mac described): AlpacaProvider used
-https://data.alpaca.markets/v2/stocks for every symbol, including BTC/USD
-and ETH/USD. Alpaca's real crypto market data lives under a separate API
-family, https://data.alpaca.markets/v1beta3/crypto/us/..., with a
-different response shape (crypto snapshots/bars are always keyed by
-symbol under snapshots/bars, even for one symbol - stock's shape is flat).
+MATERIAL FINDINGS FIXED (full detail in the report):
+1. Backend CRITICAL BATCH CHECK (self-identified): batchWithFailover
+   returned on the first non-throwing provider attempt even when that
+   response was PARTIAL (some symbols missing from an otherwise-successful
+   batch) - no chance for those symbols to retry against a healthy, mapped
+   OTHER provider. Fixed with a bounded per-symbol fallback: tracks
+   `remaining` symbols, asks each subsequent slot only for what's still
+   missing, max one extra attempt per symbol, never retries confirmed
+   no-data, never contacts a slot once nothing remains.
+2. Backend: cache-service.ts had NO stale-while-revalidate despite it
+   being a documented invariant - a provider outage on an already-expired
+   KV entry was a hard failure. Fixed: entries now carry storedAt + a
+   120s grace window on physical TTL; a failed refetch falls back to the
+   still-present stale value instead of throwing. Legacy entries with no
+   storedAt are trusted as fresh (no refetch storm on this deploy).
+3. Backend: /quote and /quotes didn't share an in-flight coalescing key
+   for the same single symbol - fixed by routing a lone uncached /quotes
+   symbol through the exact same cachedFetch call /quote uses.
+4. Backend: confirmed no-data quotes vanished from /quotes responses
+   entirely (neither items nor errors) - new explicit `noData: string[]`
+   field, additive, non-breaking.
+5. Flutter: MarketDetailController had no disposal guard - backing out of
+   the detail screen while an async load was in flight could throw "used
+   after disposed". Fixed with a _disposed flag checked before every
+   post-await notifyListeners().
+6. Flutter: unrecognized/backend-'unavailable' source values were
+   mislabeled MarketDataSource.demo (conflating real-mode-unknown with
+   mock data). New MarketDataSource.unavailable value added.
+7. Flutter: CreateAlertScreen's symbol picker used MockMarketCatalog
+   unconditionally in real mode (wrong symbol universe, crash risk via
+   DropdownButtonFormField initialValue-not-in-items). Fixed: sourced from
+   real MarketService.getCatalog(), same pattern as WatchlistScreen's
+   already-fixed _AddSymbolSheet. Same bug found (self-identified, same
+   shape) and fixed in PortfolioScreen's _AddHoldingSheet.
+8. Flutter: GoldRadarController/CalendarController/NewsController lacked
+   the request-generation race guard already established in
+   MarketsController._loadRequestId - fixed identically in all three.
 
-FIX:
-- New isAlpacaCryptoSymbol(providerSymbol) in alpaca-parser.ts:
-  providerSymbol.includes('/') - reuses the existing D1 alpaca_symbol
-  mapping shape as the signal (crypto rows are seeded "BTC/USD"-style,
-  us_stock rows are bare tickers - schema.sql) instead of inventing a
-  second catalog/asset-class parameter.
-- AlpacaProvider.getQuote/getCandles now dispatch internally by symbol
-  shape - stock family unchanged (/v2/stocks/{symbol}/snapshot, /bars);
-  new crypto family (/v1beta3/crypto/us/snapshots?symbols=,
-  /bars?symbols=). Not hard-coded only in the admin route - the provider
-  itself knows.
-- New parseAlpacaCryptoSnapshot/parseAlpacaCryptoBars unwrap the
-  snapshots[symbol]/bars[symbol] map, then share the same parsing core as
-  the stock parsers - identical NormalizedQuote/NormalizedCandle shape,
-  source: 'alpaca', for both families.
-- getBatchQuotes now groups crypto entries into ONE real multi-symbol
-  request (Alpaca's crypto snapshot endpoint genuinely supports
-  comma-separated symbols - materially reduces request count), while
-  stock entries keep the existing sequential per-symbol-isolated behavior
-  unchanged. A total failure in one family group never affects the other.
-- /api/mkr/admin/alpaca-capability-test needed no routing-logic change
-  (the provider already dispatches correctly) - added a `family:
-  'stock'|'crypto'` field per result, derived from the same symbol-shape
-  check, so results clearly identify which endpoint family was actually
-  exercised.
+NOT CHANGED (audited, confirmed correct, no bug found): Hybrid routing
+matrix (capability/preference/activation split, per-symbol fallback within
+a routing preference, activation gate) - re-verified intact. Streaming
+boundary - MarketStreamRoom remains Twelve-Data-only, not touched.
+Calendar timezone logic, News real-mode gating, AI real-mode wiring - all
+confirmed correct as-is, not redesigned.
 
-ALPACA REAL CAPABILITY TEST: STILL NOT RUN. wrangler secret list confirms
-ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY remain unconfigured on the Worker.
-Per this session's security rules, Claude cannot enter/relay the user's
-real Alpaca credentials into wrangler secret put - that is the operator's
-own action, to be run directly in their terminal so the secret never
-passes through this session. Exact commands (from backend/):
+CLOSED TESTING READINESS (audited, not fixed - operator/product scope):
+BLOCKING: no android/key.properties (release build falls back to debug
+signing - needs the app owner's own real keystore); MockBillingRepository
+wired unconditionally, no real Play Billing dependency (purchase flow
+doesn't move real money). NON-BLOCKING: AdMob still placeholder (Phase 3,
+by design); Supabase features need --dart-define at build time (degrade
+gracefully if omitted). Everything else checked out fine (signing config
+structure, no hardcoded non-prod URLs, manifest permissions, Firebase
+wiring, premium gating, loading/error/empty states, startup failure
+handling, no sensitive logging, no committed secrets).
+
+ALPACA CAPABILITY TEST: still operator-blocked. wrangler secret list
+confirms ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY remain unconfigured -
+unchanged from every prior pass. Claude cannot enter/relay real
+credentials into wrangler secret put. Exact commands (from backend/):
   wrangler secret put ALPACA_API_KEY_ID
   wrangler secret put ALPACA_API_SECRET_KEY
-After running both, call GET /api/mkr/admin/alpaca-capability-test (admin
-session) to get real, now family-correct results for AAPL/MSFT/NVDA/QQQ/
-TSLA (stock) and BTC/ETH (crypto).
+Then call GET /api/mkr/admin/alpaca-capability-test (admin session) for
+real, family-correct results.
 
-HYBRID ROUTING GATE: unchanged, still fully disabled. All three gates
-(HYBRID_ROUTING_ENABLED, HYBRID_CRYPTO_ROUTING_ENABLED,
-MARKET_SECONDARY_ENABLED) remain false. Nothing in this pass touches them.
-Enabling requires, in order: (1) secrets provisioned, (2) real capability
-test reviewed, (3) licensing/display-rights confirmed (unresolved, by
-design - a passing capability test alone never justifies enabling public
-routing), (4) explicit operator flag flips.
+PRODUCTION FLAGS: HYBRID_ROUTING_ENABLED, HYBRID_CRYPTO_ROUTING_ENABLED,
+MARKET_SECONDARY_ENABLED all confirmed "false" post-deploy. Nothing in
+this pass touches any of them. Live smoke confirms zero Alpaca traffic.
 
-EXISTING ARCHITECTURE: confirmed intact - this pass touched only
-alpaca-parser.ts, alpaca-provider.ts, and the admin capability-test route.
-provider-manager.ts, market-routes.ts, market-stream-do.ts,
-cache-service.ts, circuit-breaker.ts, quota-manager.ts all unmodified.
-Quota accounting verified correct: a crypto batch of N symbols now
-records exactly 1 real request (one HTTP call), not N. Streaming
-(MarketStreamRoom) not touched, still Twelve-Data-only.
+LICENSING/DISPLAY-RIGHTS GATE: unchanged, unresolved by design - a
+passing capability test alone never justifies enabling public Alpaca
+routing. Remains a separate operator/product decision.
 
 REGRESSION:
-- Backend: 591/591 passing (48 test files, net +23 new tests -
-  alpaca-parser.test.ts crypto snapshot/bars parsing + isAlpacaCryptoSymbol
-  [15 new], new alpaca-crypto-endpoint.test.ts [8 tests: stock vs crypto
-  URL selection, mixed-batch request counting, per-family failure
-  isolation], admin-alpaca-capability-routes.test.ts strengthened with
-  family-correct stub + family field assertions). Zero existing
-  assertions weakened; all pre-existing Alpaca tests pass unmodified
-  (their symbols are all stock-shaped, byte-identical behavior).
-  TypeScript typecheck clean.
-- Flutter: 357/357 passing, zero regressions (no Flutter files touched).
-  flutter analyze: no issues found.
-- flutter build apk --debug and flutter build appbundle --release: both
-  succeed.
+- Backend: 603/603 passing (48 test files, net +23 new/updated tests
+  across provider-manager.test.ts, cache-service.test.ts,
+  market-routes-quote-cache.test.ts). npm run typecheck: clean. Zero
+  existing assertions weakened - every test-shape change reflects a
+  deliberate behavior change made this pass.
+- Flutter: 363/363 passing (357 baseline + 6 new regression tests: gold
+  radar race, market detail disposal x2, calendar race x2, news race;
+  1 existing test updated for the intentional .demo->.unavailable
+  change). flutter analyze: no issues found.
+- flutter build apk --debug and flutter build appbundle --release
+  (54.3MB): both succeed.
 - Security scan: git diff grepped for credential patterns - zero real
-  secret values, only fake test placeholders and env-var NAMES.
-  MockMarketCatalog grep: unchanged (31 pre-existing references, no
-  Flutter files modified).
+  secret values. git status confirms all 18 changed/new files are within
+  D:\FlutterProjects\mkr only - auc/backend untouched. MockMarketCatalog
+  grep: create_alert_screen.dart/portfolio_screen.dart now appear only in
+  doc comments explaining the fix, zero remaining actual-code usage.
 
 PRODUCTION:
 - mkr-backend Cloudflare Worker deployed this pass (Version ID
-  d7dce600-1f16-4223-ab16-5188656be076) - safe, all gates still off.
-- Live smoke (post-deploy): /api/mkr/market/health -> secondary: null;
-  /api/mkr/market/quote?symbol=AAPL -> source: "twelve_data";
-  /api/mkr/market/quote?symbol=BTC -> source: "twelve_data" (confirms
-  Twelve Data remains current provider for crypto too, and confirms NO
-  Alpaca traffic occurs while MARKET_SECONDARY_ENABLED=false);
-  /api/mkr/market/symbols -> unchanged; /api/mkr/admin/
-  alpaca-capability-test (no admin session) -> 401, correctly
-  auth-protected. NOT performed: authenticated real-credential capability
-  test run (blocked on operator secret provisioning, see above) and
-  direct Alpaca-side AAPL/NVDA/QQQ/BTC-USD/ETH-USD verification - honestly
-  reported as not-yet-run, not fabricated.
+  af70184d-de35-4daf-a954-b4df48c0f39d) - safe, all gates still off.
+- Live smoke (post-deploy): /market/health -> secondary: null;
+  /market/quote?symbol=AAPL -> source: "twelve_data"; /market/quotes
+  (AAPL,NVDA,BTC) -> all 3 resolved, errors:[], new noData:[] field
+  present; /market/candles -> real OHLC data; /calendar/events?range=today
+  -> real curated events; /admin/alpaca-capability-test (no session) ->
+  401, correctly auth-protected.
 
-LICENSING/DISPLAY-RIGHTS GATE: unchanged, still unresolved by design - a
-passing capability test alone never justifies enabling public Alpaca
-routing to MKR end users. Remains an explicit operator/product decision.
-
-REMAINING LIMITATIONS DEFERRED:
-1. Real credentialed capability test not yet run - needs operator action
-   (secret provisioning) outside this session.
-2. Alpaca crypto WebSocket streaming not investigated/wired - REST only
-   this pass; MarketStreamRoom remains Twelve-Data-only.
-3. SOL/XRP have D1 alpaca_symbol mappings and will now correctly route
-   through the crypto family too, but were not in the required
-   capability-test symbol list and were not explicitly live-verified.
-4. isAlpacaCryptoSymbol's '/' detection is correct for current D1 seed
-   data but is a structural inference from symbol shape, not an explicit
-   per-symbol asset-family column - flagged, not fixed (D1 schema is out
-   of this task's scope).
+REMAINING RISKS / OPERATOR ACTIONS:
+1. Alpaca real capability test - needs operator secret provisioning.
+2. Closed Testing release keystore + real Play Billing wiring - operator/
+   product-owned, not something Claude generates/wires without real
+   credentials.
+3. CreateAlertScreen/PortfolioScreen's real-catalog fix has no new
+   dedicated widget-level test this pass (verified via analyze + full app
+   test suite instead) - mirrors the already-tested WatchlistScreen
+   pattern exactly.
+4. Stale-while-revalidate's 120s grace window is a documented, deliberate
+   default, not empirically tuned against a specific SLA.
+5. Alpaca crypto WebSocket streaming remains out of scope (unchanged).
 
 NEXT:
-Claude has completed this pass and stopped, per its own instruction (one
-consolidated crypto-endpoint-correction pass). Waiting for GPT/Mac review,
-and for the operator to provision Alpaca secrets before a real capability
-test and any hybrid-routing enablement decision can happen.
+Claude has completed this ONE consolidated pass and stopped, per its own
+instruction - no serial loop, no intermediate stop, no new GPT_TO_CLAUDE
+sub-task created. Waiting for GPT/Mac review, and for the operator to
+provision Alpaca secrets + release signing/billing before further
+production decisions.

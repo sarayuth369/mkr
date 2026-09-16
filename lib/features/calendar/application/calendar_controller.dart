@@ -45,16 +45,26 @@ class CalendarController extends ChangeNotifier {
   /// real data pipeline can never satisfy.
   static const countries = {'US': 'US', 'EU': 'EU', 'UK': 'UK', 'JP': 'Japan'};
 
+  /// 2026-09-16 Final Full-System One-Pass audit finding: without this, a
+  /// slower, older `refresh()` call (e.g. from rapidly tapping Today then
+  /// Week before the first fetch resolves) could land after and overwrite a
+  /// newer call's already-applied result - the same request-generation
+  /// guard pattern already established in MarketsController._loadRequestId.
+  int _refreshRequestId = 0;
+
   Future<void> refresh() async {
+    final requestId = ++_refreshRequestId;
     _state = const ApiState.loading();
     notifyListeners();
     try {
       final result = await _service.getEvents(range: _range);
+      if (requestId != _refreshRequestId) return;
       final events = [...result.events]..sort((a, b) => a.dateTime.compareTo(b.dateTime));
       _freshness = result.freshness;
       _lastUpdatedAt = result.lastUpdatedAt;
       _state = events.isEmpty ? const ApiState.empty() : ApiState.success(events);
     } catch (e) {
+      if (requestId != _refreshRequestId) return;
       _state = ApiState.error(e.toString());
     }
     notifyListeners();

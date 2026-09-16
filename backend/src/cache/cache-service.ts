@@ -33,8 +33,44 @@ export interface CacheResult<T> {
 // quote), which is indistinguishable from "not cached" if stored bare - KV
 // returns `null` for both a missing key and a stored JSON `null`. Wrapping
 // in an envelope makes "cached null" and "not cached" distinguishable.
-interface CacheEnvelope<T> {
+// `storedAt` is what makes bounded stale-while-revalidate (below) possible -
+// without it, a KV entry's own physical expiry is the only notion of
+// "freshness," which can't be decoupled from how long the entry survives.
+export interface CacheEnvelope<T> {
   v: T;
+  // Optional: [putCached] (used by calendar-routes.ts/ai-routes.ts, whose
+  // physical KV TTL already equals their logical TTL exactly - see
+  // [getCachedWithFreshness]'s doc comment) never sets this. Only
+  // [cachedFetch] and [putCachedWithGrace] do.
+  storedAt?: number;
+}
+
+// 2026-09-16 Final Full-System One-Pass audit finding: `cachedFetch` had no
+// stale-while-revalidate despite that being a documented architectural
+// invariant - once a KV entry's logical TTL lapsed, a provider outage at
+// that exact moment was a hard failure (missing market data reaching the
+// user), not degraded/stale service. Fixed by storing entries for LONGER
+// than their logical freshness window (`physicalTtlSeconds`) and falling
+// back to the still-physically-present-but-logically-stale value only when
+// a fresh refetch itself fails - never served as if fresh, never re-cached
+// as new, bounded by this one grace window so staleness cannot compound
+// indefinitely.
+const STALE_GRACE_SECONDS = 120;
+
+function envelopeIsFresh(envelope: CacheEnvelope<unknown>, ttlSeconds: number): boolean {
+  // A legacy entry written before this field existed (or any malformed
+  // value lacking it) has no freshness information to check - trusted as
+  // fresh rather than forced into an immediate refetch, both because a
+  // deploy of this change must not turn every already-cached key into a
+  // simultaneous cold-cache storm, and because "no storedAt" must never
+  // silently become `NaN < ttlSeconds * 1000` (always false - freshness
+  // would be permanently unsatisfiable for that entry).
+  if (typeof envelope.storedAt !== 'number') return true;
+  return Date.now() - envelope.storedAt < ttlSeconds * 1000;
+}
+
+function physicalTtlSeconds(ttlSeconds: number): number {
+  return Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds) + STALE_GRACE_SECONDS);
 }
 
 export async function cachedFetch<T>(
@@ -43,9 +79,9 @@ export async function cachedFetch<T>(
   ttlSeconds: number,
   fetcher: () => Promise<T>,
 ): Promise<CacheResult<T>> {
-  const cached = await kv.get<CacheEnvelope<T>>(key, 'json');
-  if (cached) {
-    return { value: cached.v, cached: true };
+  const envelope = await kv.get<CacheEnvelope<T>>(key, 'json');
+  if (envelope && envelopeIsFresh(envelope, ttlSeconds)) {
+    return { value: envelope.v, cached: true };
   }
 
   const pending = inFlight.get(key);
@@ -54,13 +90,23 @@ export async function cachedFetch<T>(
   }
 
   const promise = (async (): Promise<T> => {
-    const value = await fetcher();
-    const envelope: CacheEnvelope<T> = { v: value };
-    // Best-effort: the fetch already succeeded, so a cache-write failure
-    // (e.g. KV quota exhausted) must not fail the caller's request - see
-    // kv-safety.ts.
-    await safeKvPut(kv, key, JSON.stringify(envelope), { expirationTtl: Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds)) }, 'cachedFetch');
-    return value;
+    try {
+      const value = await fetcher();
+      const fresh: CacheEnvelope<T> = { v: value, storedAt: Date.now() };
+      // Best-effort: the fetch already succeeded, so a cache-write failure
+      // (e.g. KV quota exhausted) must not fail the caller's request - see
+      // kv-safety.ts.
+      await safeKvPut(kv, key, JSON.stringify(fresh), { expirationTtl: physicalTtlSeconds(ttlSeconds) }, 'cachedFetch');
+      return value;
+    } catch (err) {
+      // Bounded stale-while-revalidate: a logically-expired but still
+      // physically-present entry (within STALE_GRACE_SECONDS) degrades the
+      // request to stale data instead of a hard failure. Never re-written
+      // as fresh - it keeps its original `storedAt` until a real refetch
+      // eventually succeeds.
+      if (envelope) return envelope.v;
+      throw err;
+    }
   })();
 
   inFlight.set(key, promise);
@@ -125,6 +171,32 @@ export async function getCached<T>(kv: KVNamespace, key: string): Promise<T | un
 export async function putCached<T>(kv: KVNamespace, key: string, value: T, ttlSeconds: number): Promise<void> {
   const envelope: CacheEnvelope<T> = { v: value };
   await safeKvPut(kv, key, JSON.stringify(envelope), { expirationTtl: Math.max(KV_MIN_TTL_SECONDS, Math.floor(ttlSeconds)) }, 'putCached');
+}
+
+/**
+ * Freshness-aware sibling of [getCached] - for a caller (handleQuotes'
+ * batch path) that needs to distinguish "fresh, serve immediately" from
+ * "logically stale but still physically present, worth remembering as a
+ * degraded fallback" itself, since it doesn't go through [cachedFetch]'s
+ * own built-in stale-while-revalidate. Deliberately a SEPARATE function
+ * from [getCached]/[putCached] rather than changing their behavior - other
+ * callers (calendar-routes.ts, ai-routes.ts) rely on `getCached`'s current
+ * "any physically-present value is a plain cache hit" semantics and have
+ * no matching freshness/fallback handling of their own; silently widening
+ * their physical KV TTL via a shared helper would make THEM serve stale
+ * data for the grace window with no refresh, a regression outside this
+ * task's scope.
+ */
+export async function getCachedWithFreshness<T>(kv: KVNamespace, key: string, ttlSeconds: number): Promise<{ value: T; fresh: boolean } | undefined> {
+  const envelope = await kv.get<CacheEnvelope<T>>(key, 'json');
+  if (!envelope) return undefined;
+  return { value: envelope.v, fresh: envelopeIsFresh(envelope, ttlSeconds) };
+}
+
+/** Write counterpart to [getCachedWithFreshness] - stores `storedAt` and the extended (TTL + grace) physical KV TTL, exactly matching [cachedFetch]'s own envelope format so the SAME cache key (e.g. `quote:v2:<SYMBOL>`) stays consistently readable by either path. */
+export async function putCachedWithGrace<T>(kv: KVNamespace, key: string, value: T, ttlSeconds: number): Promise<void> {
+  const envelope: CacheEnvelope<T> = { v: value, storedAt: Date.now() };
+  await safeKvPut(kv, key, JSON.stringify(envelope), { expirationTtl: physicalTtlSeconds(ttlSeconds) }, 'putCachedWithGrace');
 }
 
 /** Test-only: clears the in-flight map between test cases. */

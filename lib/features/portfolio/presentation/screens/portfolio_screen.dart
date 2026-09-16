@@ -7,10 +7,11 @@ import '../../../../core/utils/formatters.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
-import '../../../../data/mock_market_catalog.dart';
+import '../../../../domain/market_symbol_info.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../billing/application/entitlement_controller.dart';
 import '../../../billing/presentation/widgets/premium_gate.dart';
+import '../../../markets/domain/market_service.dart';
 import '../../application/portfolio_controller.dart';
 import '../../domain/portfolio_calculations.dart';
 import '../../domain/portfolio_holding.dart';
@@ -288,10 +289,43 @@ class _AddHoldingSheet extends StatefulWidget {
   State<_AddHoldingSheet> createState() => _AddHoldingSheetState();
 }
 
+/// 2026-09-16 Final Full-System One-Pass audit finding: mirrors the same
+/// fix applied to CreateAlertScreen's symbol picker - real mode previously
+/// read [MockMarketCatalog] unconditionally here too, so a holding could
+/// only ever be added for a symbol on the static mock list, never a real
+/// backend-enabled one outside it. Now sourced from the real
+/// [MarketService.getCatalog] (metadata only, zero provider cost),
+/// mode-aware the same way every other real-mode-aware picker in this app
+/// is (see `_AddSymbolSheet` in watchlist_screen.dart).
 class _AddHoldingSheetState extends State<_AddHoldingSheet> {
-  late String _symbol = MockMarketCatalog.all.first.symbol;
+  late final MarketService _marketService = context.read<MarketService>();
+  String? _symbol;
   final _quantityController = TextEditingController();
   final _avgPriceController = TextEditingController();
+
+  List<MarketSymbolInfo>? _catalog;
+  String? _catalogError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCatalog();
+  }
+
+  Future<void> _loadCatalog() async {
+    try {
+      final catalog = await _marketService.getCatalog();
+      if (!mounted) return;
+      setState(() {
+        _catalog = catalog;
+        _catalogError = null;
+        _symbol ??= catalog.isNotEmpty ? catalog.first.symbol : null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _catalogError = e.toString());
+    }
+  }
 
   @override
   void dispose() {
@@ -303,6 +337,19 @@ class _AddHoldingSheetState extends State<_AddHoldingSheet> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final catalog = _catalog;
+
+    if (catalog == null) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: _catalogError != null
+            ? ErrorState(message: _catalogError!, onRetry: _loadCatalog)
+            : const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final symbol = (_symbol != null && catalog.any((c) => c.symbol == _symbol)) ? _symbol! : (catalog.isNotEmpty ? catalog.first.symbol : null);
+
     return Padding(
       padding: EdgeInsets.only(
         left: 16,
@@ -316,15 +363,18 @@ class _AddHoldingSheetState extends State<_AddHoldingSheet> {
         children: [
           Text(l10n.portfolioAddHolding, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: _symbol,
-            decoration: InputDecoration(labelText: l10n.portfolioSymbol),
-            items: [
-              for (final q in MockMarketCatalog.all)
-                DropdownMenuItem(value: q.symbol, child: Text('${q.symbol} — ${q.name}')),
-            ],
-            onChanged: (v) => setState(() => _symbol = v ?? _symbol),
-          ),
+          if (catalog.isEmpty)
+            Text(l10n.marketsNoSymbolsMatch)
+          else
+            DropdownButtonFormField<String>(
+              initialValue: symbol,
+              decoration: InputDecoration(labelText: l10n.portfolioSymbol),
+              items: [
+                for (final q in catalog)
+                  DropdownMenuItem(value: q.symbol, child: Text('${q.symbol} — ${q.displayName}')),
+              ],
+              onChanged: (v) => setState(() => _symbol = v ?? _symbol),
+            ),
           const SizedBox(height: 12),
           TextField(
             controller: _quantityController,
@@ -339,15 +389,17 @@ class _AddHoldingSheetState extends State<_AddHoldingSheet> {
           ),
           const SizedBox(height: 16),
           FilledButton(
-            onPressed: () {
-              final quantity = double.tryParse(_quantityController.text);
-              final avgPrice = double.tryParse(_avgPriceController.text);
-              if (quantity == null || avgPrice == null || quantity <= 0 || avgPrice <= 0) return;
-              context.read<PortfolioController>().addHolding(
-                    PortfolioHolding(symbol: _symbol, quantity: quantity, avgPrice: avgPrice),
-                  );
-              Navigator.pop(context);
-            },
+            onPressed: symbol == null
+                ? null
+                : () {
+                    final quantity = double.tryParse(_quantityController.text);
+                    final avgPrice = double.tryParse(_avgPriceController.text);
+                    if (quantity == null || avgPrice == null || quantity <= 0 || avgPrice <= 0) return;
+                    context.read<PortfolioController>().addHolding(
+                          PortfolioHolding(symbol: symbol, quantity: quantity, avgPrice: avgPrice),
+                        );
+                    Navigator.pop(context);
+                  },
             child: Text(l10n.save),
           ),
         ],

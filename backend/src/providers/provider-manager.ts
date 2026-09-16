@@ -429,16 +429,56 @@ export class MarketProviderManager {
     return { result: merged, source: null };
   }
 
-  /** The actual per-group failover walk - see [getBatchQuotes]'s doc comment for why this is now a private helper callable once per hybrid-routed group. Algorithm is unchanged from the pre-hybrid single-pass version; only [routeSlots] (see its own doc comment) decides which provider is tried first. */
+  /**
+   * The actual per-group failover walk - see [getBatchQuotes]'s doc comment
+   * for why this is now a private helper callable once per hybrid-routed
+   * group. [routeSlots] (see its own doc comment) decides which provider is
+   * tried first.
+   *
+   * 2026-09-16 Final Full-System One-Pass audit ("CRITICAL BATCH CHECK"):
+   * a provider's `getBatchQuotes` can return SUCCESSFULLY (no throw) while
+   * still leaving individual requested symbols missing from its result - a
+   * per-symbol/per-chunk transient failure inside the provider's own batch
+   * implementation (see TwelveDataProvider/AlpacaProvider's own doc
+   * comments: "a partial chunk failure just leaves those specific symbols
+   * out of `result`"). Previously this method returned immediately on the
+   * FIRST successful (non-throwing) attempt, so a symbol missing from that
+   * one provider's partial response had no chance to be retried against
+   * the OTHER mapped provider, even when one was available and healthy -
+   * it just stayed missing, surfaced by the route layer as
+   * PROVIDER_UNAVAILABLE, when a second provider might have actually had
+   * the data.
+   *
+   * Fixed by tracking `remaining` (symbols not yet resolved by ANY slot)
+   * and only asking each subsequent slot for what's STILL missing, instead
+   * of stopping at the first non-throwing attempt. This is bounded and
+   * safe: each symbol is asked of at most `slots.length` providers (in
+   * practice at most 2 - primary and secondary), never retried against a
+   * provider that already resolved it (fully or as confirmed no-data), and
+   * never fans out concurrently - the loop remains strictly sequential,
+   * one provider at a time, exactly as before. A symbol resolved to `null`
+   * (provider-confirmed no-data) is removed from `remaining` immediately,
+   * so it is never mistaken for "missing" and never retried as if it were
+   * a fault - preserving "never retry a confirmed no-data result." Once
+   * `remaining` is empty, no further slot is contacted at all (`break`),
+   * so a fully-successful first attempt costs exactly the same one real
+   * call it always did.
+   *
+   * A provider's own THROWN failure (as opposed to a partial success) is
+   * handled exactly as before - the confirmed-health/circuit/budget rules
+   * and the primary-never-throws/secondary-throws-only-if-last asymmetry
+   * are unchanged; only the loop's success path gained per-symbol
+   * bounded fallback.
+   */
   private async batchWithFailover(
     mkrSymbols: string[],
     providerSymbolFor: (id: ProviderId, mkrSymbol: string) => string | null,
     priority: RequestPriority,
     preferredProvider?: ProviderId,
   ): Promise<{ result: Record<string, NormalizedQuote | null>; source: ProviderId | null }> {
-    const buildMap = (id: ProviderId): Record<string, string> => {
+    const buildMap = (id: ProviderId, symbols: Iterable<string>): Record<string, string> => {
       const map: Record<string, string> = {};
-      for (const mkrSymbol of mkrSymbols) {
+      for (const mkrSymbol of symbols) {
         const providerSymbol = providerSymbolFor(id, mkrSymbol);
         if (providerSymbol) map[providerSymbol] = mkrSymbol;
       }
@@ -447,8 +487,12 @@ export class MarketProviderManager {
     const slots = this.routeSlots(preferredProvider);
     let budgetDeniedTier: string | null = null;
     let anyAttemptFailed = false;
+    const result: Record<string, NormalizedQuote | null> = {};
+    const contributingProviders = new Set<ProviderId>();
+    const remaining = new Set(mkrSymbols);
 
     for (let i = 0; i < slots.length; i++) {
+      if (remaining.size === 0) break; // everything already resolved - never contact a slot with nothing left to ask
       const provider = slots[i]!;
       const isLastSlot = i === slots.length - 1;
       const admission = admitCircuitRequest(provider.id);
@@ -459,11 +503,11 @@ export class MarketProviderManager {
         // and unavailable" fault as an in-call failure (2026-09-15
         // post-phone Closed Testing correction task's own root-cause fix,
         // preserved here).
-        if (Object.keys(buildMap(provider.id)).length > 0) anyAttemptFailed = true;
+        if (Object.keys(buildMap(provider.id, remaining)).length > 0) anyAttemptFailed = true;
         continue;
       }
 
-      const map = buildMap(provider.id);
+      const map = buildMap(provider.id, remaining);
       if (Object.keys(map).length === 0) {
         if (admission.isProbe) releaseCircuitProbe(provider.id);
         continue;
@@ -477,10 +521,20 @@ export class MarketProviderManager {
       }
 
       try {
-        const result = await provider.getBatchQuotes(map);
+        const partial = await provider.getBatchQuotes(map);
         recordSuccess(provider.id);
         recordCircuitSuccess(provider.id);
-        return { result, source: provider.id };
+        contributingProviders.add(provider.id);
+        for (const mkrSymbol of Object.values(map)) {
+          if (mkrSymbol in partial) {
+            result[mkrSymbol] = partial[mkrSymbol] ?? null;
+            remaining.delete(mkrSymbol);
+          }
+          // else: this symbol's own chunk/request transiently failed
+          // inside the provider - stays in `remaining` for the NEXT slot
+          // (bounded, at most one more attempt) instead of being dropped.
+        }
+        continue; // keep walking slots only for what's still `remaining`
       } catch (err) {
         recordFailure(provider.id, (err as Error).message);
         if (isSymbolSpecificError(err)) {
@@ -506,14 +560,23 @@ export class MarketProviderManager {
       }
     }
 
-    if (budgetDeniedTier) throw budgetErrorFor(budgetDeniedTier);
-    // 2026-09-15 post-phone Closed Testing correction task: a real fault
-    // must surface as an error, never be silently absorbed into the
-    // "nothing mapped" fallback below - matches [withFailover]'s own
-    // final fallback message exactly.
-    if (anyAttemptFailed) throw new ProviderError('No healthy provider available for these symbols', 'unknown');
-    // Nothing mapped for either provider (in THIS group) - a genuine mapping outcome, not a fault.
-    return { result: Object.fromEntries(mkrSymbols.map((s) => [s, null])), source: null };
+    if (Object.keys(result).length === 0) {
+      if (budgetDeniedTier) throw budgetErrorFor(budgetDeniedTier);
+      // 2026-09-15 post-phone Closed Testing correction task: a real fault
+      // must surface as an error, never be silently absorbed into the
+      // "nothing mapped" fallback below - matches [withFailover]'s own
+      // final fallback message exactly.
+      if (anyAttemptFailed) throw new ProviderError('No healthy provider available for these symbols', 'unknown');
+      // Nothing mapped for either provider (in THIS group) - a genuine mapping outcome, not a fault.
+      return { result: Object.fromEntries(mkrSymbols.map((s) => [s, null])), source: null };
+    }
+    // A symbol still left in `remaining` here (unresolved by every slot
+    // that had anything to offer it) is simply absent from `result` - the
+    // route layer already treats a missing key as "not resolved this
+    // call" (PROVIDER_UNAVAILABLE, never cached), so a partial success is
+    // returned as-is rather than discarding the symbols that DID resolve.
+    const source = contributingProviders.size === 1 ? [...contributingProviders][0]! : null;
+    return { result, source };
   }
 
   getCandles(mkrSymbol: string, timeframe: MkrTimeframe, outputSize: number, symbolFor: (id: ProviderId) => string | null, priority: RequestPriority = 'P1', preferredProvider?: ProviderId) {

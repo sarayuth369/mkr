@@ -45,20 +45,32 @@ class GoldRadarController extends ChangeNotifier {
   List<double> _series = const [];
   List<double> get series => _series;
 
+  /// 2026-09-16 Final Full-System One-Pass audit finding: without this, two
+  /// overlapping `_load()` calls (e.g. a double-tap on retry) could let the
+  /// slower, older call's response land after and overwrite the newer
+  /// call's already-applied result - the same request-generation guard
+  /// pattern already established in MarketsController._loadRequestId.
+  int _loadRequestId = 0;
+
   Future<void> _load() async {
+    final requestId = ++_loadRequestId;
     _state = const ApiState.loading();
     _aiState = const ApiState.loading();
     notifyListeners();
 
     try {
       final gold = await _marketService.getQuote('XAU/USD');
+      if (requestId != _loadRequestId) return;
       if (gold == null) {
         _state = const ApiState.empty();
         _series = const [];
       } else {
         final dxy = await _marketService.getQuote('DXY');
+        if (requestId != _loadRequestId) return;
         final us10y = await _marketService.getQuote('US10Y');
+        if (requestId != _loadRequestId) return;
         final oil = await _marketService.getQuote('OIL');
+        if (requestId != _loadRequestId) return;
         _state = ApiState.success(
           GoldRadarData.derive(gold: gold, dxy: dxy, us10y: us10y, oil: oil),
         );
@@ -71,8 +83,10 @@ class GoldRadarController extends ChangeNotifier {
         } catch (_) {
           _series = const [];
         }
+        if (requestId != _loadRequestId) return;
       }
     } catch (e) {
+      if (requestId != _loadRequestId) return;
       _state = ApiState.error(e.toString());
       _series = const [];
     }
@@ -80,16 +94,20 @@ class GoldRadarController extends ChangeNotifier {
 
     try {
       final result = await _calendarService.getEvents();
+      if (requestId != _loadRequestId) return;
       _importantEvents = result.events.where((e) => e.impact != ImpactLevel.low).take(4).toList();
     } catch (_) {
+      if (requestId != _loadRequestId) return;
       _importantEvents = const [];
     }
     notifyListeners();
 
     try {
       final insight = await _aiService.getAssetInsight('XAU/USD');
+      if (requestId != _loadRequestId) return;
       _aiState = ApiState.success(insight);
     } catch (e) {
+      if (requestId != _loadRequestId) return;
       _aiState = ApiState.error(e.toString());
     }
     notifyListeners();

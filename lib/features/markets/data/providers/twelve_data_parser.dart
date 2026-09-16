@@ -254,10 +254,17 @@ class TwelveDataParser {
     );
   }
 
+  // 2026-09-16 Final Full-System One-Pass audit finding: this parser only
+  // ever runs on a REAL-mode backend response (demo mode uses an entirely
+  // separate MockMarketService/DemoMarketDataProvider path) - an
+  // unrecognized or missing `source` value here is still a genuine backend
+  // answer, never mock/simulated data. Previously fell to
+  // `MarketDataSource.demo`, silently conflating "real response we can't
+  // label" with "synthetic data".
   static MarketDataSource _sourceOf(Object? value) => switch (value) {
         'twelve_data' => MarketDataSource.twelveData,
         'alpaca' => MarketDataSource.alpaca,
-        _ => MarketDataSource.demo,
+        _ => MarketDataSource.unavailable,
       };
 
   static MarketSessionStatus? _sessionStatusOf(Object? value) => switch (value) {

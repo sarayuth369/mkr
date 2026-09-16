@@ -65,6 +65,15 @@ class MarketDetailController extends ChangeNotifier {
 
   StreamSubscription<List<MarketQuote>>? _liveSubscription;
 
+  /// 2026-09-16 Final Full-System One-Pass audit finding: this controller is
+  /// created fresh per detail-screen visit (not an app-lifetime singleton
+  /// like Home/Markets), so `dispose()` fires for real on back-navigation.
+  /// `_load()` chains five awaited calls each followed by `notifyListeners()`
+  /// - without this guard, backing out while any of them is still in flight
+  /// throws "A ChangeNotifier was used after being disposed" once that
+  /// continuation resumes.
+  bool _disposed = false;
+
   /// 2026-09-15 pre-Closed-Testing audit (Known Issue B): previously had no
   /// `onError` handler, so a genuine live-stream fault (e.g. the catalog
   /// re-check inside [MarketService.watchQuotes] failing) became an
@@ -77,7 +86,7 @@ class MarketDetailController extends ChangeNotifier {
     _liveSubscription?.cancel();
     _liveSubscription = _marketService.watchQuotes([symbol]).listen(
       (updates) {
-        if (updates.isEmpty) return;
+        if (_disposed || updates.isEmpty) return;
         final live = updates.first;
         _quoteState = ApiState.success(live, lastUpdated: _marketService.lastUpdated);
         if (_series.isNotEmpty && _timeframe == ChartTimeframe.d1) {
@@ -86,6 +95,7 @@ class MarketDetailController extends ChangeNotifier {
         notifyListeners();
       },
       onError: (Object e) {
+        if (_disposed) return;
         _quoteState = ApiState.error(e.toString());
         notifyListeners();
       },
@@ -94,6 +104,7 @@ class MarketDetailController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _liveSubscription?.cancel();
     super.dispose();
   }
@@ -105,33 +116,42 @@ class MarketDetailController extends ChangeNotifier {
 
     try {
       final quote = await _marketService.getQuote(symbol);
+      if (_disposed) return;
       _quoteState = quote == null ? const ApiState.empty() : ApiState.success(quote);
       if (quote != null) _watchLiveQuote();
     } catch (e) {
+      if (_disposed) return;
       _quoteState = ApiState.error(e.toString());
     }
     notifyListeners();
 
     await loadSeries(_timeframe);
+    if (_disposed) return;
 
     try {
       final result = await _calendarService.getEvents();
+      if (_disposed) return;
       _relatedEvents = result.events.take(3).toList();
     } catch (_) {
+      if (_disposed) return;
       _relatedEvents = const [];
     }
 
     try {
       _relatedNews = await _newsService.getRelatedTo(symbol);
+      if (_disposed) return;
     } catch (_) {
+      if (_disposed) return;
       _relatedNews = const [];
     }
     notifyListeners();
 
     try {
       final insight = await _aiService.getAssetInsight(symbol);
+      if (_disposed) return;
       _aiState = ApiState.success(insight);
     } catch (e) {
+      if (_disposed) return;
       _aiState = ApiState.error(e.toString());
     }
     notifyListeners();
@@ -159,6 +179,7 @@ class MarketDetailController extends ChangeNotifier {
       unavailable = true;
     }
     if (requestId != _seriesRequestId) return; // a newer request has since started - discard this stale result
+    if (_disposed) return;
     _series = series;
     _seriesUnavailable = unavailable;
     notifyListeners();

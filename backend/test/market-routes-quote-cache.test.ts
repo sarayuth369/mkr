@@ -341,7 +341,7 @@ describe('handleQuote / handleQuotes - cache correctness (Task 4)', () => {
       const body = (await response.json()) as { data: { items: { symbol: string }[]; errors: { symbol: string; code: string }[] } };
       const cachedMsft = await env.MKR_CACHE.get('quote:v2:MSFT', 'json');
 
-      expect(cachedMsft).toEqual({ v: null }); // confirmed no-data IS cached - unchanged, correct behavior
+      expect(cachedMsft).toEqual({ v: null, storedAt: expect.any(Number) }); // confirmed no-data IS cached - unchanged, correct behavior (envelope now also carries storedAt for bounded stale-while-revalidate)
       expect(body.data.items).toEqual([expect.objectContaining({ symbol: 'AAPL' })]);
       expect(body.data.errors).toEqual([]); // an explicit provider "no data" answer is NOT reported as an error
       expect(fetchSpy).toHaveBeenCalledTimes(1); // the single successful chunk covering both symbols
@@ -462,6 +462,67 @@ describe('handleQuote / handleQuotes - cache correctness (Task 4)', () => {
 
       expect(body.data.price).toBe(100);
       expect(body.data.source).toBe('twelve_data');
+    });
+  });
+
+  describe('2026-09-16 Final Full-System One-Pass audit findings', () => {
+    it('P. a confirmed no-data quote is explicitly reported in noData, never silently absent from both items and errors', async () => {
+      const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ AAPL: twelveDataQuote(150), MSFT: { status: 'error', code: 400, message: 'symbol not found' } }), { status: 200 }));
+      vi.stubGlobal('fetch', fetchSpy);
+      const env = makeEnv();
+
+      const response = await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=AAPL,MSFT'), env, 'r1');
+      const body = (await response.json()) as { data: { items: { symbol: string }[]; errors: unknown[]; noData: string[] } };
+
+      expect(body.data.items).toEqual([expect.objectContaining({ symbol: 'AAPL' })]);
+      expect(body.data.errors).toEqual([]);
+      expect(body.data.noData).toEqual(['MSFT']); // explicitly reported, not silently missing from the response
+    });
+
+    it('Q. a single uncached symbol via /quotes shares its cache/in-flight key with /quote for the same symbol - a concurrent race coalesces into one provider call', async () => {
+      let fetchCalls = 0;
+      const fetchSpy = vi.fn(async () => {
+        fetchCalls++;
+        await new Promise((r) => setTimeout(r, 10));
+        return new Response(JSON.stringify(twelveDataQuote(150)), { status: 200 });
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+      const env = makeEnv();
+
+      const [quoteResponse, quotesResponse] = await Promise.all([
+        handleQuote(new Request('https://x/api/mkr/market/quote?symbol=AAPL'), env, 'r1'),
+        handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=AAPL'), env, 'r2'),
+      ]);
+
+      expect(quoteResponse.status).toBe(200);
+      expect(quotesResponse.status).toBe(200);
+      expect(fetchCalls).toBe(1); // both routes shared one real upstream call, not two
+    });
+
+    it('R. a symbol missing from a multi-symbol batch response falls back to a still-physically-present stale cache entry instead of a hard error', async () => {
+      const env = makeEnv();
+      // Seed a stale (already past its 60s TTL) cache entry for MSFT, in
+      // the normalized quote shape this cache key actually stores.
+      const staleMsft = { symbol: 'MSFT', name: null, price: 50, change: null, changePercent: null, open: null, high: null, low: null, previousClose: null, volume: null, bid: null, ask: null, currency: 'USD', timestamp: Date.now() - 120_000, source: 'twelve_data', isLive: true, sessionStatus: 'unknown' };
+      await env.MKR_CACHE.put('quote:v2:MSFT', JSON.stringify({ v: staleMsft, storedAt: Date.now() - 120_000 }));
+      const fetchSpy = vi.fn(async (url: string) => {
+        const u = new URL(url);
+        const requested = (u.searchParams.get('symbol') ?? '').split(',').filter(Boolean);
+        if (requested.length > 1) {
+          // Multi-symbol batch call: MSFT transiently missing, AAPL succeeds.
+          return new Response(JSON.stringify({ AAPL: twelveDataQuote(150) }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ status: 'error', message: 'x' }), { status: 200 });
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const response = await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=AAPL,MSFT'), env, 'r1');
+      const body = (await response.json()) as { data: { items: { symbol: string }[]; errors: unknown[] } };
+
+      const symbols = body.data.items.map((i) => i.symbol);
+      expect(symbols).toContain('AAPL');
+      expect(symbols).toContain('MSFT'); // served from the stale fallback rather than reported as an error
+      expect(body.data.errors).toEqual([]);
     });
   });
 });

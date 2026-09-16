@@ -72,6 +72,79 @@ describe('cachedFetch', () => {
     expect(result.cached).toBe(false);
   });
 
+  // 2026-09-16 Final Full-System One-Pass audit finding: cachedFetch had no
+  // stale-while-revalidate despite that being a documented invariant - a
+  // provider outage on an already-expired KV entry was a hard failure, not
+  // degraded/stale service. These pin the bounded fix.
+  describe('bounded stale-while-revalidate', () => {
+    it('serves a logically-expired-but-still-physically-present value when the fresh refetch itself fails, instead of throwing', async () => {
+      const kv = createFakeKv();
+      // Seed a value whose storedAt is already outside a 60s TTL - still
+      // physically "in KV" (the fake store never expires anything), which
+      // is exactly the state a real KV entry is in during its grace window.
+      await kv.put('k6', JSON.stringify({ v: { price: 111 }, storedAt: Date.now() - 120_000 }));
+
+      const result = await cachedFetch(kv, 'k6', 60, async () => {
+        throw new Error('provider down');
+      });
+
+      expect(result.value).toEqual({ price: 111 });
+    });
+
+    it('a genuinely fresh value is still served without ever calling fetcher, unaffected by the stale-fallback path', async () => {
+      const kv = createFakeKv();
+      await kv.put('k7', JSON.stringify({ v: { price: 222 }, storedAt: Date.now() }));
+      let calls = 0;
+
+      const result = await cachedFetch(kv, 'k7', 60, async () => {
+        calls++;
+        return { price: 999 };
+      });
+
+      expect(result.value).toEqual({ price: 222 });
+      expect(result.cached).toBe(true);
+      expect(calls).toBe(0);
+    });
+
+    it('a successful refetch replaces the stale value and future calls see the fresh one, not the fallback', async () => {
+      const kv = createFakeKv();
+      await kv.put('k8', JSON.stringify({ v: { price: 1 }, storedAt: Date.now() - 120_000 }));
+
+      const first = await cachedFetch(kv, 'k8', 60, async () => ({ price: 2 }));
+      expect(first.value).toEqual({ price: 2 }); // refetch succeeded - never fell back to stale
+
+      let calls = 0;
+      const second = await cachedFetch(kv, 'k8', 60, async () => {
+        calls++;
+        return { price: 3 };
+      });
+      expect(second.value).toEqual({ price: 2 }); // freshly-written value now served as a genuine cache hit
+      expect(calls).toBe(0);
+    });
+
+    it('no stale value exists at all (genuine first-ever miss) - a fetcher failure still propagates, nothing to fall back to', async () => {
+      const kv = createFakeKv();
+
+      await expect(cachedFetch(kv, 'k9', 60, async () => {
+        throw new Error('provider down');
+      })).rejects.toThrow('provider down');
+    });
+
+    it('a legacy entry with no storedAt field (written before this fix) is trusted as fresh, not treated as permanently stale', async () => {
+      const kv = createFakeKv();
+      await kv.put('k10', JSON.stringify({ v: { price: 77 } })); // no storedAt at all
+      let calls = 0;
+
+      const result = await cachedFetch(kv, 'k10', 60, async () => {
+        calls++;
+        return { price: 999 };
+      });
+
+      expect(result.value).toEqual({ price: 77 });
+      expect(calls).toBe(0);
+    });
+  });
+
   // Phase 5 - fixes the verified handleQuotes gap (bypassed in-flight dedup).
   describe('coalesced', () => {
     it('concurrent calls with the same key share a single fetcher invocation', async () => {

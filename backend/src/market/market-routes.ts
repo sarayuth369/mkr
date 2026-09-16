@@ -1,4 +1,4 @@
-import { cachedFetch, cacheKey, coalesced, getCached, putCached } from '../cache/cache-service';
+import { cachedFetch, cacheKey, coalesced, getCachedWithFreshness, putCachedWithGrace } from '../cache/cache-service';
 import { getConfig } from '../config/config-service';
 import { ApiError, jsonResponse } from '../errors';
 import { logError, logInfo } from '../logging';
@@ -88,7 +88,18 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
 
   const data: unknown[] = [];
   const errors: { symbol: string; code: string; message: string }[] = [];
+  // 2026-09-16 Final Full-System One-Pass audit finding: a confirmed
+  // provider "no data for this symbol" result previously vanished from the
+  // response entirely (neither `data` nor `errors`) - indistinguishable
+  // from a symbol that silently failed. Reported explicitly here instead.
+  const noData: string[] = [];
   const uncached: string[] = [];
+  // 2026-09-16 audit finding: still-physically-present-but-logically-stale
+  // values remembered per symbol, so a symbol that fails to refresh can
+  // degrade to stale data instead of a hard PROVIDER_UNAVAILABLE error -
+  // the same bounded stale-while-revalidate cachedFetch does internally,
+  // applied here since the batch path manages its own cache reads/writes.
+  const staleFallback = new Map<string, unknown>();
 
   for (const symbol of symbols) {
     const row = rowBySymbol.get(symbol);
@@ -96,10 +107,13 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
       errors.push({ symbol, code: 'INVALID_SYMBOL', message: `Unknown or disabled symbol: ${symbol}` });
       continue;
     }
-    const cached = await getCached<unknown>(env.MKR_CACHE, cacheKey('quote', symbol));
-    if (cached !== undefined) {
-      if (cached) data.push(cached);
+    const ttl = row.cache_ttl_seconds ?? config.cacheTtls.quoteSeconds;
+    const cached = await getCachedWithFreshness<unknown>(env.MKR_CACHE, cacheKey('quote', symbol), ttl);
+    if (cached && cached.fresh) {
+      if (cached.value) data.push(cached.value);
+      else noData.push(symbol);
     } else {
+      if (cached) staleFallback.set(symbol, cached.value);
       uncached.push(symbol);
     }
   }
@@ -107,62 +121,106 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
   if (uncached.length > 0) {
     try {
       const manager = await managerFor(env, config);
-      const providerSymbolFor = (id: ProviderId, mkrSymbol: string) => {
-        const row = rowBySymbol.get(mkrSymbol);
-        return row ? mapSymbolFromRows([row], mkrSymbol, id) : null;
-      };
-      // Hybrid Provider Architecture task - per-symbol routing preference,
-      // derived the exact same way handleQuote/handleCandles do (see
-      // preferredProviderForRow). `null` (not `undefined`) for a symbol
-      // whose row somehow isn't in rowBySymbol - matches
-      // resolvePreferredProvider's own "no mapping, no preference" default.
-      const preferredProviderFor = (mkrSymbol: string): ProviderId | null => {
-        const row = rowBySymbol.get(mkrSymbol);
-        return row ? (preferredProviderForRow(row, config.featureFlags) ?? null) : null;
-      };
-      // Single-flight: concurrent requests that land on the exact same
-      // uncached-symbol set (the common case - same catalog, same cache
-      // state, arriving within the same isolate near-simultaneously) share
-      // one upstream call instead of each independently calling the
-      // provider. This is what getCached/putCached above bypassed - see
-      // coalesced()'s doc comment in cache-service.ts.
-      const coalesceKey = `batch-quotes:${[...uncached].sort().join(',')}`;
-      const { result } = await coalesced(coalesceKey, () => manager.getBatchQuotes(uncached, providerSymbolFor, 'P1', preferredProviderFor)); // user-requested market data
 
-      await Promise.all(
-        uncached.map(async (symbol) => {
-          // Both providers' getBatchQuotes only ever set `result[symbol]`
-          // (possibly to `null`) for a symbol whose chunk/request actually
-          // completed - a symbol whose chunk failed transiently (network/
-          // timeout/rate_limit) is left OUT of `result` entirely, never
-          // set to `null` (see TwelveDataProvider/AlpacaProvider.getBatchQuotes).
-          // Collapsing that distinction via `result[symbol] ?? null` meant a
-          // transient per-chunk failure was cached identically to a
-          // provider-confirmed "no data for this symbol" - negative-caching
-          // a transient fault for the full TTL (violates Decision 15: never
-          // negative-cache a transient failure). Only cache/report success
-          // for a symbol the provider actually resolved; a never-resolved
-          // symbol is reported as an error and left uncached so a retry
-          // within the TTL window can actually succeed.
-          if (!(symbol in result)) {
-            errors.push({ symbol, code: 'PROVIDER_UNAVAILABLE', message: 'Market data provider is currently unavailable.' });
-            return;
-          }
-          const quote = result[symbol] ?? null;
-          const row = rowBySymbol.get(symbol)!;
-          const ttl = row.cache_ttl_seconds ?? config.cacheTtls.quoteSeconds;
-          await putCached(env.MKR_CACHE, cacheKey('quote', symbol), quote, ttl);
-          if (quote) data.push(quote);
-        }),
-      );
+      // 2026-09-16 Final Full-System One-Pass audit finding: a lone
+      // uncached symbol now shares the EXACT same cache key and in-flight
+      // coalescing key `handleQuote` uses (`cachedFetch`'s own `inFlight`
+      // map, keyed by the KV cache key itself) - previously this route
+      // always coalesced under a `batch-quotes:<sorted-list>`-shaped key,
+      // so a concurrent `/quote?symbol=AAPL` and `/quotes?symbols=AAPL`
+      // landing on the same isolate at the same instant did NOT share
+      // their in-flight request, each independently calling the provider
+      // for the same symbol. A multi-symbol batch keeps its own batch
+      // coalescing below - there is no clean single-request equivalent to
+      // join a genuine multi-symbol upstream call against.
+      if (uncached.length === 1) {
+        const symbol = uncached[0]!;
+        const row = rowBySymbol.get(symbol)!;
+        const ttl = row.cache_ttl_seconds ?? config.cacheTtls.quoteSeconds;
+        const symbolFor = (id: ProviderId) => mapSymbolFromRows([row], symbol, id);
+        const preferredProvider = preferredProviderForRow(row, config.featureFlags);
+        const { value: quote } = await cachedFetch(env.MKR_CACHE, cacheKey('quote', symbol), ttl, async () => {
+          const { result } = await manager.getQuote(symbol, symbolFor, 'P1', preferredProvider); // user-requested market data
+          return result;
+        });
+        if (quote) data.push(quote);
+        else noData.push(symbol);
+      } else {
+        const providerSymbolFor = (id: ProviderId, mkrSymbol: string) => {
+          const row = rowBySymbol.get(mkrSymbol);
+          return row ? mapSymbolFromRows([row], mkrSymbol, id) : null;
+        };
+        // Hybrid Provider Architecture task - per-symbol routing preference,
+        // derived the exact same way handleQuote/handleCandles do (see
+        // preferredProviderForRow). `null` (not `undefined`) for a symbol
+        // whose row somehow isn't in rowBySymbol - matches
+        // resolvePreferredProvider's own "no mapping, no preference" default.
+        const preferredProviderFor = (mkrSymbol: string): ProviderId | null => {
+          const row = rowBySymbol.get(mkrSymbol);
+          return row ? (preferredProviderForRow(row, config.featureFlags) ?? null) : null;
+        };
+        // Single-flight: concurrent requests that land on the exact same
+        // uncached-symbol set (the common case - same catalog, same cache
+        // state, arriving within the same isolate near-simultaneously) share
+        // one upstream call instead of each independently calling the
+        // provider. This is what plain getCached/putCached reads bypassed -
+        // see coalesced()'s doc comment in cache-service.ts.
+        const coalesceKey = `batch-quotes:${[...uncached].sort().join(',')}`;
+        const { result } = await coalesced(coalesceKey, () => manager.getBatchQuotes(uncached, providerSymbolFor, 'P1', preferredProviderFor)); // user-requested market data
+
+        await Promise.all(
+          uncached.map(async (symbol) => {
+            // Both providers' getBatchQuotes only ever set `result[symbol]`
+            // (possibly to `null`) for a symbol whose chunk/request actually
+            // completed - a symbol whose chunk failed transiently (network/
+            // timeout/rate_limit) is left OUT of `result` entirely, never
+            // set to `null` (see TwelveDataProvider/AlpacaProvider.getBatchQuotes).
+            // Collapsing that distinction via `result[symbol] ?? null` meant a
+            // transient per-chunk failure was cached identically to a
+            // provider-confirmed "no data for this symbol" - negative-caching
+            // a transient fault for the full TTL (violates Decision 15: never
+            // negative-cache a transient failure). Only cache/report success
+            // for a symbol the provider actually resolved.
+            if (!(symbol in result)) {
+              // Bounded stale-while-revalidate fallback (see staleFallback's
+              // own doc comment) before falling back further to an explicit
+              // error - a still-physically-present stale value beats a hard
+              // failure when the fresh refetch attempt itself came up empty
+              // for this one symbol.
+              if (staleFallback.has(symbol)) {
+                const stale = staleFallback.get(symbol);
+                if (stale) data.push(stale);
+                else noData.push(symbol);
+                return;
+              }
+              errors.push({ symbol, code: 'PROVIDER_UNAVAILABLE', message: 'Market data provider is currently unavailable.' });
+              return;
+            }
+            const quote = result[symbol] ?? null;
+            const row = rowBySymbol.get(symbol)!;
+            const ttl = row.cache_ttl_seconds ?? config.cacheTtls.quoteSeconds;
+            await putCachedWithGrace(env.MKR_CACHE, cacheKey('quote', symbol), quote, ttl);
+            if (quote) data.push(quote);
+            else noData.push(symbol);
+          }),
+        );
+      }
     } catch (err) {
       const apiError = mapProviderError(err);
-      for (const symbol of uncached) errors.push({ symbol, code: apiError.code, message: apiError.message });
+      for (const symbol of uncached) {
+        if (staleFallback.has(symbol)) {
+          const stale = staleFallback.get(symbol);
+          if (stale) data.push(stale);
+          else noData.push(symbol);
+          continue;
+        }
+        errors.push({ symbol, code: apiError.code, message: apiError.message });
+      }
     }
   }
 
-  logInfo('quotes batch served', { requestId, route: 'quotes', count: symbols.length, uncached: uncached.length, errorCount: errors.length });
-  return jsonResponse({ items: data, errors, source: config.primaryProvider, timestamp: Date.now() });
+  logInfo('quotes batch served', { requestId, route: 'quotes', count: symbols.length, uncached: uncached.length, errorCount: errors.length, noDataCount: noData.length });
+  return jsonResponse({ items: data, errors, noData, source: config.primaryProvider, timestamp: Date.now() });
 }
 
 export async function handleCandles(request: Request, env: Env, requestId: string): Promise<Response> {

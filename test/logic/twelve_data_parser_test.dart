@@ -73,9 +73,12 @@ void main() {
       expect(quote, isNull);
     });
 
-    test('an unrecognized source string defaults to demo rather than throwing', () {
+    test('an unrecognized source string defaults to unavailable rather than throwing or mislabeling it as demo data', () {
+      // 2026-09-16 Final Full-System One-Pass audit finding: this parser
+      // only ever runs on a real-mode backend response - an unrecognized
+      // value is still a genuine real answer, never mock/synthetic data.
       final quote = TwelveDataParser.parseQuote(json: _envelope({'price': 1.0, 'source': 'mystery'}), mkrSymbol: 'X', assetClass: AssetClass.usStock);
-      expect(quote!.source, MarketDataSource.demo);
+      expect(quote!.source, MarketDataSource.unavailable);
     });
   });
 

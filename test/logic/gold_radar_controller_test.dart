@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mkr/core/widgets/price_chart.dart';
 import 'package:mkr/domain/asset_class.dart';
@@ -142,4 +144,83 @@ void main() {
       expect(controller.series, isEmpty);
     });
   });
+
+  group('GoldRadarController — 2026-09-16 Final Full-System One-Pass audit: stale-response race guard', () {
+    test('an older, slower retry() call never overwrites a newer one\'s already-applied result', () async {
+      final delayedService = _DelayedMarketService(
+        firstCallGold: const Duration(milliseconds: 50),
+        laterCallGold: Duration.zero,
+      );
+      final controller = GoldRadarController(
+        marketService: delayedService,
+        aiService: MockMarketAIService(),
+        calendarService: MockEconomicCalendarService(),
+      );
+      // Constructor already started the FIRST (slow) load. Immediately fire
+      // a second, faster retry() before the first resolves - the classic
+      // "older response lands after the newer one" race.
+      unawaited(controller.retry());
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final data = controller.state.dataOrNull;
+      expect(data, isNotNull);
+      expect(data!.gold.price, 2222); // the newer (second) call's result - never clobbered by the slower first call landing late
+    });
+  });
+}
+
+class _DelayedMarketService implements MarketService {
+  _DelayedMarketService({required this.firstCallGold, required this.laterCallGold});
+
+  final Duration firstCallGold;
+  final Duration laterCallGold;
+  int _goldCalls = 0;
+
+  @override
+  MarketDataMode mode = MarketDataMode.live;
+
+  @override
+  DateTime? lastUpdated;
+
+  @override
+  Future<List<MarketSymbolInfo>> getCatalog() async => const [];
+
+  @override
+  Future<MarketFetchResult> getAllQuotes() async => const MarketFetchEmpty();
+
+  @override
+  Future<MarketFetchResult> getQuotesByCategory(AssetClass assetClass) async => const MarketFetchEmpty();
+
+  @override
+  Future<MarketFetchResult> getQuotesFor(List<String> symbols) async => const MarketFetchEmpty();
+
+  @override
+  Future<MarketQuote?> getQuote(String symbol) async {
+    if (symbol != 'XAU/USD') return null;
+    _goldCalls++;
+    final isFirstCall = _goldCalls == 1;
+    await Future<void>.delayed(isFirstCall ? firstCallGold : laterCallGold);
+    return _quote('XAU/USD', isFirstCall ? 1111 : 2222);
+  }
+
+  @override
+  Future<List<double>> getPriceSeries(String symbol, ChartTimeframe timeframe) async => const [];
+
+  @override
+  Future<MarketFetchResult> search(String query) async => const MarketFetchEmpty();
+
+  @override
+  Stream<List<MarketQuote>> watchQuotes(List<String> symbols) => const Stream.empty();
+
+  @override
+  Stream<List<MarketCandle>> watchCandles(String symbol, Timeframe timeframe) => const Stream.empty();
+
+  @override
+  Future<void> reconnect() async {}
+
+  @override
+  void pause() {}
+
+  @override
+  void resume() {}
 }

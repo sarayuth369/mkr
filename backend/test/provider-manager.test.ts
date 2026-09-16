@@ -1063,4 +1063,104 @@ describe('MarketProviderManager', () => {
       });
     });
   });
+
+  describe('2026-09-16 Final Full-System One-Pass audit - CRITICAL BATCH CHECK: bounded per-symbol fallback for a partially-successful batch response', () => {
+    const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
+
+    it('a symbol missing from an otherwise-successful primary batch response falls back to a healthy, mapped secondary - bounded to exactly one extra attempt', async () => {
+      const primary = new FakeProvider('twelve_data');
+      const secondary = new FakeProvider('alpaca');
+      // Primary "succeeds" (no throw) but its own internal per-symbol/
+      // per-chunk mechanism leaves MSFT out of the result entirely -
+      // exactly TwelveDataProvider/AlpacaProvider's own documented
+      // "a partial chunk failure just leaves those symbols out" behavior.
+      let primaryCalls = 0;
+      primary.getBatchQuotes = async (map: Record<string, string>) => {
+        primaryCalls++;
+        const out: Record<string, NormalizedQuote | null> = {};
+        for (const mkrSymbol of Object.values(map)) {
+          if (mkrSymbol === 'MSFT') continue; // missing, not null - a genuine per-symbol transient miss
+          out[mkrSymbol] = { ...quote(1), symbol: mkrSymbol, source: 'twelve_data' };
+        }
+        return out;
+      };
+      let secondaryCalls = 0;
+      let secondaryMap: Record<string, string> | undefined;
+      secondary.getBatchQuotes = async (map: Record<string, string>) => {
+        secondaryCalls++;
+        secondaryMap = map;
+        return Object.fromEntries(Object.values(map).map((s) => [s, { ...quote(2), symbol: s, source: 'alpaca' as const }]));
+      };
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      const { result, source } = await manager.getBatchQuotes(['AAPL', 'MSFT'], providerSymbolFor);
+
+      expect(result.AAPL?.source).toBe('twelve_data'); // resolved by primary, untouched
+      expect(result.MSFT?.source).toBe('alpaca'); // bounded fallback recovered it from the secondary
+      expect(source).toBeNull(); // mixed providers contributed to this one group's result
+      // Bounded: the secondary was asked ONLY for the missing symbol, not
+      // the whole original batch again - "maximum one fallback attempt per
+      // affected symbol," never re-asking what the primary already resolved.
+      expect(secondaryMap).toEqual({ MSFT: 'MSFT' });
+      expect(primaryCalls).toBe(1);
+      expect(secondaryCalls).toBe(1);
+    });
+
+    it('a symbol confirmed no-data (null) from the primary is never retried against the secondary - "never retry a confirmed no-data result as a fault"', async () => {
+      const primary = new FakeProvider('twelve_data');
+      const secondary = new FakeProvider('alpaca');
+      let secondaryCalls = 0;
+      primary.getBatchQuotes = async (map: Record<string, string>) => Object.fromEntries(Object.values(map).map((s) => [s, null])); // every symbol explicitly resolved to null (confirmed no-data), not missing
+      secondary.getBatchQuotes = async (map: Record<string, string>) => {
+        secondaryCalls++;
+        return Object.fromEntries(Object.values(map).map((s) => [s, null]));
+      };
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      const { result } = await manager.getBatchQuotes(['AAPL', 'MSFT'], providerSymbolFor);
+
+      expect(result).toEqual({ AAPL: null, MSFT: null });
+      expect(secondaryCalls).toBe(0); // never contacted - nothing was actually missing
+    });
+
+    it('a symbol that stays unresolved by every available provider is simply absent from the result, not fabricated and not thrown when other symbols succeeded', async () => {
+      const primary = new FakeProvider('twelve_data');
+      const secondary = new FakeProvider('alpaca');
+      primary.getBatchQuotes = async (map: Record<string, string>) => {
+        const out: Record<string, NormalizedQuote | null> = {};
+        for (const mkrSymbol of Object.values(map)) {
+          if (mkrSymbol === 'MSFT') continue;
+          out[mkrSymbol] = { ...quote(1), symbol: mkrSymbol, source: 'twelve_data' };
+        }
+        return out;
+      };
+      let secondaryCalls = 0;
+      secondary.getBatchQuotes = async (map: Record<string, string>) => {
+        secondaryCalls++;
+        const out: Record<string, NormalizedQuote | null> = {};
+        for (const mkrSymbol of Object.values(map)) {
+          if (mkrSymbol === 'MSFT') continue; // secondary ALSO can't resolve it - genuinely unresolved everywhere
+          out[mkrSymbol] = { ...quote(2), symbol: mkrSymbol, source: 'alpaca' };
+        }
+        return out;
+      };
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      const { result } = await manager.getBatchQuotes(['AAPL', 'MSFT'], providerSymbolFor);
+
+      expect(result.AAPL?.source).toBe('twelve_data');
+      expect('MSFT' in result).toBe(false); // never fabricated, never thrown away the AAPL success either
+      expect(secondaryCalls).toBe(1); // exactly one fallback attempt - never retried further
+    });
+
+    it('a fully-successful first attempt never contacts the second slot at all - no wasted call once nothing remains', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quote(1) });
+      const secondary = new FakeProvider('alpaca');
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      await manager.getBatchQuotes(['AAPL', 'MSFT'], providerSymbolFor);
+
+      expect(secondary.batchCalls).toBe(0);
+    });
+  });
 });

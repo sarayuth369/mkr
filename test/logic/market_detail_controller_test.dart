@@ -31,11 +31,16 @@ MarketQuote _quote(String symbol, double price) => MarketQuote(
     );
 
 class _FakeMarketService implements MarketService {
-  _FakeMarketService({this.quote, this.seriesResult = const [], this.seriesError, this.watchQuotesStream, this.getPriceSeriesImpl});
+  _FakeMarketService({this.quote, this.seriesResult = const [], this.seriesError, this.watchQuotesStream, this.getPriceSeriesImpl, this.getQuoteImpl});
 
   MarketQuote? quote;
   List<double> seriesResult;
   Object? seriesError;
+
+  /// Overrides [getQuote] entirely when set - lets a test control exactly
+  /// when the initial `_load()` call resolves (e.g. via a `Completer`) to
+  /// simulate a slow response arriving after the controller is disposed.
+  Future<MarketQuote?> Function(String symbol)? getQuoteImpl;
 
   /// Overrides [watchQuotes]'s returned stream when set - lets a test
   /// control exactly when/what the live subscription emits (or errors).
@@ -65,7 +70,11 @@ class _FakeMarketService implements MarketService {
   Future<MarketFetchResult> getQuotesFor(List<String> symbols) async => const MarketFetchEmpty();
 
   @override
-  Future<MarketQuote?> getQuote(String symbol) async => quote;
+  Future<MarketQuote?> getQuote(String symbol) async {
+    final impl = getQuoteImpl;
+    if (impl != null) return impl(symbol);
+    return quote;
+  }
 
   @override
   Future<List<double>> getPriceSeries(String symbol, ChartTimeframe timeframe) async {
@@ -224,6 +233,53 @@ void main() {
 
       expect(controller.timeframe, ChartTimeframe.m1);
       expect(controller.series, [9.0, 9.5]);
+    });
+  });
+
+  group('MarketDetailController — 2026-09-16 Final Full-System One-Pass audit: disposal safety', () {
+    test('dispose() before the initial getQuote resolves never throws when the pending future later completes', () async {
+      final quoteCompleter = Completer<MarketQuote?>();
+      final service = _FakeMarketService(getQuoteImpl: (_) => quoteCompleter.future);
+      final controller = MarketDetailController(
+        symbol: 'AAPL',
+        marketService: service,
+        aiService: MockMarketAIService(),
+        newsService: MockNewsService(),
+        calendarService: MockEconomicCalendarService(),
+      );
+
+      // Back out of the detail screen (dispose) while the initial quote
+      // fetch is still in flight - previously this had no `_disposed`
+      // guard, so completing the pending future afterwards would call
+      // `notifyListeners()` on an already-disposed ChangeNotifier.
+      controller.dispose();
+
+      quoteCompleter.complete(_quote('AAPL', 100));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      // Reaching here without a thrown FlutterError/assertion is the test.
+    });
+
+    test('dispose() before loadSeries resolves never throws when the pending future later completes', () async {
+      final seriesCompleter = Completer<List<double>>();
+      final service = _FakeMarketService(
+        quote: _quote('AAPL', 100),
+        getPriceSeriesImpl: (symbol, timeframe) => seriesCompleter.future,
+      );
+      final controller = MarketDetailController(
+        symbol: 'AAPL',
+        marketService: service,
+        aiService: MockMarketAIService(),
+        newsService: MockNewsService(),
+        calendarService: MockEconomicCalendarService(),
+      );
+      await Future<void>.delayed(Duration.zero); // let the initial quote fetch resolve, series fetch is now pending
+
+      controller.dispose();
+
+      seriesCompleter.complete([1, 2, 3]);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
     });
   });
 }
