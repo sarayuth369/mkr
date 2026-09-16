@@ -3,6 +3,7 @@ import type { MkrTimeframe, NormalizedCandle, NormalizedMarketStatus, Normalized
 import { recordProviderRequest } from '../quota-manager';
 import { ProviderError, type MarketDataProvider } from '../types';
 import {
+  alpacaBarsStart,
   alpacaMarketStatusUnavailable,
   alpacaTimeframe,
   isAlpacaCryptoSymbol,
@@ -17,6 +18,20 @@ const STOCK_BASE_URL = 'https://data.alpaca.markets/v2/stocks';
 // path/query variant of the same one. See alpaca-parser.ts's
 // isAlpacaCryptoSymbol doc comment for how a symbol is routed here.
 const CRYPTO_BASE_URL = 'https://data.alpaca.markets/v1beta3/crypto/us';
+
+// 2026-09-16 Alpaca Credential E2E Test task: live-confirmed against the
+// real Alpaca account this task provisioned - every stock `/bars` request
+// without an explicit `feed` returned an empty `bars` array (not an error,
+// not a 403) for every one of AAPL/MSFT/NVDA/QQQ/TSLA, while crypto bars
+// (unaffected by this - crypto has no feed distinction) worked. Alpaca's
+// stock market data defaults to the consolidated `sip` feed, which this
+// account's Basic/free tier has no entitlement to; `iex` is the feed
+// Basic tier actually has rights to. Applied to both snapshot and bars so
+// quote/candle requests use the same, actually-entitled feed consistently
+// - snapshot already happened to return data without it (its own default
+// evidently differs from bars'), but there is no reason to leave it on an
+// unconfirmed/inconsistent default when the correct value is known.
+const STOCK_FEED_PARAM = 'feed=iex';
 
 /**
  * SECONDARY/standby provider. Fully implemented and wired the same way as
@@ -79,7 +94,7 @@ export class AlpacaProvider implements MarketDataProvider {
       const json = await this.request(`${CRYPTO_BASE_URL}/snapshots?symbols=${encodeURIComponent(providerSymbol)}`);
       return parseAlpacaCryptoSnapshot(json, providerSymbol, mkrSymbol);
     }
-    const json = await this.request(`${STOCK_BASE_URL}/${encodeURIComponent(providerSymbol)}/snapshot`);
+    const json = await this.request(`${STOCK_BASE_URL}/${encodeURIComponent(providerSymbol)}/snapshot?${STOCK_FEED_PARAM}`);
     return parseAlpacaSnapshot(json, mkrSymbol);
   }
 
@@ -89,7 +104,8 @@ export class AlpacaProvider implements MarketDataProvider {
       const json = await this.request(`${CRYPTO_BASE_URL}/bars?symbols=${encodeURIComponent(providerSymbol)}&timeframe=${alpacaTimeframe(timeframe)}&limit=${limit}`);
       return parseAlpacaCryptoBars(json, providerSymbol, mkrSymbol, timeframe);
     }
-    const json = await this.request(`${STOCK_BASE_URL}/${encodeURIComponent(providerSymbol)}/bars?timeframe=${alpacaTimeframe(timeframe)}&limit=${limit}`);
+    const start = encodeURIComponent(alpacaBarsStart(timeframe, limit));
+    const json = await this.request(`${STOCK_BASE_URL}/${encodeURIComponent(providerSymbol)}/bars?timeframe=${alpacaTimeframe(timeframe)}&limit=${limit}&start=${start}&${STOCK_FEED_PARAM}`);
     return parseAlpacaBars(json, mkrSymbol, timeframe);
   }
 
@@ -163,7 +179,7 @@ export class AlpacaProvider implements MarketDataProvider {
   async healthCheck(): Promise<{ healthy: boolean; latencyMs: number; error?: string }> {
     const start = Date.now();
     try {
-      await this.request(`${STOCK_BASE_URL}/AAPL/snapshot`, 4000);
+      await this.request(`${STOCK_BASE_URL}/AAPL/snapshot?${STOCK_FEED_PARAM}`, 4000);
       return { healthy: true, latencyMs: Date.now() - start };
     } catch (err) {
       return { healthy: false, latencyMs: Date.now() - start, error: (err as Error).message };

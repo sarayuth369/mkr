@@ -147,3 +147,41 @@ export function alpacaTimeframe(timeframe: MkrTimeframe): string {
   };
   return map[timeframe];
 }
+
+/**
+ * 2026-09-16 Alpaca Credential E2E Test task: live-confirmed root cause of
+ * every stock `/bars` request returning an empty array regardless of
+ * symbol - Alpaca's own docs (docs.alpaca.markets/reference/stockbars)
+ * state `start` defaults to "the beginning of the current day" when
+ * omitted. A `timeframe=1Day` request with no explicit `start` therefore
+ * asks for TODAY's own daily bar, which does not exist until the trading
+ * day closes - an honest, permanent "no results in this window" for every
+ * daily-candle request, not a symbol-specific or capability problem
+ * (crypto bars are unaffected - a different endpoint with its own,
+ * apparently more permissive, default). Computes an explicit `start` far
+ * enough back to actually contain `limit` bars for the given timeframe,
+ * generously buffered for market closures (weekends/holidays for daily+,
+ * ~6.5h/24h trading sessions for intraday) - never assumes every calendar
+ * unit produced a bar.
+ */
+export function alpacaBarsStart(timeframe: MkrTimeframe, limit: number): string {
+  const msPerUnit: Record<MkrTimeframe, number> = {
+    m1: 60_000,
+    m5: 5 * 60_000,
+    m15: 15 * 60_000,
+    h1: 60 * 60_000,
+    h4: 4 * 60 * 60_000,
+    d1: 24 * 60 * 60_000,
+    w1: 7 * 24 * 60 * 60_000,
+    mo1: 30 * 24 * 60 * 60_000,
+  };
+  // Daily/weekly/monthly bars only miss ~2/7 calendar days (weekends) plus
+  // a handful of holidays - 3x covers that comfortably. Intraday bars only
+  // occur during regular trading hours (~6.5 of 24h, further reduced by
+  // weekends) - a much larger multiplier is needed to guarantee `limit`
+  // bars actually fall inside the window.
+  const isIntraday = timeframe === 'm1' || timeframe === 'm5' || timeframe === 'm15' || timeframe === 'h1' || timeframe === 'h4';
+  const bufferMultiplier = isIntraday ? 12 : 3;
+  const windowMs = msPerUnit[timeframe] * limit * bufferMultiplier;
+  return new Date(Date.now() - windowMs).toISOString();
+}

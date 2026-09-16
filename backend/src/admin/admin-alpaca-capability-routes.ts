@@ -31,11 +31,15 @@ const CAPABILITY_TEST_SYMBOLS: { mkrSymbol: string; alpacaSymbol: string }[] = [
   { mkrSymbol: 'NVDA', alpacaSymbol: 'NVDA' },
   { mkrSymbol: 'QQQ', alpacaSymbol: 'QQQ' },
   { mkrSymbol: 'TSLA', alpacaSymbol: 'TSLA' },
-  // BTC/ETH - "if supported by current mapping" (task item 4): the D1
-  // catalog's own alpaca_symbol column already maps these (schema.sql) -
-  // included unconditionally here since that mapping already exists.
+  // BTC/ETH/SOL/XRP - "if supported by current mapping" (task item 4): the
+  // D1 catalog's own alpaca_symbol column already maps all four
+  // (schema.sql) - included unconditionally here since that mapping
+  // already exists. SOL/XRP added in the 2026-09-16 Alpaca Credential
+  // E2E Test task - the full required 9-symbol set.
   { mkrSymbol: 'BTC', alpacaSymbol: 'BTC/USD' },
   { mkrSymbol: 'ETH', alpacaSymbol: 'ETH/USD' },
+  { mkrSymbol: 'SOL', alpacaSymbol: 'SOL/USD' },
+  { mkrSymbol: 'XRP', alpacaSymbol: 'XRP/USD' },
 ];
 
 type CapabilityOutcome = 'works' | 'no_data' | 'capability' | 'auth' | 'rate_limit' | 'transient' | 'error';

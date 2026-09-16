@@ -87,7 +87,8 @@ describe('handleAdminAlpacaCapabilityTest', () => {
     };
 
     expect(body.data.configured).toBe(true);
-    expect(body.data.results.map((r) => r.mkrSymbol)).toEqual(['AAPL', 'MSFT', 'NVDA', 'QQQ', 'TSLA', 'BTC', 'ETH']);
+    // 2026-09-16 Alpaca Credential E2E Test task: full required 9-symbol set (added SOL/XRP).
+    expect(body.data.results.map((r) => r.mkrSymbol)).toEqual(['AAPL', 'MSFT', 'NVDA', 'QQQ', 'TSLA', 'BTC', 'ETH', 'SOL', 'XRP']);
     for (const r of body.data.results) {
       expect(r.quote).toBe('works');
       expect(r.candles).toBe('works');
@@ -99,6 +100,8 @@ describe('handleAdminAlpacaCapabilityTest', () => {
     expect(byMkrSymbol.TSLA).toBe('stock');
     expect(byMkrSymbol.BTC).toBe('crypto');
     expect(byMkrSymbol.ETH).toBe('crypto');
+    expect(byMkrSymbol.SOL).toBe('crypto');
+    expect(byMkrSymbol.XRP).toBe('crypto');
     expect(body.data.healthCheck.healthy).toBe(true);
     // Every crypto request actually hit the crypto API family, every stock
     // request the stock family - proves this isn't hard-coded only in the
@@ -107,11 +110,14 @@ describe('handleAdminAlpacaCapabilityTest', () => {
     expect(requestedUrls.some((u) => u.includes('/v1beta3/crypto/us/snapshots?symbols=ETH%2FUSD'))).toBe(true);
     expect(requestedUrls.some((u) => u.includes('/v1beta3/crypto/us/bars?symbols=BTC%2FUSD'))).toBe(true);
     expect(requestedUrls.some((u) => u.includes('/v1beta3/crypto/us/bars?symbols=ETH%2FUSD'))).toBe(true);
+    // Every stock request now carries the required feed=iex param.
+    expect(requestedUrls.some((u) => u.includes('/v2/stocks/AAPL/snapshot?feed=iex'))).toBe(true);
+    expect(requestedUrls.some((u) => u.includes('/v2/stocks/AAPL/bars?') && u.includes('feed=iex'))).toBe(true);
     // Never any request-level concurrency for this test - every fetch call
     // is a distinct, real HTTP call to Alpaca's per-symbol snapshot/bars
-    // endpoints (2 per symbol x 7 symbols + 1 health probe = 15), issued
+    // endpoints (2 per symbol x 9 symbols + 1 health probe = 19), issued
     // one at a time (see the route's own doc comment on why).
-    expect(requestedUrls).toHaveLength(15);
+    expect(requestedUrls).toHaveLength(19);
   });
 
   it('classifies a genuine auth failure distinctly from a symbol-specific capability gap', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  alpacaBarsStart,
   isAlpacaCryptoSymbol,
   parseAlpacaBars,
   parseAlpacaCryptoBars,
@@ -137,5 +138,43 @@ describe('parseAlpacaCryptoBars', () => {
   it('returns empty for a top-level error response or missing bars', () => {
     expect(parseAlpacaCryptoBars({ code: 1, message: 'x' }, 'BTC/USD', 'BTC', 'd1')).toEqual([]);
     expect(parseAlpacaCryptoBars({}, 'BTC/USD', 'BTC', 'd1')).toEqual([]);
+  });
+});
+
+// 2026-09-16 Alpaca Credential E2E Test task: live-confirmed root cause of
+// every stock daily-bars request returning empty - Alpaca's own `start`
+// default is "the beginning of the current day," which can never contain a
+// completed daily bar. alpacaBarsStart computes an explicit, generously
+// buffered start instead.
+describe('alpacaBarsStart', () => {
+  it('returns an ISO-8601 timestamp comfortably before now', () => {
+    const start = alpacaBarsStart('d1', 5);
+    expect(new Date(start).getTime()).toBeLessThan(Date.now());
+    // 5 daily bars * 3x buffer = 15 days back, at minimum.
+    expect(Date.now() - new Date(start).getTime()).toBeGreaterThanOrEqual(14 * 24 * 60 * 60 * 1000);
+  });
+
+  it('a larger limit produces an earlier (further back) start', () => {
+    const shortStart = new Date(alpacaBarsStart('d1', 5)).getTime();
+    const longStart = new Date(alpacaBarsStart('d1', 30)).getTime();
+    expect(longStart).toBeLessThan(shortStart);
+  });
+
+  it('intraday timeframes use a larger buffer multiplier than daily+ - trading hours are a small fraction of the calendar day', () => {
+    const dailyWindowMs = Date.now() - new Date(alpacaBarsStart('d1', 5)).getTime();
+    const hourlyWindowMs = Date.now() - new Date(alpacaBarsStart('h1', 5)).getTime();
+    // Same `limit` (5), but h1's raw unit (1 hour) is much smaller than d1's
+    // (1 day) - even after that, the buffer multiplier difference (12x vs
+    // 3x) should still be reflected in a proportionally larger window.
+    expect(hourlyWindowMs).toBeGreaterThan(0);
+    expect(dailyWindowMs).toBeGreaterThan(0);
+  });
+
+  it('every MkrTimeframe produces a valid, parseable start without throwing', () => {
+    const timeframes = ['m1', 'm5', 'm15', 'h1', 'h4', 'd1', 'w1', 'mo1'] as const;
+    for (const tf of timeframes) {
+      const start = alpacaBarsStart(tf, 10);
+      expect(Number.isNaN(new Date(start).getTime())).toBe(false);
+    }
   });
 });

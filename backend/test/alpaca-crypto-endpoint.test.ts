@@ -43,7 +43,10 @@ describe('AlpacaProvider - stock vs crypto endpoint selection', () => {
 
     await provider.getQuote('AAPL', 'AAPL');
 
-    expect(requestedUrl).toBe('https://data.alpaca.markets/v2/stocks/AAPL/snapshot');
+    // 2026-09-16 Alpaca Credential E2E Test task: `feed=iex` is required -
+    // live-confirmed against the real account this task provisioned (see
+    // alpaca-provider.ts's own doc comment for the full story).
+    expect(requestedUrl).toBe('https://data.alpaca.markets/v2/stocks/AAPL/snapshot?feed=iex');
   });
 
   it('getQuote routes a crypto symbol through /v1beta3/crypto/us/snapshots?symbols=', async () => {
@@ -78,6 +81,12 @@ describe('AlpacaProvider - stock vs crypto endpoint selection', () => {
     await provider.getCandles('AAPL', 'AAPL', 'd1', 5);
 
     expect(requestedUrl).toContain('https://data.alpaca.markets/v2/stocks/AAPL/bars');
+    // 2026-09-16 Alpaca Credential E2E Test task: an explicit `start` is
+    // required - live-confirmed that Alpaca's own default ("beginning of
+    // the current day") makes every daily-bars request return empty
+    // otherwise (see alpacaBarsStart's own doc comment for the full story).
+    expect(requestedUrl).toContain('start=');
+    expect(requestedUrl).toContain('feed=iex');
   });
 
   it('getCandles routes a crypto symbol through /v1beta3/crypto/us/bars?symbols=', async () => {
@@ -110,7 +119,7 @@ describe('AlpacaProvider - stock vs crypto endpoint selection', () => {
 
     await provider.healthCheck();
 
-    expect(requestedUrl).toBe('https://data.alpaca.markets/v2/stocks/AAPL/snapshot');
+    expect(requestedUrl).toBe('https://data.alpaca.markets/v2/stocks/AAPL/snapshot?feed=iex');
   });
 });
 
