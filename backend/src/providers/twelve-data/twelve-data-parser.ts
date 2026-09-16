@@ -94,8 +94,33 @@ export function parseTwelveDataQuote(json: Record<string, unknown>, mkrSymbol: s
  * response) - NOT an array, and NOT the same shape as a single-symbol
  * request. [providerToMkr] maps each requested provider symbol back to its
  * MKR symbol so the result can be keyed the way the rest of the app expects.
- * A symbol Twelve Data omitted or returned an error for maps to `null`,
- * never fabricated.
+ * A symbol Twelve Data returned an explicit entry for (a real quote object,
+ * or a per-symbol error object) maps to a parsed quote or `null` - never
+ * fabricated.
+ *
+ * 2026-09-16 Closed Testing readiness task (root cause, provider capacity):
+ * a symbol whose key is entirely ABSENT from `json` is NOT the same thing
+ * as a confirmed "no data" answer - see TwelveDataProvider.getBatchQuotes's
+ * own doc comment: Twelve Data Free's comma-separated endpoint silently
+ * drops symbols beyond an undocumented per-request/per-minute capacity
+ * limit, rather than including an explicit null/error entry for them.
+ * Confirmed live (2026-09-16): a 3-symbol single-chunk request came back
+ * with only 1 symbol present in the response object at all - the other 2
+ * were not merely empty, they were bytes-absent from the JSON, immediately
+ * after an unrelated request had just used up the provider's per-minute
+ * headroom. Previously this function mapped an absent key to `null`
+ * identically to an explicit error/empty entry, so market-routes.ts's
+ * handleQuotes cached it as CONFIRMED no-data for the full quote TTL and
+ * never reported it as an error - a transient capacity artifact became a
+ * false, silently-persisted "this symbol has no data" answer, which is
+ * exactly the user-visible "opens with no market content" symptom this
+ * task traces to its root. An absent key is now left OUT of the returned
+ * record entirely, reusing the EXACT SAME "symbol not in result" contract
+ * TwelveDataProvider.getBatchQuotes already uses for a whole-chunk network/
+ * rate-limit failure (see its own catch block) - market-routes.ts already
+ * treats that case correctly: reported as a PROVIDER_UNAVAILABLE error, and
+ * deliberately never cached, so the very next request gets a fresh chance
+ * once capacity recovers instead of being poisoned for the TTL window.
  */
 export function parseTwelveDataBatchQuotes(
   json: Record<string, unknown>,
@@ -103,6 +128,7 @@ export function parseTwelveDataBatchQuotes(
 ): Record<string, NormalizedQuote | null> {
   const result: Record<string, NormalizedQuote | null> = {};
   for (const [providerSymbol, mkrSymbol] of Object.entries(providerToMkr)) {
+    if (!(providerSymbol in json)) continue; // absent key - ambiguous/capacity-dropped, never a confirmed answer - see doc comment above
     const entry = json[providerSymbol];
     result[mkrSymbol] = entry && typeof entry === 'object' ? parseTwelveDataQuote(entry as Record<string, unknown>, mkrSymbol) : null;
   }

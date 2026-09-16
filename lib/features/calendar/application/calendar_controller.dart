@@ -32,7 +32,18 @@ class CalendarController extends ChangeNotifier {
   String? _countryFilter;
   String? get countryFilter => _countryFilter;
 
-  static const countries = ['US', 'EU', 'UK', 'Japan', 'China', 'Thailand'];
+  /// 2026-09-16 Closed Testing readiness task (root cause): keyed by the
+  /// exact country CODE the real backend actually returns in
+  /// [EconomicEvent.country] (curated_provider.ts only ever sources US/EU/
+  /// UK/JP - Fed/BLS/BEA, ECB, BoE, BoJ - see that file's own header
+  /// comment), not a display word. The filter previously listed 'Japan'
+  /// (never matches the real 'JP' code - always empty against real data)
+  /// plus 'China'/'Thailand' (no data source for either exists AT ALL, real
+  /// or planned) - selecting either silently showed "no events" forever,
+  /// which reads as "nothing scheduled" rather than the honest "MKR doesn't
+  /// cover this market yet". The filter must never offer a selection the
+  /// real data pipeline can never satisfy.
+  static const countries = {'US': 'US', 'EU': 'EU', 'UK': 'UK', 'JP': 'Japan'};
 
   Future<void> refresh() async {
     _state = const ApiState.loading();

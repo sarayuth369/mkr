@@ -155,6 +155,35 @@ describe('CalendarStore.query - API filters', () => {
     const rows = await store.query({ country: 'JP' });
     expect(rows).toEqual([]);
   });
+
+  describe('2026-09-16 Closed Testing readiness task (root cause) - fromInstant/toInstant exact-instant range', () => {
+    it('filters by an exact [fromInstant, toInstant) range, not reinterpreted as a UTC calendar day', async () => {
+      const store = await seeded();
+      // a:1 is exactly at Date.UTC(2026,8,16) (midnight). A range starting
+      // one millisecond later must exclude it - proving this is an exact
+      // instant comparison, not a day-bucket reinterpretation.
+      const rows = await store.query({ fromInstant: new Date(Date.UTC(2026, 8, 16, 0, 0, 0, 1)).toISOString(), toInstant: new Date(Date.UTC(2026, 8, 18)).toISOString() });
+      expect(rows.map((r) => r.id)).toEqual(['a:3']);
+    });
+
+    it('an instant range can span a device-local day that straddles two UTC calendar days - the exact scenario date/from/to cannot express', async () => {
+      const store = await seeded();
+      // Simulates a UTC+7 device's local day containing eventTimeUtc for
+      // a:1 (Date.UTC(2026,8,16) exactly) by starting the instant range 7
+      // hours into 2026-09-15 UTC - a bare `date: '2026-09-16'` filter
+      // would miss this event entirely (see the sibling 'filters by an
+      // exact date (UTC day bounds)' test above, which only matches full
+      // UTC-day-aligned events).
+      const rows = await store.query({ fromInstant: new Date(Date.UTC(2026, 8, 15, 17, 0, 0)).toISOString(), toInstant: new Date(Date.UTC(2026, 8, 16, 17, 0, 0)).toISOString() });
+      expect(rows.map((r) => r.id)).toEqual(['a:1']);
+    });
+
+    it('fromInstant/toInstant take precedence over date/from/to when both are somehow supplied', async () => {
+      const store = await seeded();
+      const rows = await store.query({ date: '2026-10-29', fromInstant: new Date(Date.UTC(2026, 8, 16)).toISOString(), toInstant: new Date(Date.UTC(2026, 8, 17)).toISOString() });
+      expect(rows.map((r) => r.id)).toEqual(['a:1']);
+    });
+  });
 });
 
 describe('CalendarStore source state - failure preserves known data', () => {

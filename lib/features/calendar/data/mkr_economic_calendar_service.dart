@@ -79,26 +79,48 @@ class MkrEconomicCalendarService implements EconomicCalendarService {
         _ => CalendarFreshness.offline,
       };
 
-  String _pathFor(CalendarRange? range) => switch (range) {
-        CalendarRange.today => '/api/mkr/calendar/today',
-        CalendarRange.week || null => '/api/mkr/calendar/week',
-        // No dedicated /tomorrow route on the backend (only
-        // events/today/week - task spec) - the generic filtered /events
-        // route with an explicit date covers it (task: "Support sensible
-        // filters: date, from, to, ...").
-        CalendarRange.tomorrow => '/api/mkr/calendar/events?date=${_tomorrowDate()}',
-      };
-
-  String _tomorrowDate() {
-    final tomorrow = DateTime.now().toUtc().add(const Duration(days: 1));
-    return '${tomorrow.year.toString().padLeft(4, '0')}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
+  /// 2026-09-16 Closed Testing readiness task (root cause): Today/Tomorrow/
+  /// This Week must bucket by the DEVICE's actual local calendar day/week,
+  /// never a UTC calendar day - confirmed live-equivalent (via direct code
+  /// reading of the backend's `/today`/`/week` routes, both explicitly
+  /// UTC-day-based) that a Bangkok (UTC+7) device between local 00:00-06:59
+  /// would see "Today" still showing the PRIOR UTC day - today's own
+  /// events look like they're missing. The backend's `/events` route now
+  /// accepts `fromInstant`/`toInstant` (exact UTC instants, not a bare
+  /// date reinterpreted as a UTC day - see CalendarEventFilters' doc
+  /// comment in backend/src/calendar/types.ts) specifically so a client
+  /// that knows its own local day boundary can express it exactly. This
+  /// replaces the old reliance on `/today`/`/week` (server-computed UTC
+  /// day/week, ignores the device entirely) and the old `/events?date=`
+  /// call for "tomorrow" (previously also UTC-based via `.toUtc()`).
+  String _instantRangeQuery(CalendarRange? range) {
+    final now = DateTime.now(); // device-local
+    late DateTime localFrom;
+    late DateTime localToExclusive;
+    switch (range) {
+      case CalendarRange.today:
+        localFrom = DateTime(now.year, now.month, now.day);
+        localToExclusive = localFrom.add(const Duration(days: 1));
+      case CalendarRange.tomorrow:
+        localFrom = DateTime(now.year, now.month, now.day).add(const Duration(days: 1));
+        localToExclusive = localFrom.add(const Duration(days: 1));
+      case CalendarRange.week:
+      case null:
+        // Monday-Sunday, device-local - DateTime.weekday is 1=Mon..7=Sun.
+        final monday = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+        localFrom = monday;
+        localToExclusive = monday.add(const Duration(days: 7));
+    }
+    final fromInstant = Uri.encodeQueryComponent(localFrom.toUtc().toIso8601String());
+    final toInstant = Uri.encodeQueryComponent(localToExclusive.toUtc().toIso8601String());
+    return '/api/mkr/calendar/events?fromInstant=$fromInstant&toInstant=$toInstant';
   }
 
   @override
   Future<CalendarQueryResult> getEvents({CalendarRange? range}) async {
     final http.Response response;
     try {
-      response = await _http.get(_uri(_pathFor(range)));
+      response = await _http.get(_uri(_instantRangeQuery(range)));
     } catch (_) {
       throw Exception('Could not reach the calendar service. Check your connection and try again.');
     }

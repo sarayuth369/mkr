@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -37,7 +39,37 @@ Future<void> _initializeFirebase() async {
   }
 }
 
+/// 2026-09-16 Closed Testing readiness task (material blocker gap): before
+/// this, no global error handler existed anywhere in the app - an uncaught
+/// exception in a Future/async callback outside a widget's own build method
+/// (e.g. a fire-and-forget call not wrapped in try/catch somewhere deep in
+/// the app) crashed the isolate with zero diagnostics, rather than
+/// degrading gracefully the way every controller's own try/catch already
+/// does for its own known async work. This does not add a crash-reporting
+/// SDK (a new paid/infra dependency, out of this task's scope and not
+/// something to introduce silently) - it only guarantees an uncaught error
+/// is logged instead of taking the whole app down, matching the same
+/// "degrade, don't crash" discipline already used throughout this codebase
+/// (e.g. HomeController.refresh's per-phase try/catch).
+void _installGlobalErrorHandlers() {
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('[MKR] Unhandled Flutter error: ${details.exceptionAsString()}');
+  };
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    debugPrint('[MKR] Unhandled platform/async error: $error');
+    return true; // handled - prevents this from crashing the isolate
+  };
+}
+
 Future<void> main() async {
+  _installGlobalErrorHandlers();
+  runZonedGuarded(_mainInGuardedZone, (error, stack) {
+    debugPrint('[MKR] Unhandled zone error: $error');
+  });
+}
+
+Future<void> _mainInGuardedZone() async {
   WidgetsFlutterBinding.ensureInitialized();
   final store = await AppLocalStore.create();
   await _initializeFirebase();

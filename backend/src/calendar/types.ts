@@ -69,6 +69,22 @@ export interface CalendarEventFilters {
   date?: string;
   from?: string; // "YYYY-MM-DD", inclusive
   to?: string; // "YYYY-MM-DD", inclusive
+  /**
+   * 2026-09-16 Closed Testing readiness task (root cause): exact UTC
+   * instants, ISO-8601 with time (e.g. "2026-09-15T17:00:00.000Z") - an
+   * inclusive/exclusive `[fromInstant, toInstant)` range, distinct from
+   * `date`/`from`/`to`'s UTC-CALENDAR-DAY semantics. A client that knows
+   * its own device-local day/week boundary (which almost never lines up
+   * with a UTC calendar day - see store.ts's `query()`) converts that
+   * local boundary to UTC instants itself and sends the exact range here,
+   * instead of relying on this backend to guess/reinterpret a bare date as
+   * a UTC day. Takes precedence over `date`/`from`/`to` when present (see
+   * `query()`). `date`/`from`/`to` are unchanged for every existing caller
+   * that genuinely wants a UTC-day bucket (e.g. `/today`/`/week`'s own
+   * UTC-day convenience routes, admin tooling).
+   */
+  fromInstant?: string;
+  toInstant?: string;
   country?: string;
   currency?: string;
   importance?: EventImportance;

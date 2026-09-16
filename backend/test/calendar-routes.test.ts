@@ -153,6 +153,38 @@ describe('handleCalendarEvents / handleCalendarToday / handleCalendarWeek', () =
     for (const item of body.data.items) expect(item.eventTimeLocal).not.toBe('');
   });
 
+  it('rejects a malformed fromInstant/toInstant filter rather than silently ignoring it', async () => {
+    const { db } = createFakeCalendarD1();
+    const env = makeEnv(db);
+    await expect(handleCalendarEvents(new Request('https://x/api/mkr/calendar/events?fromInstant=not-an-instant'), env)).rejects.toMatchObject({ code: 'INVALID_PARAMETER' });
+  });
+
+  it('2026-09-16 Closed Testing readiness task (root cause): fromInstant/toInstant round-trips through the route into an exact-instant query, distinct from date/from/to', async () => {
+    const { db } = createFakeCalendarD1();
+    const env = makeEnv(db);
+
+    // A wide-open instant range must return the same self-healed curated
+    // events an unfiltered /events call does.
+    const unfiltered = await handleCalendarEvents(new Request('https://x/api/mkr/calendar/events'), env);
+    const unfilteredBody = (await unfiltered.json()) as { data: { items: { id: string }[] } };
+
+    const wideOpen = await handleCalendarEvents(
+      new Request(`https://x/api/mkr/calendar/events?fromInstant=${encodeURIComponent(new Date(Date.UTC(2000, 0, 1)).toISOString())}&toInstant=${encodeURIComponent(new Date(Date.UTC(2100, 0, 1)).toISOString())}`),
+      env,
+    );
+    const wideOpenBody = (await wideOpen.json()) as { data: { items: { id: string }[] } };
+    expect(wideOpenBody.data.items.map((i) => i.id).sort()).toEqual(unfilteredBody.data.items.map((i) => i.id).sort());
+    expect(wideOpenBody.data.items.length).toBeGreaterThan(0);
+
+    // A far-future instant range genuinely matches nothing.
+    const farFuture = await handleCalendarEvents(
+      new Request(`https://x/api/mkr/calendar/events?fromInstant=${encodeURIComponent(new Date(Date.UTC(2100, 0, 1)).toISOString())}&toInstant=${encodeURIComponent(new Date(Date.UTC(2101, 0, 1)).toISOString())}`),
+      env,
+    );
+    const farFutureBody = (await farFuture.json()) as { data: { items: unknown[] } };
+    expect(farFutureBody.data.items).toEqual([]);
+  });
+
   it('missing previous/consensus/actual render as null (Flutter maps this to "—", never fabricated)', async () => {
     const { db } = createFakeCalendarD1();
     const env = makeEnv(db);

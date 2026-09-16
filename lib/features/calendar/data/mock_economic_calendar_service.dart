@@ -70,7 +70,14 @@ class MockEconomicCalendarService implements EconomicCalendarService {
       EconomicEvent(
         id: 'e5',
         dateTime: at(1, 7, 50),
-        country: 'Japan',
+        // 2026-09-16 Closed Testing readiness task: the real backend's JP
+        // events use the bare code 'JP' (curated_provider.ts), never the
+        // display word 'Japan' - matched here so the demo country filter
+        // (CalendarController.countries) behaves the same way it does
+        // against real data, and so this card's country display matches
+        // the bare-code style every other demo event here already uses
+        // (US/EU/UK).
+        country: 'JP',
         currency: 'JPY',
         category: 'monetary_policy',
         title: 'BoJ Policy Statement',

@@ -75,12 +75,27 @@ function validDateOrUndefined(raw: string | null, paramName: string): string | u
   return raw;
 }
 
+/**
+ * 2026-09-16 Closed Testing readiness task (root cause): a full ISO-8601
+ * instant (unlike `date`/`from`/`to`, which are bare calendar dates
+ * reinterpreted as UTC-day bounds - see CalendarEventFilters' doc comment).
+ */
+function validInstantOrUndefined(raw: string | null, paramName: string): string | undefined {
+  if (!raw) return undefined;
+  if (Number.isNaN(Date.parse(raw))) {
+    throw new ApiError('INVALID_PARAMETER', `${paramName} must be a valid ISO-8601 datetime`);
+  }
+  return raw;
+}
+
 function filtersFromUrl(url: URL): CalendarEventFilters {
   const params = url.searchParams;
   return {
     date: validDateOrUndefined(params.get('date'), 'date'),
     from: validDateOrUndefined(params.get('from'), 'from'),
     to: validDateOrUndefined(params.get('to'), 'to'),
+    fromInstant: validInstantOrUndefined(params.get('fromInstant'), 'fromInstant'),
+    toInstant: validInstantOrUndefined(params.get('toInstant'), 'toInstant'),
     country: params.get('country')?.trim().toUpperCase() || undefined,
     currency: params.get('currency')?.trim().toUpperCase() || undefined,
     importance: parseImportanceParam(params.get('importance')),
@@ -88,7 +103,7 @@ function filtersFromUrl(url: URL): CalendarEventFilters {
   };
 }
 
-/** GET /api/mkr/calendar/events - filters: date, from, to, country, currency, importance, category. */
+/** GET /api/mkr/calendar/events - filters: date, from, to, fromInstant, toInstant, country, currency, importance, category. */
 export async function handleCalendarEvents(request: Request, env: Env): Promise<Response> {
   await requireCalendarEnabled(env);
   const filters = filtersFromUrl(new URL(request.url));
@@ -100,7 +115,15 @@ export async function handleCalendarEvents(request: Request, env: Env): Promise<
   return jsonResponse(payload);
 }
 
-/** GET /api/mkr/calendar/today - UTC calendar day. */
+/**
+ * GET /api/mkr/calendar/today - UTC calendar day convenience route (no
+ * request params consulted). 2026-09-16 Closed Testing readiness task: the
+ * Flutter client no longer calls this for its "Today" filter (a UTC day
+ * does not line up with a device-local day for most users - see
+ * CalendarEventFilters' `fromInstant`/`toInstant` doc comment) and instead
+ * calls `/events` with an explicit local-day-derived instant range. Left
+ * unchanged here for any other caller that genuinely wants the UTC day.
+ */
 export async function handleCalendarToday(_request: Request, env: Env): Promise<Response> {
   await requireCalendarEnabled(env);
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -108,7 +131,13 @@ export async function handleCalendarToday(_request: Request, env: Env): Promise<
   return jsonResponse(payload);
 }
 
-/** GET /api/mkr/calendar/week - the current ISO-8601 week (UTC-based, Mon-Sun), matching `calendar:v1:week:YYYY-Www`. */
+/**
+ * GET /api/mkr/calendar/week - the current ISO-8601 week (UTC-based,
+ * Mon-Sun), matching `calendar:v1:week:YYYY-Www`. 2026-09-16 Closed Testing
+ * readiness task: same caveat as `/today` above - the Flutter client now
+ * computes its own device-local Mon-Sun week and calls `/events` with an
+ * explicit instant range instead.
+ */
 export async function handleCalendarWeek(_request: Request, env: Env): Promise<Response> {
   await requireCalendarEnabled(env);
   const now = new Date();

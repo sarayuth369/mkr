@@ -124,7 +124,21 @@ export class CalendarStore {
     const clauses: string[] = [];
     const args: unknown[] = [];
 
-    if (filters.date) {
+    if (filters.fromInstant || filters.toInstant) {
+      // 2026-09-16 Closed Testing readiness task (root cause): exact
+      // caller-supplied UTC instants - takes precedence over date/from/to's
+      // UTC-CALENDAR-DAY reinterpretation (see CalendarEventFilters' doc
+      // comment). Used by the Flutter client so "Today"/"Tomorrow"/"This
+      // Week" bucket by the DEVICE's actual local day/week, not UTC's.
+      if (filters.fromInstant) {
+        clauses.push('event_time_utc >= ?');
+        args.push(Date.parse(filters.fromInstant));
+      }
+      if (filters.toInstant) {
+        clauses.push('event_time_utc < ?');
+        args.push(Date.parse(filters.toInstant));
+      }
+    } else if (filters.date) {
       const from = Date.parse(`${filters.date}T00:00:00Z`);
       const to = from + 24 * 60 * 60 * 1000;
       clauses.push('event_time_utc >= ? AND event_time_utc < ?');

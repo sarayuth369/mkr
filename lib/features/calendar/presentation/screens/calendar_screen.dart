@@ -57,7 +57,7 @@ class CalendarScreen extends StatelessWidget {
                       selected: controller.countryFilter,
                       options: [
                         MapEntry(l10n.filterAll, null),
-                        for (final country in CalendarController.countries) MapEntry(country, country),
+                        for (final entry in CalendarController.countries.entries) MapEntry(entry.value, entry.key),
                       ],
                       onSelected: controller.setCountryFilter,
                     ),

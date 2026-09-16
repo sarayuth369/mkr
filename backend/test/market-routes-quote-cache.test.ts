@@ -325,16 +325,41 @@ describe('handleQuote / handleQuotes - cache correctness (Task 4)', () => {
       expect(fetchSpy.mock.calls.length).toBeGreaterThan(callsAfterFirstRequest); // genuinely retried, not served from cache
     });
 
-    it('a symbol the provider explicitly resolves to no data IS still cached (confirmed no-data is not a transient failure)', async () => {
-      const fetchSpy = fetchStub({ AAPL: twelveDataQuote(150) }); // MSFT absent from the fixture -> provider responds, just with no MSFT entry
+    it('a symbol the provider EXPLICITLY returns a per-symbol error entry for IS still cached (confirmed no-data is not a transient failure)', async () => {
+      // MSFT IS present in the response object, but as Twelve Data's own
+      // per-symbol error shape - a genuine, explicit "no data" answer, not
+      // an absent key - see the 2026-09-16 doc comment on
+      // parseTwelveDataBatchQuotes for the distinction this test exists to
+      // preserve.
+      const fetchSpy = vi.fn(async () =>
+        new Response(JSON.stringify({ AAPL: twelveDataQuote(150), MSFT: { status: 'error', code: 400, message: 'symbol not found' } }), { status: 200 }),
+      );
       vi.stubGlobal('fetch', fetchSpy);
       const env = makeEnv();
 
-      await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=AAPL,MSFT'), env, 'r1');
+      const response = await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=AAPL,MSFT'), env, 'r1');
+      const body = (await response.json()) as { data: { items: { symbol: string }[]; errors: { symbol: string; code: string }[] } };
       const cachedMsft = await env.MKR_CACHE.get('quote:v2:MSFT', 'json');
 
       expect(cachedMsft).toEqual({ v: null }); // confirmed no-data IS cached - unchanged, correct behavior
+      expect(body.data.items).toEqual([expect.objectContaining({ symbol: 'AAPL' })]);
+      expect(body.data.errors).toEqual([]); // an explicit provider "no data" answer is NOT reported as an error
       expect(fetchSpy).toHaveBeenCalledTimes(1); // the single successful chunk covering both symbols
+    });
+
+    it('2026-09-16 Closed Testing readiness (root cause, provider capacity): a symbol entirely ABSENT from the response object (never an explicit entry) is reported as an error and NOT cached, never treated as confirmed no-data', async () => {
+      const fetchSpy = fetchStub({ AAPL: twelveDataQuote(150) }); // MSFT has NO key at all in the response - the real, live-confirmed Twelve Data Free capacity-drop signature
+      vi.stubGlobal('fetch', fetchSpy);
+      const env = makeEnv();
+
+      const response = await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=AAPL,MSFT'), env, 'r1');
+      const body = (await response.json()) as { data: { items: { symbol: string }[]; errors: { symbol: string; code: string }[] } };
+      const cachedMsft = await env.MKR_CACHE.get('quote:v2:MSFT', 'json');
+
+      expect(body.data.items).toEqual([expect.objectContaining({ symbol: 'AAPL' })]);
+      expect(body.data.errors).toEqual([{ symbol: 'MSFT', code: 'PROVIDER_UNAVAILABLE', message: expect.any(String) }]);
+      expect(cachedMsft).toBeNull(); // never poisoned as a false "confirmed no-data" for the TTL window - retried on the very next request instead
+      expect(fetchSpy).toHaveBeenCalledTimes(1); // the single successful chunk covering both symbols - the omission is within an otherwise-successful chunk, not a chunk-level failure
     });
   });
 });

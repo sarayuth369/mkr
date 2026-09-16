@@ -702,7 +702,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get privacyPolicyBody =>
-      'MKR Privacy Notice\n\nMKR stores your preferences — theme, language, watchlist, alerts and portfolio entries — locally on your device. No account is required to use the app\'s core features.\n\nWhen account sync and cloud services are introduced, data will be processed through a secure backend, and this notice will be updated accordingly before that feature is enabled.';
+      'MKR Privacy Notice\n\nMKR stores your preferences — theme, language, watchlist, alerts and portfolio entries — locally on your device by default. No account is required to use the app\'s core features; you may continue as a guest at any time.\n\nIf you choose to create an account (email and password), that email address and your alerts/watchlist are stored by our backend provider (Supabase) so they can sync across your devices. If you allow notifications, a device push token is registered with Firebase Cloud Messaging so MKR can deliver price and calendar alerts to this device; this token identifies your device, not you personally.\n\nMKR does not require payment information for any feature currently available in this build. A full, hosted privacy policy will be published before this app is publicly available, covering any additional data use introduced after this notice.';
 
   @override
   String get termsOfServiceBody =>

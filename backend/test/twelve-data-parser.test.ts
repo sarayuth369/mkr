@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isTwelveDataRateLimited,
   isTwelveDataSymbolError,
+  parseTwelveDataBatchQuotes,
   parseTwelveDataCandles,
   parseTwelveDataMarketStatus,
   parseTwelveDataQuote,
@@ -140,6 +141,39 @@ describe('parseTwelveDataCandles', () => {
   it('returns empty when values is missing or not a list', () => {
     expect(parseTwelveDataCandles({}, 'AAPL', 'd1')).toEqual([]);
     expect(parseTwelveDataCandles({ values: 'oops' }, 'AAPL', 'd1')).toEqual([]);
+  });
+});
+
+describe('parseTwelveDataBatchQuotes - 2026-09-16 Closed Testing readiness (root cause, provider capacity)', () => {
+  it('parses a real entry for every requested symbol present in the response', () => {
+    const result = parseTwelveDataBatchQuotes({ AAPL: { close: '150' }, MSFT: { close: '300' } }, { AAPL: 'AAPL', MSFT: 'MSFT' });
+    expect(result.AAPL?.price).toBe(150);
+    expect(result.MSFT?.price).toBe(300);
+  });
+
+  it('maps an explicit per-symbol error entry to null - a confirmed answer, still present in the result', () => {
+    const result = parseTwelveDataBatchQuotes({ AAPL: { status: 'error', code: 400, message: 'symbol not found' } }, { AAPL: 'AAPL' });
+    expect('AAPL' in result).toBe(true);
+    expect(result.AAPL).toBeNull();
+  });
+
+  it('maps an entry with no usable price to null - a confirmed answer, still present in the result', () => {
+    const result = parseTwelveDataBatchQuotes({ AAPL: { symbol: 'AAPL' } }, { AAPL: 'AAPL' });
+    expect('AAPL' in result).toBe(true);
+    expect(result.AAPL).toBeNull();
+  });
+
+  it('a symbol entirely absent from the response object is left OUT of the result - never mapped to null, never a confirmed answer', () => {
+    // The live-confirmed Twelve Data Free capacity-drop signature: MSFT was
+    // requested but its key never appears in the response at all.
+    const result = parseTwelveDataBatchQuotes({ AAPL: { close: '150' } }, { AAPL: 'AAPL', MSFT: 'MSFT' });
+    expect('AAPL' in result).toBe(true);
+    expect('MSFT' in result).toBe(false);
+  });
+
+  it('every requested symbol absent from a totally empty response object is left out entirely, not mapped to null', () => {
+    const result = parseTwelveDataBatchQuotes({}, { AAPL: 'AAPL', MSFT: 'MSFT' });
+    expect(Object.keys(result)).toEqual([]);
   });
 });
 

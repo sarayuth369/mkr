@@ -1,0 +1,18 @@
+# 2026-09-16 Closed Testing readiness task.
+#
+# Copy this file to android/key.properties (same directory) and fill in
+# real values before running `flutter build appbundle --release` for Play
+# Store submission. android/key.properties is gitignored - never commit it
+# or the .jks/.keystore file it points to.
+#
+# Generate a real release keystore first (keep it and these passwords
+# somewhere safe and backed up - losing them permanently blocks future
+# updates to an already-published app):
+#   keytool -genkey -v -keystore mkr-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias mkr
+#
+# storeFile is resolved relative to android/app/ - an absolute path also
+# works.
+storePassword=REPLACE_WITH_YOUR_KEYSTORE_PASSWORD
+keyPassword=REPLACE_WITH_YOUR_KEY_PASSWORD
+keyAlias=mkr
+storeFile=../mkr-release.jks

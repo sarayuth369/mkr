@@ -53,7 +53,16 @@ void main() {
       expect(service.isMock, isFalse);
     });
 
-    test('getEvents() with no range calls /api/mkr/calendar/week (the broadest useful default)', () async {
+    // 2026-09-16 Closed Testing readiness task (root cause): Today/Tomorrow/
+    // Week must bucket by the DEVICE's local calendar day/week, never a UTC
+    // day the old /today, /week, and /events?date= calls silently assumed -
+    // see mkr_economic_calendar_service.dart's _instantRangeQuery doc
+    // comment. `DateTime.now()` isn't injectable here, so these assert the
+    // STRUCTURE of the resulting instant range (exact duration, local-
+    // midnight alignment) rather than a fixed clock value.
+    DateTime parseInstantParam(Uri uri, String name) => DateTime.parse(uri.queryParameters[name]!);
+
+    test('getEvents() with no range calls /events with a fromInstant/toInstant spanning the device-local Mon-Sun week', () async {
       Uri? calledUri;
       final client = MockClient((request) async {
         calledUri = request.url;
@@ -63,10 +72,16 @@ void main() {
 
       await service.getEvents();
 
-      expect(calledUri.toString(), 'https://backend.example.com/api/mkr/calendar/week');
+      expect(calledUri!.path, '/api/mkr/calendar/events');
+      final from = parseInstantParam(calledUri!, 'fromInstant').toLocal();
+      final to = parseInstantParam(calledUri!, 'toInstant').toLocal();
+      expect(from.weekday, DateTime.monday);
+      expect(from.hour, 0);
+      expect(from.minute, 0);
+      expect(to.difference(from), const Duration(days: 7));
     });
 
-    test('CalendarRange.today calls /api/mkr/calendar/today', () async {
+    test('CalendarRange.today calls /events with a fromInstant/toInstant spanning exactly the device-local today', () async {
       Uri? calledUri;
       final client = MockClient((request) async {
         calledUri = request.url;
@@ -76,10 +91,19 @@ void main() {
 
       await service.getEvents(range: CalendarRange.today);
 
-      expect(calledUri.toString(), 'https://backend.example.com/api/mkr/calendar/today');
+      expect(calledUri!.path, '/api/mkr/calendar/events');
+      final from = parseInstantParam(calledUri!, 'fromInstant').toLocal();
+      final to = parseInstantParam(calledUri!, 'toInstant').toLocal();
+      final now = DateTime.now();
+      expect(from.year, now.year);
+      expect(from.month, now.month);
+      expect(from.day, now.day);
+      expect(from.hour, 0);
+      expect(from.minute, 0);
+      expect(to.difference(from), const Duration(days: 1));
     });
 
-    test('CalendarRange.tomorrow calls the filtered /events route with tomorrow\'s date - no dedicated backend route needed', () async {
+    test('CalendarRange.tomorrow calls /events with a fromInstant/toInstant spanning exactly the device-local tomorrow', () async {
       Uri? calledUri;
       final client = MockClient((request) async {
         calledUri = request.url;
@@ -89,7 +113,16 @@ void main() {
 
       await service.getEvents(range: CalendarRange.tomorrow);
 
-      expect(calledUri.toString(), startsWith('https://backend.example.com/api/mkr/calendar/events?date='));
+      expect(calledUri!.path, '/api/mkr/calendar/events');
+      final from = parseInstantParam(calledUri!, 'fromInstant').toLocal();
+      final to = parseInstantParam(calledUri!, 'toInstant').toLocal();
+      final expectedTomorrow = DateTime.now().add(const Duration(days: 1));
+      expect(from.year, expectedTomorrow.year);
+      expect(from.month, expectedTomorrow.month);
+      expect(from.day, expectedTomorrow.day);
+      expect(from.hour, 0);
+      expect(from.minute, 0);
+      expect(to.difference(from), const Duration(days: 1));
     });
 
     test('maps a well-formed item to EconomicEvent, including numeric+unit -> display-string previous/forecast', () async {
