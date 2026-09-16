@@ -6,7 +6,7 @@ TASK: 2026-09-16 MKR Hybrid Provider Architecture (Twelve Data + Alpaca)
 TITLE: Implement per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_HYBRID_PROVIDER_ARCHITECTURE_TASK.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (see next commit on this branch after this file - recorded at push time)
+COMMIT: 8142dff
 BACKEND DEPLOYS: mkr-backend Cloudflare Worker deployed once this pass -
 Version ID 6a57a22b-042f-45af-bcd2-54380b36d190. Confirmed live bindings:
 HYBRID_ROUTING_ENABLED="false", HYBRID_CRYPTO_ROUTING_ENABLED="false",
