@@ -6,7 +6,7 @@ TASK: 2026-09-16 MKR Hybrid Capability Validation + Crypto Endpoint Correction
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_HYBRID_CAPABILITY_VALIDATION_TASK.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded below after commit)
+COMMIT: 8e72d6a
 BACKEND DEPLOYS: mkr-backend Cloudflare Worker deployed once this pass -
 Version ID d7dce600-1f16-4223-ab16-5188656be076. Confirmed live bindings:
 HYBRID_ROUTING_ENABLED="false", HYBRID_CRYPTO_ROUTING_ENABLED="false",
