@@ -2,119 +2,129 @@ PROJECT: MKR
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: 2026-09-15 MKR Home/Markets Final User-Visible Audit
-TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_HOME_MARKETS_FINAL_USER_VISIBLE_AUDIT_TASK.md
+TASK: 2026-09-16 MKR Closed Testing Readiness (task file absent - requirements taken from chat)
+TITLE: Fix per requirements given directly in chat (referenced file
+GPT_TO_CLAUDE_MKR_CLOSED_TESTING_READINESS_TASK.md did not exist in
+D:\FlutterProjects\gpt-claude\ at the start of this turn)
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: 437909d
+COMMIT: 7ad26c5
+BACKEND DEPLOY: mkr-backend Cloudflare Worker deployed this pass -
+Version ID 485c4f4f-4d5d-4216-b5e3-3d2b3fbcb9dc (required to live-smoke-
+verify the two backend-side root-cause fixes below; MKR's own isolated
+Worker, no other app/account resource affected)
 
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_HOME_MARKETS_FINAL_USER_VISIBLE_AUDIT_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_CLOSED_TESTING_READINESS_REPORT.md
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
 PREVIOUS STATE:
-MKR Post-Audit Final Stability Pass, completed, was WAITING_FOR_GPT_REVIEW
-(commit 5c57553). Mac asked for one consolidated final pass focused on the
-user-visible symptom: Home and Markets can open with no market content.
+MKR Home/Markets Final User-Visible Audit, completed, was
+WAITING_FOR_GPT_REVIEW (commit 5fbdda5).
 
-THIS PASS - traced the real production path end-to-end against the
-deployed backend and fixed every concrete root cause in one coherent
-change:
+THIS PASS - consolidated fix across 7 named areas:
 
-ROOT CAUSE (primary) - confirmed LIVE, reproducible: the deployed backend's
-batch quotes endpoint (GET /api/mkr/market/quotes) can return
-success:true with a requested symbol present in NEITHER data.items NOR
-data.errors. Reproduced twice in a row during this pass's own live-smoke
-testing on Home's exact post-catalog-filter symbol set
-(XAU/USD,BTC,SET -> items:[XAU/USD], errors:[], BTC/SET silently gone).
-This is a backend/upstream-provider (Twelve Data free tier)
-data-availability characteristic, not fixable from the frontend and
-auc/backend is off-limits - so the frontend now represents it honestly
-instead of masking it: TwelveDataParser.parseQuotesBatchResult takes a new
-required requestedSymbols parameter and reconciles resolved quotes against
-it - any requested symbol silently absent from both items and errors is
-folded into failedSymbols. A partially-silent batch becomes an honest
-MarketFetchPartial (valid quotes still render, degraded indicator shown)
-instead of a misleadingly "clean" success; a wholly-silent batch becomes an
-honest MarketFetchFailure instead of a false empty state. AlpacaProvider
-.getQuotes got the symmetric fix for consistency (dormant standby, no
-current production impact).
+1/2. Home/Markets root cause (provider capacity + production catalog):
+TwelveDataProvider's multi-symbol /quote endpoint silently omits a symbol
+when the account's free-tier capacity is exhausted mid-batch (not an
+error - just a missing key), and parseTwelveDataBatchQuotes previously
+mapped that identically to an EXPLICIT provider-confirmed no-data answer -
+market-routes.ts then cached the capacity artifact as confirmed "no data"
+for the full TTL and never reported it as an error. Fixed: an absent key
+is now left OUT of the batch result entirely (reusing the existing
+"symbol not in result" -> PROVIDER_UNAVAILABLE/never-cached contract
+already used for a whole-chunk failure). Live-confirmed on the deployed
+backend: Home's exact symbol set (XAU/USD,BTC,SET), which previously
+dropped 2 of 3 symbols silently, now correctly reports SET in `errors`.
+This IS the quota-safe strategy improvement - a capacity gap now surfaces
+immediately and retries naturally instead of being invisible for 60s.
 
-Item 2 - silent stream hang when no provider is available:
-MarketProviderManager.watchQuotes/watchCandles previously just returned
-inside onListen when _active == null after ensureConnected() - a listener
-got no data/error/done and stayed open forever, indistinguishable from
-"market quiet". Now calls controller.addError(...) to surface the fault
-honestly. Same gap found and fixed one layer up in
-ProviderBackedMarketService's inner .listen() calls (no onError handler -
-a manager-level error would have become an unhandled zone error instead of
-reaching HomeController/MarketDetailController).
+3. Home/Markets partial/unavailable semantics: re-verified already
+correct from earlier passes: no changes needed, now fed honest data.
 
-Item 3 - overlapping refresh races: HomeController.refresh() and
-MarketsController._load() had no protection against a slower, older call
-overwriting a newer result (e.g. pull-to-refresh tapped twice). Both now
-use a request-generation-id guard, reusing the pattern already proven for
-MarketDetailController.loadSeries, plus a minimal disposal guard.
+4. Calendar timezone (Today/Tomorrow/This Week) root cause: every
+bucketing path (backend /today, /week, and the client's "tomorrow") used
+UTC calendar days, never the device's local day - a Bangkok (UTC+7) user
+could see "Today" still showing the prior UTC day. Fixed: backend's
+/events route gained fromInstant/toInstant (exact UTC instants,
+precedence over date/from/to); Flutter now computes device-local
+day/week boundaries and sends exact instants for all three ranges.
+Live-confirmed: malformed instant rejected (400); real current-week query
+against the deployed backend returns correct data.
 
-Items 4/5/6 - verified already correct: Home's curated-symbol resolution
-and Markets' partial/failure ApiState mapping (both from earlier passes)
-are structurally sound - the actual gap was one layer down in the parser
-(the primary fix above); both now receive honest data. Item 2's fix is
-itself the item-6 regression check (a gap in the immediately preceding
-pass's ref-counting work).
+5. China filter vs real coverage: CalendarController.countries listed
+Japan/China/Thailand - no real data source for China/Thailand exists at
+all, and "Japan" never matched the real 'JP' code. Fixed: filter now
+lists only real coverage (US/EU/UK/JP by code); mock demo data's Japan
+event corrected to use the real code too.
+
+6. AI integrity: full audit (service selection, error handling, backend
+routes) - confirmed no code path can present mock as live in a real-mode
+build. No fix needed; documented as a narrow build/CI-misconfiguration-
+only residual risk.
+
+7. Material Closed Testing blockers (full-system audit): 
+- CONFIRMED BLOCKER, FIXED (scaffolding only): release builds were
+  signed with the DEBUG keystore (instant Play Console rejection). Added
+  key.properties-based release signing config (falls back to debug when
+  absent - local builds unaffected). A real keystore/key.properties is
+  NOT generated here (the app owner's own credential to create/safeguard)
+  - android/key.properties.example added as a template.
+- CONFIRMED BLOCKER, FIXED (content only): in-app Privacy Notice falsely
+  claimed "no account required... data will be processed... before that
+  feature is enabled" while Supabase auth/FCM tokens/cloud sync already
+  ship today. Corrected in English and Thai. A publicly hosted URL is
+  still needed (cannot be hosted from this repo) - real remaining
+  limitation.
+- GAP, FIXED: no global error handler anywhere in the app - added
+  runZonedGuarded/FlutterError.onError/PlatformDispatcher.instance.onError
+  in main.dart (logging only, no new crash-reporting SDK added).
+- Confirmed fine, no change: applicationId/version, permissions,
+  cleartext traffic, app icons, hardcoded secrets/URLs, debug banner.
 
 REGRESSION:
-- Backend: 525/525 passing, read/verified only - no backend files
-  touched. TypeScript typecheck clean.
-- Flutter: 349/349 passing (18 new tests across 6 files: 4 for the
-  parser reconciliation fix + 7 existing call sites updated, 6 for
-  AlpacaProvider.getQuotes (previously zero coverage), 3 for the
-  manager-level silent-hang fix, 2 for the service-level onError
-  forwarding fix, 2 for HomeController's race guard, 2 for
-  MarketsController's race guard). No existing test weakened or deleted;
-  one test's expectation was corrected from MarketFetchEmpty to
-  MarketFetchFailure (it asserted the bug being fixed). `flutter
-  analyze`: no issues. `flutter build apk --debug`: succeeds.
-- Security scan (established pattern) against the diff: no secrets.
-- git diff reviewed - scoped to exactly 7 production files and 6 test
-  files (602 insertions, 30 deletions); no Market Pool, infra, paid
-  provider, Firebase/FCM, News, Calendar, or backend changes;
-  auc/backend untouched.
-- Final mock-data grep: MockMarketCatalog references across
-  lib/features/** are pre-existing doc-comment mentions or the standalone
-  demo implementation only - no real-mode usage introduced.
+- Backend: 536/536 passing (14 new tests). TypeScript typecheck clean.
+- Flutter: 349/349 passing (3 existing calendar-service tests corrected
+  to assert the fixed instant-range behavior; no test count regression).
+  `flutter analyze`: no issues. `flutter build apk --debug` and
+  `flutter build apk --release`: both succeed.
+- Security scan against the diff: no secrets (only expected Gradle
+  property-name references and legitimate privacy-notice prose).
+- git diff reviewed - 21 files (403 insertions, 40 deletions); no Market
+  Pool/infra redesign, no paid provider, no UI redesign, no fabricated
+  market/calendar/AI data; auc/backend untouched.
+- Final mock-data grep: MockMarketCatalog references unchanged from the
+  prior-turn baseline (16 files, all pre-existing doc-comment mentions or
+  the standalone demo implementation).
 
 PRODUCTION:
-- No backend changes this pass - nothing to deploy. Entirely
-  frontend-only.
-- Live smoke check performed: /api/mkr/market/health OK (primary
-  twelve_data, circuit closed, rate-limit noted in lastErrorMessage);
-  /api/mkr/market/symbols OK (20 enabled symbols, confirms SPX/NDX/DJI
-  genuinely absent from the real catalog); /api/mkr/market/quotes for the
-  full 20-symbol catalog (8 items/12 errors/0 silently-missing this run);
-  /api/mkr/market/quotes for Home's exact resolved symbol set
-  (XAU/USD,BTC,SET) reproduced the silent-drop root cause live, twice.
+- mkr-backend Cloudflare Worker deployed this pass (see above) - required
+  for the two backend-side root-cause fixes to be live and
+  live-smoke-verifiable. MKR's own isolated Worker only.
+- Live smoke: health/symbols OK; the previously-reproduced batch-quote
+  silent-drop bug now surfaces honestly as PROVIDER_UNAVAILABLE instead
+  of vanishing; calendar fromInstant/toInstant validated (malformed
+  rejected, real current-week query returns correct live data).
 
 REMAINING LIMITATIONS (real, not hand-waved):
-1. The underlying backend/provider data-availability gap cannot be fixed
-   from the frontend (auc/backend off-limits, no paid provider) - this
-   pass makes the degraded state honest and visible, it does not make more
-   data available from Twelve Data's free tier.
-2. The silent-drop behavior is intermittent, not constant - it reproduced
-   twice on Home's 3-symbol set but 0 times on a same-session 20-symbol
-   full-catalog call. The fix handles it correctly whenever it occurs.
-3. The item-2 "second listen() onError forwarding" fix in
-   ProviderBackedMarketService.watchCandles (the live-tick tail, after
-   historical fetch already succeeded) covers a narrow timing race for
-   defensive symmetry with watchQuotes; its regression test exercises the
-   equivalent "no provider available throughout" scenario (which fails
-   earlier, at the historical fetch) rather than that exact narrow window,
-   since reproducing the precise race deterministically would need a more
-   elaborate test double than proportionate to the fix's size. The code
-   itself is a direct, mechanical copy of the already-tested watchQuotes
-   fix.
+1. A publicly hosted Privacy Policy URL is still required for Play
+   Console submission - the in-app text is now accurate, but hosting it
+   externally is the app owner's own action.
+2. A real release keystore does not exist yet - Gradle scaffolding is
+   ready; android/key.properties + its .jks must be generated and
+   safeguarded by the app owner before a submittable release build exists.
+3. No crash-reporting/telemetry SDK was added - the new global error
+   handlers only guarantee local logging + no isolate crash, not remote
+   visibility into production errors. Intentionally left for the app
+   owner to decide (new dependency/infra).
+4. The Twelve Data Free capacity constraint itself is unchanged - the fix
+   makes the degraded state honest, it cannot increase the provider's
+   actual free-tier throughput.
+5. AI's missing demo-vs-live indicator is a real but narrow gap, reachable
+   only via a build/CI misconfiguration, not any runtime code path - not
+   fixed this pass since no actual runtime risk was found.
 
 NEXT:
 Claude has completed this pass and stopped, per its own instruction. No
