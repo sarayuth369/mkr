@@ -6,7 +6,7 @@ TASK: 2026-09-16 MKR Alpaca Credential E2E Test One-Pass
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_ALPACA_CREDENTIAL_E2E_TEST_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded below after commit)
+COMMIT: ea0d55a
 BACKEND DEPLOYS: mkr-backend Cloudflare Worker deployed twice this pass -
 Version d0da4358-8d17-467f-94aa-98f6f79a6d07 (SOL/XRP + feed=iex added),
 then 798b0ded-9077-4fff-b991-ca19d6acfe47 (alpacaBarsStart/start= fix -
