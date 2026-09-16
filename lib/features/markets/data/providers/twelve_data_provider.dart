@@ -51,6 +51,22 @@ class TwelveDataProvider implements MarketDataProvider {
   int _reconnectAttempt = 0;
   bool _disconnectedByUser = false;
 
+  /// 2026-09-16 Final Release Gate audit finding: `_scheduleReconnect`
+  /// retried forever with no user-visible signal at all - the `onError`
+  /// forwarding built into `provider_backed_market_service.dart`/
+  /// `MarketDetailController` for exactly this scenario was effectively
+  /// dead code, since nothing here ever called `_quoteController.addError`.
+  /// A genuinely prolonged outage looked identical to a healthy, quietly-
+  /// idle connection: frozen at the last known price, no error, no stale
+  /// indicator. After this many CONSECUTIVE failed attempts (~15s of real
+  /// elapsed backoff time - past the point a single transient blip would
+  /// already have self-healed on its own), one error is forwarded so
+  /// `ApiState.error` can actually surface. Reconnection attempts continue
+  /// unaffected either way; a later successful reconnect's own `.add(quote)`
+  /// calls naturally flip listeners back to a success state - no separate
+  /// "recovered" signal is needed.
+  static const _errorSurfaceThreshold = 3;
+
   /// 2026-09-15 post-audit task (Finding 4): sourced from the real backend
   /// catalog ([MarketCatalogRepository], the established real-mode
   /// authority), never `MockMarketCatalog` — a symbol the backend catalog
@@ -247,7 +263,6 @@ class TwelveDataProvider implements MarketDataProvider {
     try {
       final channel = _openWebSocket(_wsUri('/api/mkr/market/stream'));
       _channel = channel;
-      _reconnectAttempt = 0;
       _channelSubscription = channel.stream.listen(
         _handleFrame,
         onError: (Object _) => _scheduleReconnect(),
@@ -263,6 +278,17 @@ class TwelveDataProvider implements MarketDataProvider {
   }
 
   void _handleFrame(dynamic raw) {
+    // 2026-09-16 Final Release Gate audit finding: `_reconnectAttempt` used
+    // to reset to 0 the moment `_openSocket` merely CONSTRUCTED a channel
+    // object, before the connection was ever confirmed alive - a rapidly
+    // flapping connection (opens, then immediately errors/closes again
+    // before ever delivering a frame) would keep resetting the counter back
+    // to 0 on every attempt, so it could never climb toward
+    // `_errorSurfaceThreshold` and backoff would never actually grow past
+    // its first step either. Resetting here instead - on a genuine received
+    // frame - means the counter (and the backoff it drives) only resets
+    // once the connection has proven itself actually useful.
+    _reconnectAttempt = 0;
     if (raw is! String) return;
     final decoded = jsonDecode(raw);
     if (decoded is! Map<String, dynamic>) return;
@@ -279,6 +305,9 @@ class TwelveDataProvider implements MarketDataProvider {
     if (_disconnectedByUser) return;
 
     _reconnectAttempt++;
+    if (_reconnectAttempt == _errorSurfaceThreshold && !_quoteController.isClosed) {
+      _quoteController.addError(const MarketFetchException(MarketFetchFailureKind.offline, 'Live market data connection lost - retrying...'));
+    }
     final delaySeconds = (1 << (_reconnectAttempt.clamp(0, 5))).clamp(1, 30);
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(Duration(seconds: delaySeconds), _openSocket);

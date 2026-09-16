@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +8,46 @@ import 'package:mkr/features/markets/data/market_catalog_repository.dart';
 import 'package:mkr/features/markets/data/providers/alpaca_provider.dart';
 import 'package:mkr/features/markets/domain/market_fetch_result.dart';
 import 'package:mkr/features/markets/domain/timeframe.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+/// Minimal fake `WebSocketChannel` - see the identical fake in
+/// twelve_data_provider_test.dart for why only `stream`/`sink` are
+/// implemented and everything else is routed to `noSuchMethod`.
+class _FakeWebSocketSink implements WebSocketSink {
+  @override
+  void add(dynamic data) {}
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {}
+
+  @override
+  Future addStream(Stream stream) async {}
+
+  @override
+  Future close([int? closeCode, String? closeReason]) async {}
+
+  @override
+  Future get done => Future<void>.value();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeWebSocketChannel implements WebSocketChannel {
+  _FakeWebSocketChannel(this._controller);
+
+  final StreamController<dynamic> _controller;
+  final _FakeWebSocketSink fakeSink = _FakeWebSocketSink();
+
+  @override
+  Stream get stream => _controller.stream;
+
+  @override
+  WebSocketSink get sink => fakeSink;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 // 2026-09-15 candle envelope correction task — same gap as
 // TwelveDataProvider: AlpacaProvider.getHistoricalCandles() checked HTTP
@@ -251,6 +292,57 @@ void main() {
       final result = await provider.getQuotes(const []);
 
       expect(result, isA<MarketFetchEmpty>());
+    });
+  });
+
+  group('AlpacaProvider — 2026-09-16 Final Release Gate audit: WS reconnect after a dropped connection', () {
+    test('a dropped connection (onError) resets internal state so a later connect() can actually reopen it', () async {
+      final controllers = <StreamController<dynamic>>[];
+      var openAttempts = 0;
+      final provider = AlpacaProvider(
+        backendBaseUrl: 'https://backend.example.com',
+        catalog: _unloadedCatalog(),
+        activated: true,
+        httpClient: MockClient((r) async => http.Response('', 500)),
+        webSocketFactory: (uri) {
+          openAttempts++;
+          final controller = StreamController<dynamic>();
+          controllers.add(controller);
+          return _FakeWebSocketChannel(controller);
+        },
+      );
+
+      await provider.connect();
+      expect(openAttempts, 1);
+
+      // Previously this bug meant `_channel` stayed non-null forever after
+      // an error, so the `_channel != null` guard in connect() permanently
+      // blocked every future reconnect attempt for the rest of the session -
+      // `openAttempts` would have stayed stuck at 1 forever, both for this
+      // manual retry AND for the scheduled backoff Timer.
+      controllers.first.addError(Exception('socket dropped'));
+      await Future<void>.delayed(Duration.zero); // let onError's synchronous state reset run
+
+      await provider.connect();
+      expect(openAttempts, 2); // the guard no longer permanently blocks reconnection
+    });
+
+    test('connect() is a genuine no-op when not activated - no WebSocket is ever opened', () async {
+      var openAttempts = 0;
+      final provider = AlpacaProvider(
+        backendBaseUrl: 'https://backend.example.com',
+        catalog: _unloadedCatalog(),
+        activated: false,
+        httpClient: MockClient((r) async => http.Response('', 500)),
+        webSocketFactory: (uri) {
+          openAttempts++;
+          return _FakeWebSocketChannel(StreamController<dynamic>());
+        },
+      );
+
+      await provider.connect();
+
+      expect(openAttempts, 0);
     });
   });
 }

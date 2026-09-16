@@ -33,7 +33,7 @@ export interface CacheResult<T> {
 // quote), which is indistinguishable from "not cached" if stored bare - KV
 // returns `null` for both a missing key and a stored JSON `null`. Wrapping
 // in an envelope makes "cached null" and "not cached" distinguishable.
-// `storedAt` is what makes bounded stale-while-revalidate (below) possible -
+// `storedAt` is what makes the bounded stale fallback (below) possible -
 // without it, a KV entry's own physical expiry is the only notion of
 // "freshness," which can't be decoupled from how long the entry survives.
 export interface CacheEnvelope<T> {
@@ -45,14 +45,26 @@ export interface CacheEnvelope<T> {
   storedAt?: number;
 }
 
-// 2026-09-16 Final Full-System One-Pass audit finding: `cachedFetch` had no
-// stale-while-revalidate despite that being a documented architectural
-// invariant - once a KV entry's logical TTL lapsed, a provider outage at
-// that exact moment was a hard failure (missing market data reaching the
-// user), not degraded/stale service. Fixed by storing entries for LONGER
-// than their logical freshness window (`physicalTtlSeconds`) and falling
-// back to the still-physically-present-but-logically-stale value only when
-// a fresh refetch itself fails - never served as if fresh, never re-cached
+// 2026-09-16 Final Full-System One-Pass audit finding, terminology
+// corrected in the 2026-09-16 Final Release Gate pass: this is a BOUNDED
+// STALE FALLBACK, not classic "stale-while-revalidate" - the two names
+// were used interchangeably in the original fix's comments/tests, which
+// is misleading. Classic SWR serves the stale value IMMEDIATELY while a
+// refresh happens in the background, so the caller never waits on the
+// network. This implementation is the opposite order and fully
+// synchronous: a fresh fetch is always attempted FIRST (the caller does
+// wait on it), and only when that attempt itself fails does the still-
+// physically-present-but-logically-expired value get served instead of a
+// hard error. No background work is scheduled anywhere - the caller who
+// happens to hit a stale/failed key is the one who pays for (and
+// resolves) the fresh-fetch attempt, exactly like any other cache miss.
+// Before this fix, `cachedFetch` had no stale fallback at all despite one
+// being a documented architectural invariant - once a KV entry's logical
+// TTL lapsed, a provider outage at that exact moment was a hard failure
+// (missing market data reaching the user), not degraded/stale service.
+// Fixed by storing entries for LONGER than their logical freshness window
+// (`physicalTtlSeconds`) and falling back to the stale value only on a
+// synchronous refetch failure - never served as if fresh, never re-cached
 // as new, bounded by this one grace window so staleness cannot compound
 // indefinitely.
 const STALE_GRACE_SECONDS = 120;
@@ -99,11 +111,12 @@ export async function cachedFetch<T>(
       await safeKvPut(kv, key, JSON.stringify(fresh), { expirationTtl: physicalTtlSeconds(ttlSeconds) }, 'cachedFetch');
       return value;
     } catch (err) {
-      // Bounded stale-while-revalidate: a logically-expired but still
-      // physically-present entry (within STALE_GRACE_SECONDS) degrades the
-      // request to stale data instead of a hard failure. Never re-written
-      // as fresh - it keeps its original `storedAt` until a real refetch
-      // eventually succeeds.
+      // Bounded stale fallback (synchronous - see the class-level doc
+      // comment on why this isn't classic "stale-while-revalidate"): a
+      // logically-expired but still physically-present entry (within
+      // STALE_GRACE_SECONDS) degrades THIS request to stale data instead
+      // of a hard failure. Never re-written as fresh - it keeps its
+      // original `storedAt` until a real refetch eventually succeeds.
       if (envelope) return envelope.v;
       throw err;
     }
@@ -178,8 +191,9 @@ export async function putCached<T>(kv: KVNamespace, key: string, value: T, ttlSe
  * batch path) that needs to distinguish "fresh, serve immediately" from
  * "logically stale but still physically present, worth remembering as a
  * degraded fallback" itself, since it doesn't go through [cachedFetch]'s
- * own built-in stale-while-revalidate. Deliberately a SEPARATE function
- * from [getCached]/[putCached] rather than changing their behavior - other
+ * own built-in bounded stale fallback (see that function's doc comment for
+ * why "stale-while-revalidate" is the wrong name for this). Deliberately a
+ * SEPARATE function from [getCached]/[putCached] rather than changing their behavior - other
  * callers (calendar-routes.ts, ai-routes.ts) rely on `getCached`'s current
  * "any physically-present value is a plain cache hit" semantics and have
  * no matching freshness/fallback handling of their own; silently widening

@@ -30,6 +30,15 @@ val keystoreProperties = Properties()
 val hasReleaseSigningConfig = keystorePropertiesFile.exists()
 if (hasReleaseSigningConfig) {
     keystoreProperties.load(keystorePropertiesFile.inputStream())
+} else {
+    // 2026-09-16 Final Release Gate audit finding: previously this fallback
+    // was silent - `flutter build appbundle --release` would succeed with
+    // no warning at all while actually producing a debug-signed AAB, and
+    // the ONLY place that failure became visible was a later, separate
+    // Play Console upload rejection. Printed at Gradle configuration time
+    // so it surfaces in the build's own console output immediately,
+    // whichever build type is invoked.
+    println("WARNING: android/key.properties not found - release builds will fall back to DEBUG signing, which Google Play Console will reject on upload. See this file's own doc comment above for how to provision a real release keystore.")
 }
 
 android {

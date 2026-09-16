@@ -227,14 +227,51 @@ class AlpacaProvider implements MarketDataProvider {
     try {
       final channel = _openWebSocket(Uri.parse('$backendBaseUrl/api/mkr/alpaca/stream'));
       _channel = channel;
-      _channelSubscription = channel.stream.listen(_handleFrame, cancelOnError: true);
+      // 2026-09-16 Final Release Gate audit finding: previously had no
+      // `onError`/`onDone` handler at all. `cancelOnError: true` meant a
+      // genuine socket error killed the subscription but left `_channel`
+      // non-null, so this method's own `_channel != null` guard
+      // permanently blocked every future `connect()` call for the rest of
+      // the session - once activated, a single dropped connection ended
+      // Alpaca-routed live quotes silently and irrecoverably, unlike
+      // TwelveDataProvider's matching reconnect-with-backoff behavior.
+      // Mirrors that same reset-then-retry shape (this standby provider
+      // still deliberately never fails the app over a lost connection -
+      // see the class doc comment - so no user-visible error is raised
+      // here, only self-healing).
+      _channelSubscription = channel.stream.listen(
+        _handleFrame,
+        onError: (Object _) => _resetAndScheduleReconnect(),
+        onDone: _resetAndScheduleReconnect,
+        cancelOnError: true,
+      );
     } catch (_) {
       // Standby provider — a failed connect here must not surface as an
       // app-wide failure; the manager simply won't use this provider.
     }
   }
 
+  Timer? _reconnectTimer;
+  int _reconnectAttempt = 0;
+
+  void _resetAndScheduleReconnect() {
+    _channelSubscription?.cancel();
+    _channelSubscription = null;
+    _channel = null;
+    if (!activated) return;
+
+    _reconnectAttempt++;
+    final delaySeconds = (1 << (_reconnectAttempt.clamp(0, 5))).clamp(1, 30);
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), connect);
+  }
+
   void _handleFrame(dynamic raw) {
+    // Reset on a genuinely received frame, not merely on the channel object
+    // being constructed - see the identical fix/comment in
+    // twelve_data_provider.dart's _handleFrame for why (a rapidly flapping
+    // connection must not keep resetting backoff back to its first step).
+    _reconnectAttempt = 0;
     if (raw is! String) return;
     final decoded = jsonDecode(raw);
     if (decoded is! Map<String, dynamic>) return;
@@ -297,6 +334,7 @@ class AlpacaProvider implements MarketDataProvider {
 
   @override
   Future<void> disconnect() async {
+    _reconnectTimer?.cancel(); // an explicit disconnect must not have a stale timer reopen the connection behind the caller's back
     await _channelSubscription?.cancel();
     await _channel?.sink.close();
     _channel = null;

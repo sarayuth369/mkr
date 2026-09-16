@@ -73,10 +73,14 @@ describe('cachedFetch', () => {
   });
 
   // 2026-09-16 Final Full-System One-Pass audit finding: cachedFetch had no
-  // stale-while-revalidate despite that being a documented invariant - a
-  // provider outage on an already-expired KV entry was a hard failure, not
-  // degraded/stale service. These pin the bounded fix.
-  describe('bounded stale-while-revalidate', () => {
+  // stale fallback despite one being a documented invariant - a provider
+  // outage on an already-expired KV entry was a hard failure, not degraded/
+  // stale service. These pin the bounded fix. Named "bounded stale
+  // fallback," not "stale-while-revalidate" (2026-09-16 Final Release Gate
+  // terminology correction) - see cachedFetch's own doc comment in
+  // cache-service.ts for exactly why: this is a synchronous fallback on a
+  // failed fresh-fetch attempt, never a background revalidation.
+  describe('bounded stale fallback (not "stale-while-revalidate" - see cachedFetch\'s doc comment)', () => {
     it('serves a logically-expired-but-still-physically-present value when the fresh refetch itself fails, instead of throwing', async () => {
       const kv = createFakeKv();
       // Seed a value whose storedAt is already outside a 60s TTL - still

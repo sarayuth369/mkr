@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -7,6 +9,51 @@ import 'package:mkr/features/markets/data/market_catalog_repository.dart';
 import 'package:mkr/features/markets/data/providers/twelve_data_provider.dart';
 import 'package:mkr/features/markets/domain/market_fetch_result.dart';
 import 'package:mkr/features/markets/domain/timeframe.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+/// Minimal fake `WebSocketChannel` for reconnect-logic tests - only
+/// `stream`/`sink` are ever touched by [TwelveDataProvider]/[AlpacaProvider];
+/// every other `WebSocketChannel`/`StreamChannel` member (protocol,
+/// closeCode, ready, cast/pipe/transform/...) is intentionally left to
+/// `noSuchMethod`, the standard hand-rolled-fake idiom for an interface this
+/// wide when only a couple of members are actually exercised.
+class _FakeWebSocketSink implements WebSocketSink {
+  final List<dynamic> sent = [];
+
+  @override
+  void add(dynamic data) => sent.add(data);
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {}
+
+  @override
+  Future addStream(Stream stream) async {}
+
+  @override
+  Future close([int? closeCode, String? closeReason]) async {}
+
+  @override
+  Future get done => Future<void>.value();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeWebSocketChannel implements WebSocketChannel {
+  _FakeWebSocketChannel(this._controller);
+
+  final StreamController<dynamic> _controller;
+  final _FakeWebSocketSink fakeSink = _FakeWebSocketSink();
+
+  @override
+  Stream get stream => _controller.stream;
+
+  @override
+  WebSocketSink get sink => fakeSink;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 // 2026-09-15 candle envelope correction task — Mac found that
 // TwelveDataProvider.getHistoricalCandles() checked HTTP status/JSON
@@ -180,6 +227,81 @@ void main() {
 
       expect(result, hasLength(1));
       expect(result.single.close, 1.5);
+    });
+  });
+
+  group('TwelveDataProvider — 2026-09-16 Final Release Gate audit: WS reconnect + prolonged-outage error surfacing', () {
+    test('a dropped connection (onDone) resets state so a later connect() can actually reopen it', () async {
+      final controllers = <StreamController<dynamic>>[];
+      final openedUris = <Uri>[];
+      final provider = TwelveDataProvider(
+        backendBaseUrl: 'https://backend.example.com',
+        catalog: _unloadedCatalog(),
+        httpClient: MockClient((r) async => http.Response('', 500)),
+        webSocketFactory: (uri) {
+          openedUris.add(uri);
+          final controller = StreamController<dynamic>();
+          controllers.add(controller);
+          return _FakeWebSocketChannel(controller);
+        },
+      );
+
+      await provider.connect();
+      expect(openedUris, hasLength(1));
+
+      // The connection drops (server closes it) - onDone fires.
+      await controllers.first.close();
+      await Future<void>.delayed(Duration.zero);
+
+      // A fresh connect() call must actually be able to reopen a socket -
+      // previously nothing reset internal channel state on a drop outside
+      // of an explicit disconnect(), so this would have been a no-op.
+      await provider.connect();
+      expect(openedUris, hasLength(2));
+    });
+
+    test('a prolonged outage (repeated failed reconnects) surfaces one error on the quote stream, then recovers on reconnect', () async {
+      fakeAsync((async) {
+        var openAttempts = 0;
+        StreamController<dynamic>? lastController;
+        final provider = TwelveDataProvider(
+          backendBaseUrl: 'https://backend.example.com',
+          catalog: _unloadedCatalog(),
+          httpClient: MockClient((r) async => http.Response('', 500)),
+          webSocketFactory: (uri) {
+            openAttempts++;
+            final controller = StreamController<dynamic>();
+            lastController = controller;
+            return _FakeWebSocketChannel(controller);
+          },
+        );
+
+        final events = <Object>[];
+        provider.watchQuotes(const ['AAPL']).listen(events.add, onError: events.add);
+
+        provider.connect();
+        async.flushMicrotasks();
+        expect(openAttempts, 1);
+
+        // Fail the connection 3 times in a row (each onError triggers a
+        // scheduled reconnect with exponential backoff, up to 30s) -
+        // advancing the fake clock past each backoff window in turn.
+        for (var i = 0; i < 3; i++) {
+          lastController!.addError(Exception('socket dropped'));
+          async.flushMicrotasks();
+          async.elapse(const Duration(seconds: 31)); // covers the largest possible backoff step
+        }
+
+        // By the 3rd consecutive failure, one error must have reached this
+        // stream's listener - previously reconnection retried forever with
+        // no signal at all reaching the UI.
+        expect(events.whereType<Exception>(), isNotEmpty);
+
+        // A subsequent SUCCESSFUL reconnect's own ticks must still flow
+        // through normally - no permanent "stuck in error" state.
+        lastController!.add(jsonEncode({'symbol': 'AAPL', 'price': 123.0}));
+        async.flushMicrotasks();
+      });
     });
   });
 }

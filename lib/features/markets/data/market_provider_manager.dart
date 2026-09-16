@@ -391,10 +391,25 @@ class MarketProviderManager {
           controller.addError(const MarketFetchException(MarketFetchFailureKind.offline, 'No market data provider is currently available.'));
           return;
         }
-        subscription = active.watchQuotes(symbols).listen((quote) {
-          _lastUpdated = DateTime.now();
-          if (!controller.isClosed) controller.add(quote);
-        });
+        subscription = active.watchQuotes(symbols).listen(
+          (quote) {
+            _lastUpdated = DateTime.now();
+            if (!controller.isClosed) controller.add(quote);
+          },
+          // 2026-09-16 Final Release Gate audit finding: previously had no
+          // `onError` at all - an error added to the underlying provider's
+          // own stream (e.g. TwelveDataProvider surfacing a prolonged
+          // reconnect failure) became an unhandled zone error right here
+          // instead of reaching this manager's own `controller`, so it
+          // never made it to `ProviderBackedMarketService`/
+          // `MarketDetailController`'s listener at all - the exact
+          // "surfaces honestly" contract this method already applies to
+          // the "no provider available" case above, just not to a
+          // downstream provider-level error.
+          onError: (Object e) {
+            if (!controller.isClosed) controller.addError(e);
+          },
+        );
       },
       onCancel: () async {
         await subscription?.cancel();
@@ -424,9 +439,15 @@ class MarketProviderManager {
           controller.addError(const MarketFetchException(MarketFetchFailureKind.offline, 'No market data provider is currently available.'));
           return;
         }
-        subscription = active.watchCandles(symbol, timeframe).listen((candle) {
-          if (!controller.isClosed) controller.add(candle);
-        });
+        subscription = active.watchCandles(symbol, timeframe).listen(
+          (candle) {
+            if (!controller.isClosed) controller.add(candle);
+          },
+          // See the identical fix/comment in watchQuotes above.
+          onError: (Object e) {
+            if (!controller.isClosed) controller.addError(e);
+          },
+        );
       },
       onCancel: () async {
         await subscription?.cancel();

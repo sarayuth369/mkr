@@ -106,6 +106,13 @@ class FakeProvider implements MarketDataProvider {
 
   void emitTick(MarketQuote quote) => _tickController.add(quote);
 
+  /// 2026-09-16 Final Release Gate audit finding regression coverage - lets
+  /// a test simulate the underlying provider's own stream genuinely
+  /// erroring (e.g. a prolonged WS reconnect failure), the exact scenario
+  /// `MarketProviderManager`'s own re-subscription previously had no
+  /// `onError` for.
+  void emitError(Object error) => _tickController.addError(error);
+
   @override
   Stream<MarketQuote> watchQuotes(List<String> symbols) {
     watchQuotesCalls++;
@@ -113,8 +120,17 @@ class FakeProvider implements MarketDataProvider {
     return _tickController.stream.where((q) => symbols.contains(q.symbol));
   }
 
+  /// Controllable per-symbol candle tick source, same shape as
+  /// [_tickController]/[emitTick]/[emitError] above but for
+  /// [watchCandles] - 2026-09-16 Final Release Gate audit finding
+  /// regression coverage.
+  final _candleController = StreamController<MarketCandle>.broadcast();
+
+  void emitCandle(MarketCandle candle) => _candleController.add(candle);
+  void emitCandleError(Object error) => _candleController.addError(error);
+
   @override
-  Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) => const Stream.empty();
+  Stream<MarketCandle> watchCandles(String symbol, Timeframe timeframe) => _candleController.stream;
 
   /// Every symbol ever passed to [unsubscribeQuotes], in call order -
   /// 2026-09-15 post-audit task (Finding 2): previously nothing in
@@ -680,6 +696,58 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(received, hasLength(1));
+      await sub.cancel();
+    });
+  });
+
+  group('2026-09-16 Final Release Gate audit — a genuine provider-level stream error reaches the manager\'s own listeners', () {
+    test('watchQuotes forwards an error added to the underlying provider\'s own stream, not just the "no provider available" case', () async {
+      // Distinct from the "no provider available" tests above: here a
+      // provider IS active and connected, but its own upstream tick stream
+      // later errors (e.g. TwelveDataProvider surfacing a prolonged WS
+      // reconnect failure) - previously this manager's own re-subscription
+      // to `active.watchQuotes(...)` had no `onError` at all, so the error
+      // became an unhandled zone error right here instead of ever reaching
+      // this manager's own `controller` (and therefore never reaching
+      // ProviderBackedMarketService/MarketDetailController above it either).
+      final primary = FakeProvider('twelveData', healthy: true);
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      final events = <Object>[];
+      final sub = manager.watchQuotes(['AAPL']).listen(events.add, onError: events.add);
+      await Future<void>.delayed(Duration.zero);
+
+      primary.emitError(Exception('connection lost'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, hasLength(1));
+      expect(events.single, isA<Exception>());
+
+      // Recovery: a later successful tick must still flow through normally -
+      // the manager's controller isn't left in some permanently broken state.
+      primary.emitTick(_quote('AAPL', 150));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, hasLength(2));
+      expect((events.last as MarketQuote).price, 150);
+      await sub.cancel();
+    });
+
+    test('watchCandles forwards an error added to the underlying provider\'s own stream the same way', () async {
+      final primary = FakeProvider('twelveData', healthy: true);
+      final manager = MarketProviderManager(primary: primary);
+      await manager.connect();
+
+      final events = <Object>[];
+      final sub = manager.watchCandles('AAPL', Timeframe.h1).listen(events.add, onError: events.add);
+      await Future<void>.delayed(Duration.zero);
+
+      primary.emitCandleError(Exception('connection lost'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, hasLength(1));
+      expect(events.single, isA<Exception>());
       await sub.cancel();
     });
   });

@@ -5,13 +5,43 @@ import { logError, logInfo } from '../logging';
 import { resolvePreferredProvider } from '../providers/capability';
 import { catalogFor, type SymbolRow } from '../symbols/symbol-catalog';
 import { isValidMkrSymbolFormat, mapSymbolFromRows, parseSymbolList } from '../symbols/symbol-mapper';
-import type { Env, ProviderId } from '../types';
+import type { Env, NormalizedQuote, ProviderId } from '../types';
 import { candleTtlFor, mapProviderError, parseTimeframe } from './normalize';
 import { managerFor } from './provider-manager-factory';
 
 /** Hybrid Provider Architecture task (2026-09-16) - the one place a request route resolves a symbol row's routing preference, so `handleQuote`/`handleQuotes`/`handleCandles` all derive it the exact same way. `undefined` (never `null`) matches `MarketProviderManager`'s optional-param contract. */
 function preferredProviderForRow(row: SymbolRow, featureFlags: Awaited<ReturnType<typeof getConfig>>['featureFlags']): ProviderId | undefined {
   return resolvePreferredProvider(row.category, row.alpaca_symbol !== null, featureFlags) ?? undefined;
+}
+
+/**
+ * 2026-09-16 Final Release Gate audit finding: `handleQuotes`' envelope-level
+ * `source` field previously always reported `config.primaryProvider` -
+ * a static config value, regardless of what actually resolved each item.
+ * With hybrid routing and the bounded cross-provider batch fallback (prior
+ * pass), a single `/quotes` response can genuinely contain a mix of
+ * `twelve_data` and `alpaca` items, or a mix of fresh and stale-fallback
+ * items originally sourced from either - the static field could then
+ * falsely imply every item came from one provider. Not currently read by
+ * Flutter (confirmed: `parseQuotesBatchResult` only reads `items`/`errors`,
+ * never the envelope `source`), but a false field is still a false field,
+ * and any future consumer (server-side observability, a future API
+ * client) would be misled. Derived here from what each item's OWN
+ * `source` field (already authoritative per-item - see NormalizedQuote)
+ * actually says: a single honest provider ID when every resolved item
+ * agrees, `null` otherwise (mixed or nothing resolved) - matching the
+ * same "ambiguous, no single honest scalar" convention `MarketProviderManager
+ * .getBatchQuotes` already uses internally for a mixed-provider group.
+ */
+function envelopeSourceFor(quotes: unknown[]): ProviderId | null {
+  const sources = new Set<string>();
+  for (const q of quotes) {
+    const source = (q as Partial<NormalizedQuote> | null | undefined)?.source;
+    if (typeof source === 'string') sources.add(source);
+  }
+  if (sources.size !== 1) return null;
+  const only = [...sources][0];
+  return only === 'twelve_data' || only === 'alpaca' ? only : null;
 }
 
 export async function requireSymbolRow(env: Env, symbol: string): Promise<SymbolRow> {
@@ -97,8 +127,10 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
   // 2026-09-16 audit finding: still-physically-present-but-logically-stale
   // values remembered per symbol, so a symbol that fails to refresh can
   // degrade to stale data instead of a hard PROVIDER_UNAVAILABLE error -
-  // the same bounded stale-while-revalidate cachedFetch does internally,
-  // applied here since the batch path manages its own cache reads/writes.
+  // the same bounded stale fallback cachedFetch does internally (not
+  // "stale-while-revalidate" - see that function's own doc comment in
+  // cache-service.ts), applied here since the batch path manages its own
+  // cache reads/writes.
   const staleFallback = new Map<string, unknown>();
 
   for (const symbol of symbols) {
@@ -182,7 +214,7 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
             // negative-cache a transient failure). Only cache/report success
             // for a symbol the provider actually resolved.
             if (!(symbol in result)) {
-              // Bounded stale-while-revalidate fallback (see staleFallback's
+              // Bounded stale fallback (see staleFallback's
               // own doc comment) before falling back further to an explicit
               // error - a still-physically-present stale value beats a hard
               // failure when the fresh refetch attempt itself came up empty
@@ -220,7 +252,7 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
   }
 
   logInfo('quotes batch served', { requestId, route: 'quotes', count: symbols.length, uncached: uncached.length, errorCount: errors.length, noDataCount: noData.length });
-  return jsonResponse({ items: data, errors, noData, source: config.primaryProvider, timestamp: Date.now() });
+  return jsonResponse({ items: data, errors, noData, source: envelopeSourceFor(data), timestamp: Date.now() });
 }
 
 export async function handleCandles(request: Request, env: Env, requestId: string): Promise<Response> {

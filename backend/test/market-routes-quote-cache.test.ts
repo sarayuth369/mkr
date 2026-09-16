@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { _resetInFlightForTests } from '../src/cache/cache-service';
 import { handleQuote, handleQuotes } from '../src/market/market-routes';
+import { _resetCircuitsForTests } from '../src/providers/circuit-breaker';
+import { _resetHealthForTests } from '../src/providers/provider-manager';
+import { _resetQuotaUsageForTests } from '../src/providers/quota-manager';
 import type { SymbolRow } from '../src/symbols/symbol-catalog';
 import type { Env } from '../src/types';
 import { createFakeKv } from './fakes';
@@ -97,6 +100,15 @@ function fetchStub(bySymbol: Record<string, ReturnType<typeof twelveDataQuote>>)
 afterEach(() => {
   vi.unstubAllGlobals();
   _resetInFlightForTests();
+  // 2026-09-16 Final Release Gate audit finding: this file previously never
+  // reset circuit-breaker/health/quota state between tests - a test whose
+  // stub genuinely fails a provider (tripping its circuit) silently
+  // poisoned every later test in the file that expected that provider
+  // healthy, regardless of test order. Matches the established pattern
+  // already used in provider-manager.test.ts/alpaca-batch-quotes-safety.test.ts.
+  _resetCircuitsForTests();
+  _resetHealthForTests();
+  _resetQuotaUsageForTests();
 });
 
 describe('handleQuote / handleQuotes - cache correctness (Task 4)', () => {
@@ -341,7 +353,7 @@ describe('handleQuote / handleQuotes - cache correctness (Task 4)', () => {
       const body = (await response.json()) as { data: { items: { symbol: string }[]; errors: { symbol: string; code: string }[] } };
       const cachedMsft = await env.MKR_CACHE.get('quote:v2:MSFT', 'json');
 
-      expect(cachedMsft).toEqual({ v: null, storedAt: expect.any(Number) }); // confirmed no-data IS cached - unchanged, correct behavior (envelope now also carries storedAt for bounded stale-while-revalidate)
+      expect(cachedMsft).toEqual({ v: null, storedAt: expect.any(Number) }); // confirmed no-data IS cached - unchanged, correct behavior (envelope now also carries storedAt for the bounded stale fallback)
       expect(body.data.items).toEqual([expect.objectContaining({ symbol: 'AAPL' })]);
       expect(body.data.errors).toEqual([]); // an explicit provider "no data" answer is NOT reported as an error
       expect(fetchSpy).toHaveBeenCalledTimes(1); // the single successful chunk covering both symbols
@@ -462,6 +474,43 @@ describe('handleQuote / handleQuotes - cache correctness (Task 4)', () => {
 
       expect(body.data.price).toBe(100);
       expect(body.data.source).toBe('twelve_data');
+    });
+
+    describe('2026-09-16 Final Release Gate audit - /quotes envelope-level source truthfulness', () => {
+      it('a batch where every resolved item shares one real provider reports that provider as the envelope source', async () => {
+        vi.stubGlobal('fetch', hybridFetchStub({ alpacaPrice: 555 }));
+        const env = hybridEnv({ MKR_DB: fakeSymbolsD1([US_STOCK]) });
+
+        const response = await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=NVDA'), env, 'r1');
+        const body = (await response.json()) as { data: { items: { source: string }[]; source: string | null } };
+
+        expect(body.data.items).toEqual([expect.objectContaining({ source: 'alpaca' })]);
+        expect(body.data.source).toBe('alpaca'); // truthful - not the static config.primaryProvider ('twelve_data')
+      });
+
+      it('a genuinely mixed-provider batch (one Alpaca item, one Twelve Data item) reports the envelope source as null, never falsely implying a single provider', async () => {
+        vi.stubGlobal('fetch', hybridFetchStub({ alpacaPrice: 555, twelveDataPrice: 100 }));
+        const env = hybridEnv({ MKR_DB: fakeSymbolsD1([US_STOCK, AAPL]) }); // NVDA prefers Alpaca (us_stock); AAPL stays Twelve Data (us_equity - no hybrid preference)
+
+        const response = await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=NVDA,AAPL'), env, 'r1');
+        const body = (await response.json()) as { data: { items: { symbol: string; source: string }[]; source: string | null } };
+
+        const bySymbol = Object.fromEntries(body.data.items.map((i) => [i.symbol, i.source]));
+        expect(bySymbol.NVDA).toBe('alpaca'); // each item retains its own real, authoritative source
+        expect(bySymbol.AAPL).toBe('twelve_data');
+        expect(body.data.source).toBeNull(); // mixed - no single honest scalar, never falsely "twelve_data" for the whole batch
+      });
+
+      it('nothing resolved (all errors) reports the envelope source as null, never a fabricated provider', async () => {
+        vi.stubGlobal('fetch', hybridFetchStub({})); // both providers fail every call
+        const env = hybridEnv({ MKR_DB: fakeSymbolsD1([US_STOCK]) });
+
+        const response = await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=NVDA'), env, 'r1');
+        const body = (await response.json()) as { data: { items: unknown[]; source: string | null } };
+
+        expect(body.data.items).toEqual([]);
+        expect(body.data.source).toBeNull();
+      });
     });
   });
 
