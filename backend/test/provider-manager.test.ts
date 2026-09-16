@@ -3,7 +3,7 @@ import { _resetCircuitsForTests, admitCircuitRequest, circuitSnapshot, circuitSt
 import { MarketProviderManager, _resetHealthForTests, type ProviderBudgets } from '../src/providers/provider-manager';
 import { _resetQuotaUsageForTests, budgetSnapshot, recordProviderRequest } from '../src/providers/quota-manager';
 import { ProviderError, type MarketDataProvider } from '../src/providers/types';
-import type { NormalizedQuote, ProviderId } from '../src/types';
+import type { NormalizedCandle, NormalizedQuote, ProviderId } from '../src/types';
 
 // Unconfigured (dailyRequestBudget: 0) for both providers - reproduces the
 // exact pre-Task-6 behavior (guard always allows) for every test in this
@@ -71,7 +71,7 @@ class FakeProvider implements MarketDataProvider {
     return result;
   }
 
-  async getCandles() {
+  async getCandles(): Promise<NormalizedCandle[]> {
     return [];
   }
 
@@ -891,6 +891,176 @@ describe('MarketProviderManager', () => {
       } finally {
         Date.now = realNow;
       }
+    });
+  });
+
+  describe('2026-09-16 Hybrid Provider Architecture task - capability-aware routing', () => {
+    function quoteFrom(price: number, source: 'twelve_data' | 'alpaca'): NormalizedQuote {
+      return { ...quote(price), source };
+    }
+
+    it('preferredProvider routes to the secondary (Alpaca) FIRST for this call, without touching the primary at all', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quoteFrom(100, 'twelve_data') });
+      const secondary = new FakeProvider('alpaca', { quoteResult: quoteFrom(200, 'alpaca') });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      const { result, source } = await manager.getQuote('AAPL', symbolFor, 'P1', 'alpaca');
+
+      expect(result?.price).toBe(200);
+      expect(result?.source).toBe('alpaca'); // cache/source correctness - the quote object itself carries the real provider
+      expect(source).toBe('alpaca');
+      expect(primary.quoteCalls).toBe(0); // never even contacted - Alpaca resolved the call on the first try
+    });
+
+    it('falls back to Twelve Data after the PREFERRED Alpaca is confirmed unhealthy - normal failover discipline, not bypassed by preference', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quoteFrom(100, 'twelve_data') });
+      const secondary = new FakeProvider('alpaca', { throwKind: 'network', healthy: false });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      const { result, source } = await manager.getQuote('AAPL', symbolFor, 'P1', 'alpaca');
+
+      expect(result?.price).toBe(100);
+      expect(source).toBe('twelve_data');
+    });
+
+    it('does not fail over from the preferred Alpaca on a mere transient error - propagates instead, same discipline as the non-hybrid path', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quoteFrom(100, 'twelve_data') });
+      const secondary = new FakeProvider('alpaca', { throwKind: 'timeout', healthy: true }); // confirmed still healthy
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1', 'alpaca')).rejects.toThrow('alpaca failed');
+      expect(primary.quoteCalls).toBe(0); // never contacted - a transient preferred-provider fault does not trigger fallback
+    });
+
+    it('a symbol-specific ("not_found") failure on the preferred Alpaca never falls back to Twelve Data - the symbol genuinely has no data, not a provider outage', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quoteFrom(100, 'twelve_data') });
+      const secondary = new FakeProvider('alpaca', { throwKind: 'not_found' });
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      await expect(manager.getQuote('AAPL', symbolFor, 'P1', 'alpaca')).rejects.toThrow('alpaca failed');
+      expect(primary.quoteCalls).toBe(0);
+      expect(circuitStatus('alpaca')).toBe('closed'); // never a provider-health event
+    });
+
+    it('preferredProvider is IGNORED when secondaryEnabled is false, even with real Alpaca credentials configured - the master gate always wins', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quoteFrom(100, 'twelve_data') });
+      const secondary = new FakeProvider('alpaca', { quoteResult: quoteFrom(200, 'alpaca') });
+      const manager = new MarketProviderManager(primary, secondary, false, UNCONFIGURED_BUDGETS); // secondaryEnabled: false
+
+      const { result, source } = await manager.getQuote('AAPL', symbolFor, 'P1', 'alpaca');
+
+      expect(result?.price).toBe(100); // Twelve Data served it - Alpaca was never even considered
+      expect(source).toBe('twelve_data');
+      expect(secondary.quoteCalls).toBe(0);
+    });
+
+    it('preferredProvider is safely a no-op when Alpaca credentials are missing (no secondary provider at all) - missing credentials => safe disabled behavior', async () => {
+      const primary = new FakeProvider('twelve_data', { quoteResult: quoteFrom(100, 'twelve_data') });
+      const manager = new MarketProviderManager(primary, null, true, UNCONFIGURED_BUDGETS); // secondary: null - buildProvider() returns null without credentials
+
+      const { result, source } = await manager.getQuote('AAPL', symbolFor, 'P1', 'alpaca');
+
+      expect(result?.price).toBe(100);
+      expect(source).toBe('twelve_data');
+    });
+
+    it('getCandles also respects preferredProvider, with the same fallback discipline', async () => {
+      const primary = new FakeProvider('twelve_data', { healthy: true });
+      const secondary = new FakeProvider('alpaca', { healthy: true });
+      primary.getCandles = async (): Promise<NormalizedCandle[]> => [{ symbol: 'AAPL', interval: 'd1', timestamp: 1, open: 1, high: 1, low: 1, close: 1, volume: null, source: 'twelve_data' }];
+      secondary.getCandles = async (): Promise<NormalizedCandle[]> => [{ symbol: 'AAPL', interval: 'd1', timestamp: 1, open: 2, high: 2, low: 2, close: 2, volume: null, source: 'alpaca' }];
+      const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+      const { result, source } = await manager.getCandles('AAPL', 'd1', 30, symbolFor, 'P1', 'alpaca');
+
+      expect(result[0]?.close).toBe(2);
+      expect(source).toBe('alpaca');
+    });
+
+    describe('getBatchQuotes - split-batch routing (mixed preferred providers in one call)', () => {
+      const providerSymbolFor = (_id: string, mkrSymbol: string) => mkrSymbol;
+
+      it('routes each symbol to its own preferred provider and merges the results, each quote retaining its real source', async () => {
+        const primary = new FakeProvider('twelve_data');
+        const secondary = new FakeProvider('alpaca');
+        primary.getBatchQuotes = async (map: Record<string, string>) =>
+          Object.fromEntries(Object.values(map).map((s) => [s, { ...quoteFrom(1, 'twelve_data'), symbol: s }]));
+        secondary.getBatchQuotes = async (map: Record<string, string>) =>
+          Object.fromEntries(Object.values(map).map((s) => [s, { ...quoteFrom(2, 'alpaca'), symbol: s }]));
+        const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+        const preferredProviderFor = (mkrSymbol: string): ProviderId | null => (mkrSymbol === 'AAPL' ? 'alpaca' : null);
+        const { result, source } = await manager.getBatchQuotes(['AAPL', 'EUR/USD'], providerSymbolFor, 'P1', preferredProviderFor);
+
+        expect(result.AAPL?.source).toBe('alpaca');
+        expect(result['EUR/USD']?.source).toBe('twelve_data');
+        expect(source).toBeNull(); // mixed providers contributed - no single honest scalar (see getBatchQuotes' own doc comment)
+      });
+
+      it('a confirmed outage in the Alpaca-preferred group falls back to Twelve Data WITHIN that same group (self-healing), as an independent call from the Twelve-Data-preferring group', async () => {
+        const primary = new FakeProvider('twelve_data');
+        const secondary = new FakeProvider('alpaca', { throwKind: 'network', healthy: false });
+        let primaryBatchCalls = 0;
+        primary.getBatchQuotes = async (map: Record<string, string>) => {
+          primaryBatchCalls++;
+          return Object.fromEntries(Object.values(map).map((s) => [s, { ...quoteFrom(1, 'twelve_data'), symbol: s }]));
+        };
+        const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+        const preferredProviderFor = (mkrSymbol: string): ProviderId | null => (mkrSymbol === 'AAPL' ? 'alpaca' : null);
+        const { result } = await manager.getBatchQuotes(['AAPL', 'EUR/USD'], providerSymbolFor, 'P1', preferredProviderFor);
+
+        // AAPL's own group tried Alpaca first (confirmed unhealthy), then
+        // fell back to Twelve Data WITHIN that same group - exactly the
+        // same "confirmed-health failover" discipline a non-hybrid call
+        // gets, just applied per-group. EUR/USD's group never touched
+        // Alpaca at all (it was never in that group's preference).
+        expect(result['EUR/USD']?.source).toBe('twelve_data');
+        expect(result.AAPL?.source).toBe('twelve_data'); // self-healed via its own group's fallback, not lost
+        expect(primaryBatchCalls).toBe(2); // two INDEPENDENT calls - the groups never merged into one upstream request
+      });
+
+      it('a symbol whose preferred Alpaca AND its own Twelve Data fallback both genuinely have no mapping is honestly absent from the result - the OTHER group is still entirely unaffected, never a global failure', async () => {
+        const primary = new FakeProvider('twelve_data');
+        const secondary = new FakeProvider('alpaca', { throwKind: 'network', healthy: false });
+        primary.getBatchQuotes = async (map: Record<string, string>) =>
+          Object.fromEntries(Object.values(map).map((s) => [s, { ...quoteFrom(1, 'twelve_data'), symbol: s }]));
+        const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+        // AAPL maps to Alpaca only (no Twelve Data mapping at all here) -
+        // Alpaca fails confirmed-unhealthy with nothing further to try
+        // (Twelve Data was never even mapped for it), so AAPL's own group
+        // genuinely has no answer. EUR/USD maps to Twelve Data only and is
+        // never routed through Alpaca at all.
+        const providerSymbolForMixed = (id: string, mkrSymbol: string) => {
+          if (mkrSymbol === 'AAPL') return id === 'alpaca' ? 'AAPL' : null;
+          return id === 'twelve_data' ? mkrSymbol : null;
+        };
+        const preferredProviderFor = (mkrSymbol: string): ProviderId | null => (mkrSymbol === 'AAPL' ? 'alpaca' : null);
+
+        const { result } = await manager.getBatchQuotes(['AAPL', 'EUR/USD'], providerSymbolForMixed, 'P1', preferredProviderFor);
+
+        expect(result['EUR/USD']?.source).toBe('twelve_data'); // entirely unaffected by AAPL's Alpaca-only outage
+        expect('AAPL' in result).toBe(false); // AAPL genuinely has no provider left to serve it - honestly absent, reported as PROVIDER_UNAVAILABLE by market-routes.ts, never a global failure
+      });
+
+      it('when nothing in the batch prefers the secondary, behaves as a single byte-identical call (no split, no Promise.allSettled overhead)', async () => {
+        const primary = new FakeProvider('twelve_data', { quoteResult: quoteFrom(1, 'twelve_data') });
+        const secondary = new FakeProvider('alpaca');
+        let batchCalls = 0;
+        const originalBatch = primary.getBatchQuotes.bind(primary);
+        primary.getBatchQuotes = async (map: Record<string, string>) => {
+          batchCalls++;
+          return originalBatch(map);
+        };
+        const manager = new MarketProviderManager(primary, secondary, true, UNCONFIGURED_BUDGETS);
+
+        const preferredProviderFor = (): ProviderId | null => null; // nothing prefers Alpaca
+        await manager.getBatchQuotes(['AAPL', 'MSFT'], providerSymbolFor, 'P1', preferredProviderFor);
+
+        expect(batchCalls).toBe(1); // one call, not split into two
+        expect(secondary.batchCalls).toBe(0);
+      });
     });
   });
 });

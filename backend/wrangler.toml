@@ -21,6 +21,20 @@ compatibility_date = "2024-11-01"
 MARKET_PRIMARY_PROVIDER = "twelve_data"
 MARKET_SECONDARY_PROVIDER = "alpaca"
 MARKET_SECONDARY_ENABLED = "false"
+# Hybrid Provider Architecture task (2026-09-16) - capability-aware,
+# per-symbol Alpaca-preferred routing (see src/providers/capability.ts).
+# Both "false" until: (1) real ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY
+# secrets are provisioned, (2) the capability test against a real Alpaca
+# account confirms it actually works, (3) MARKET_SECONDARY_ENABLED is also
+# "true", and (4) the operator has confirmed Alpaca's redistribution/
+# display rights for MKR end users (technical capability is NOT the same
+# as a license to display the data publicly - see docs/MKR-PHASE2-ARCHITECTURE.md
+# and this task's own architecture report). HYBRID_CRYPTO_ROUTING_ENABLED
+# is intentionally its own, separate switch - crypto capability must come
+# from an actual provider test, never inferred from HYBRID_ROUTING_ENABLED
+# alone.
+HYBRID_ROUTING_ENABLED = "false"
+HYBRID_CRYPTO_ROUTING_ENABLED = "false"
 # Cloudflare KV rejects any expirationTtl under 60 seconds outright (a hard
 # platform floor found during deployment) - every TTL below is 60+.
 CACHE_QUOTE_TTL_SECONDS = "60"

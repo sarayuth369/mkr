@@ -362,4 +362,106 @@ describe('handleQuote / handleQuotes - cache correctness (Task 4)', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1); // the single successful chunk covering both symbols - the omission is within an otherwise-successful chunk, not a chunk-level failure
     });
   });
+
+  describe('2026-09-16 Hybrid Provider Architecture task - capability-aware routing + cache/source correctness', () => {
+    const US_STOCK: SymbolRow = { ...AAPL, symbol: 'NVDA', category: 'us_stock', twelve_data_symbol: 'NVDA', alpaca_symbol: 'NVDA' };
+
+    /** Routes by hostname - data.alpaca.markets vs api.twelvedata.com - so one fetch stub can simulate both providers in the same test. */
+    function hybridFetchStub(opts: { alpacaPrice?: number; twelveDataPrice?: number }) {
+      return vi.fn(async (url: string) => {
+        const u = new URL(String(url));
+        if (u.hostname === 'data.alpaca.markets') {
+          // A genuine connectivity failure (AlpacaProvider.request()'s own
+          // catch -> ProviderError 'network') - not just a non-2xx status,
+          // since AlpacaProvider only special-cases 401/403/429 and would
+          // otherwise try to parse whatever body a 5xx happened to carry.
+          if (opts.alpacaPrice === undefined) throw new TypeError('simulated Alpaca network failure');
+          return new Response(JSON.stringify({ latestTrade: { p: opts.alpacaPrice } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (opts.twelveDataPrice === undefined) return new Response(JSON.stringify({ status: 'error', message: 'down' }), { status: 200 });
+        const requested = (u.searchParams.get('symbol') ?? '').split(',').filter(Boolean);
+        if (requested.length <= 1) return new Response(JSON.stringify(twelveDataQuote(opts.twelveDataPrice)), { status: 200 });
+        const multi: Record<string, unknown> = {};
+        for (const s of requested) multi[s] = twelveDataQuote(opts.twelveDataPrice);
+        return new Response(JSON.stringify(multi), { status: 200 });
+      });
+    }
+
+    function hybridEnv(overrides: Partial<Env> = {}): Env {
+      return makeEnv({
+        MKR_DB: fakeSymbolsD1([US_STOCK]),
+        ALPACA_API_KEY_ID: 'fake-id-not-real',
+        ALPACA_API_SECRET_KEY: 'fake-secret-not-real',
+        MARKET_SECONDARY_ENABLED: 'true',
+        HYBRID_ROUTING_ENABLED: 'true',
+        ...overrides,
+      });
+    }
+
+    it('a mapped us_stock symbol is routed to Alpaca first when hybrid routing is enabled - the response retains the real "alpaca" source, never masquerading as Twelve Data', async () => {
+      vi.stubGlobal('fetch', hybridFetchStub({ alpacaPrice: 555 }));
+      const env = hybridEnv();
+
+      const response = await handleQuote(new Request('https://x/api/mkr/market/quote?symbol=NVDA'), env, 'r1');
+      const body = (await response.json()) as { data: { price: number; source: string } };
+
+      expect(body.data.price).toBe(555);
+      expect(body.data.source).toBe('alpaca');
+    });
+
+    it('the SAME cached quote is retrieved consistently via /quotes too - preserves the existing fixed quote-cache compatibility between /quote and /quotes', async () => {
+      vi.stubGlobal('fetch', hybridFetchStub({ alpacaPrice: 555 }));
+      const env = hybridEnv();
+
+      await handleQuote(new Request('https://x/api/mkr/market/quote?symbol=NVDA'), env, 'r1');
+      const batchResponse = await handleQuotes(new Request('https://x/api/mkr/market/quotes?symbols=NVDA'), env, 'r2');
+      const body = (await batchResponse.json()) as { data: { items: { symbol: string; source: string; price: number }[] } };
+
+      expect(body.data.items).toEqual([expect.objectContaining({ symbol: 'NVDA', source: 'alpaca', price: 555 })]);
+    });
+
+    it('falls back to Twelve Data when Alpaca is confirmed unhealthy, even with hybrid routing enabled - normal failover discipline is never bypassed by a routing preference', async () => {
+      vi.stubGlobal('fetch', hybridFetchStub({ twelveDataPrice: 100 })); // no alpacaPrice - Alpaca fails every call
+      const env = hybridEnv();
+
+      const response = await handleQuote(new Request('https://x/api/mkr/market/quote?symbol=NVDA'), env, 'r1');
+      const body = (await response.json()) as { data: { price: number; source: string } };
+
+      expect(body.data.price).toBe(100);
+      expect(body.data.source).toBe('twelve_data');
+    });
+
+    it('missing Alpaca credentials is a safe no-op even with hybrid routing flags fully enabled - Twelve Data serves it, exactly as if hybrid routing were off', async () => {
+      vi.stubGlobal('fetch', hybridFetchStub({ twelveDataPrice: 100 }));
+      const env = hybridEnv({ ALPACA_API_KEY_ID: undefined, ALPACA_API_SECRET_KEY: undefined });
+
+      const response = await handleQuote(new Request('https://x/api/mkr/market/quote?symbol=NVDA'), env, 'r1');
+      const body = (await response.json()) as { data: { price: number; source: string } };
+
+      expect(body.data.price).toBe(100);
+      expect(body.data.source).toBe('twelve_data');
+    });
+
+    it('hybrid routing is a no-op when the master switch is off, even with real Alpaca credentials configured - the production default stays byte-identical to pre-hybrid behavior', async () => {
+      vi.stubGlobal('fetch', hybridFetchStub({ alpacaPrice: 555, twelveDataPrice: 100 }));
+      const env = hybridEnv({ HYBRID_ROUTING_ENABLED: 'false' });
+
+      const response = await handleQuote(new Request('https://x/api/mkr/market/quote?symbol=NVDA'), env, 'r1');
+      const body = (await response.json()) as { data: { price: number; source: string } };
+
+      expect(body.data.price).toBe(100); // Twelve Data, not Alpaca - hybrid preference never applied
+      expect(body.data.source).toBe('twelve_data');
+    });
+
+    it('hybrid routing is a no-op when MARKET_SECONDARY_ENABLED is false, even with the hybrid flag on and real credentials configured - the existing master gate always wins', async () => {
+      vi.stubGlobal('fetch', hybridFetchStub({ alpacaPrice: 555, twelveDataPrice: 100 }));
+      const env = hybridEnv({ MARKET_SECONDARY_ENABLED: 'false' });
+
+      const response = await handleQuote(new Request('https://x/api/mkr/market/quote?symbol=NVDA'), env, 'r1');
+      const body = (await response.json()) as { data: { price: number; source: string } };
+
+      expect(body.data.price).toBe(100);
+      expect(body.data.source).toBe('twelve_data');
+    });
+  });
 });

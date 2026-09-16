@@ -2,162 +2,141 @@ PROJECT: MKR
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: 2026-09-16 MKR Post-Phone Closed Testing Correction
-TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_POST_PHONE_CLOSED_TESTING_CORRECTION_TASK.md
+TASK: 2026-09-16 MKR Hybrid Provider Architecture (Twelve Data + Alpaca)
+TITLE: Implement per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_HYBRID_PROVIDER_ARCHITECTURE_TASK.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: e7c6918
-BACKEND DEPLOYS: mkr-backend Cloudflare Worker deployed twice this pass -
-Version ID 485c4f4f-4d5d-4216-b5e3-3d2b3fbcb9dc (calendar fromInstant/
-toInstant support, from the prior pass, unchanged), then
-51878475-cf00-4747-bcc1-d8d77c99aee0 (the deeper provider-manager.ts root
-cause fix found during this pass's own live verification). MKR's own
-isolated Worker only; no other app/account resource affected.
+COMMIT: (see next commit on this branch after this file - recorded at push time)
+BACKEND DEPLOYS: mkr-backend Cloudflare Worker deployed once this pass -
+Version ID 6a57a22b-042f-45af-bcd2-54380b36d190. Confirmed live bindings:
+HYBRID_ROUTING_ENABLED="false", HYBRID_CRYPTO_ROUTING_ENABLED="false",
+MARKET_SECONDARY_ENABLED="false" (all unchanged/off - safe deploy). MKR's
+own isolated Worker only; no other app/account resource affected.
 
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_POST_PHONE_CLOSED_TESTING_CORRECTION_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_HYBRID_PROVIDER_ARCHITECTURE_REPORT.md
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
 PREVIOUS STATE:
-MKR Closed Testing Readiness pass, completed, was WAITING_FOR_GPT_REVIEW
-(commit cb0aadd). Mac's physical-phone test found Home/Markets still
-intermittently showing little or no content despite that pass's error-
-truthfulness fixes, plus a bottom-ad overlap issue.
+MKR Post-Phone Closed Testing Correction pass, completed, was
+WAITING_FOR_GPT_REVIEW (commit e7c6918). This pass builds on that baseline
+without altering any of its fixes.
 
-THIS PASS - one consolidated correction, focused on the true remaining
-root cause: request pressure, not error truthfulness.
+THIS PASS - one consolidated Hybrid Provider Architecture implementation,
+per the task file, evolving provider selection from simple Primary/
+Secondary failover into a capability-aware Hybrid Provider Router, while
+keeping the entire existing Market Pool/cache/single-flight/SWR/circuit-
+breaker/quota-manager/server-side-pooling architecture fully intact (none
+of it removed or forked).
 
-ROOT CAUSE (confirmed): HomeController.refresh() and
-MarketsController._load() both still called MarketService.getAllQuotes()
-- the WHOLE ~20-symbol backend catalog, in one burst, on every load. Twelve
-Data Basic's 8-credits/minute cap (per the task's own reference) means a
-single 20-symbol request can by itself exceed a full minute's budget -
-this, not truthfulness, was the actual mechanism behind "often LIVE but no
-content" and "sometimes only EUR/USD."
+ARCHITECTURE (see full report for details):
+- New backend/src/providers/capability.ts - pure capability/preference/
+  activation model. Capability = D1 alpaca_symbol mapping presence
+  (schema.sql seed data already correctly scopes this to us_stock/crypto
+  only - no second hard-coded catalog needed). Preference = which provider
+  tried first, given capability. Activation = existing secondaryEnabled
+  flag, re-checked independently as defense-in-depth. Crypto has its own
+  separate, more conservative flag - never inferred from asset-class name
+  alone.
+- provider-manager.ts: new routeSlots(preferredProvider?) generalizes the
+  old hard-coded primary-then-secondary order into a 0-2 slot list.
+  withFailover/batchWithFailover rewritten to walk it. Preserved a subtle
+  pre-existing asymmetry (found via test failures, then fixed): primary
+  never throws its own error from the loop (always falls through to the
+  shared generic fallback); secondary throws its own error only when it
+  is ALSO the last slot in that call's ordering - keeps non-hybrid
+  behavior byte-identical while letting a hybrid-swapped Alpaca-preferred
+  call correctly fall back to Twelve Data.
+- getBatchQuotes: split-batch routing for mixed preferences within one
+  call - two Promise.allSettled sub-calls (one per provider group), each
+  self-healing independently via its own routeSlots fallback, merged by
+  Object.assign; a group's outage never silently drops the other group's
+  symbols.
+- Two new feature flags (both default false): hybridRoutingEnabled
+  (master switch), hybridCryptoRoutingEnabled (crypto's own separate
+  gate). Wired through defaults.ts/types.ts/wrangler.toml, admin-editable
+  via the existing generic featureFlags shallow-merge (no new validation
+  code needed).
+- market-routes.ts: preferredProviderForRow() wired into handleQuote/
+  handleQuotes/handleCandles. handleMarketStatus/handleMarketHealth/
+  handleMarketSymbols unchanged (getMarketStatus never really calls
+  Alpaca).
+- New GET /api/mkr/admin/alpaca-capability-test admin route (existing
+  requireAdmin auth reused) - read-only, real sequential Alpaca REST
+  calls (AAPL/MSFT/NVDA/QQQ/TSLA/BTC-USD/ETH-USD) against the actual
+  AlpacaProvider class when configured, classifying each outcome
+  (works/no_data/capability/auth/rate_limit/transient/error). Reports
+  configured:false with the exact operator step when secrets are absent
+  - never invents values, never blocks the task.
+- Deliberately NOT wired this pass: MarketStreamRoom's live WebSocket
+  upstream stays Twelve-Data-only. Real-time Alpaca streaming to end
+  users is exactly the kind of "public display" the licensing guard
+  warns about; capability.ts's canStream('alpaca', ...) honestly always
+  returns false rather than silently omitting the question. Only the
+  DO's one historical-seed REST call goes through the shared provider
+  manager, left without a preference (avoids mixing provider shapes in
+  one aggregator slot).
+- Flutter: ZERO code changes needed - twelve_data_parser.dart:259 already
+  maps 'alpaca' => MarketDataSource.alpaca; source field already flows
+  correctly end-to-end through the existing shared parser/cache.
 
-FIX - request strategy redesign (no getAllQuotes() calls remain in either
-controller):
-- New MarketService.getCatalog() (metadata only, D1+KV-cache only, ZERO
-  provider credit cost) lets a caller know the full symbol universe before
-  requesting any quotes.
-- Home: derives a small (<=6) set from the catalog's own `featured` flag
-  (currently XAU/USD, NVDA, BTC - gold+stock+crypto, preserving product
-  intent with symbols already confirmed resolvable), filled by sortOrder
-  if needed. ONE getQuotesFor() call covers Pulse (3) + Snapshot (6).
-- Markets: catalog-first + controlled/lazy loading. An 8-symbol initial
-  page (one full Twelve Data chunk), quotes accumulate persistently across
-  category/search changes (nothing already resolved is ever discarded),
-  and selecting a category/typing a search fetches ONLY the symbols still
-  missing for that filter (capped at 8/action) - a catalog symbol not on
-  the initial page is now genuinely discoverable. refresh() re-fetches
-  only the current filtered view, not the whole catalog.
-- markets_screen.dart needed ZERO changes beyond a padding fix (below) -
-  the controller's public state/API shape is unchanged.
+ALPACA PRODUCTION ROUTING: DISABLED. Both new flags default false,
+MARKET_SECONDARY_ENABLED unchanged/false, and ALPACA_API_KEY_ID/
+ALPACA_API_SECRET_KEY are NOT configured on the deployed Worker (confirmed
+via wrangler secret list). No live Alpaca capability test was run against
+a real account - honestly reported as not-yet-tested, not fabricated.
 
-DEEPER ROOT CAUSE (backend, found during this pass's own live
-verification, distinct from the prior pass's parser fix):
-MarketProviderManager.getBatchQuotes (backend/src/providers/
-provider-manager.ts) diverged from every other method on the same class
-(getQuote/getCandles/getMarketStatus, all via the shared withFailover
-helper, whose final fallback ALWAYS throws) - when the primary was
-confirmed unhealthy (or its circuit already open) and no secondary was
-available, it silently returned every requested symbol mapped to null,
-indistinguishable from a genuine provider-confirmed "no data" answer.
-With MKR's secondary disabled by default, this was always reachable on a
-real primary outage - market-routes.ts then reported affected symbols in
-NEITHER items NOR errors, cached as false "no data" for the full TTL.
-Live-reproduced this pass (8-symbol batch: 3 items, 0 errors, 5 silently
-missing) and confirmed via wrangler tail + code tracing. Fixed to throw
-consistently with withFailover's existing contract; the deliberately
-different "nothing mapped for either provider" (no coverage at all) case
-is preserved as a genuine non-fault. 3 existing tests asserting the old
-buggy behavior corrected; 4 new regression tests added.
+LICENSING/DISPLAY-RIGHTS GATE (explicitly unresolved, by design): a
+successful capability test alone never justifies enabling public Alpaca
+routing. Current Alpaca Paper account tier / Twelve Data plan commercial
+redistribution rights to MKR end users have not been confirmed. This
+remains an explicit operator/product release decision, separate from and
+after any technical capability test.
 
-PRODUCTION SYMBOL CAPABILITY (live-tested individually this pass): 18/20
-catalog symbols resolve reliably. SET/SET50 (Thailand) consistently
-return HTTP 502 PROVIDER_UNAVAILABLE on isolated single-symbol requests -
-genuinely provider-unavailable (Twelve Data doesn't serve them on this
-plan), not catalog-unsupported/disabled and not a capacity artifact.
-Recommendation (not executed - requires D1/admin access Claude doesn't
-hold): disable SET/SET50 in the backend catalog.
-
-CALENDAR: re-verified 7ad26c5's fromInstant/toInstant device-local-day fix
-live against the deployed backend - malformed input rejected, Today/This
-Week both return correct honest data. No code changes this pass.
-
-AI INTEGRITY: re-confirmed the prior audit still holds (no diff touched
-AI selection this pass) - no runtime/mock contamination found, so per the
-task's own instruction, AI was not redesigned or otherwise changed.
-
-AD OVERLAP: audited all 5 MkrBottomBannerAd screens - Scaffold layout
-composition is structurally correct everywhere (space IS reserved, no
-literal render-behind). Found and fixed a real, code-verifiable gap:
-Markets' quote list had ZERO bottom padding before the ad slot (every
-sibling screen already used 16px) - last row touched the ad's top edge
-with no breathing room. Fixed to match siblings. A Flutter web build was
-attempted for direct visual confirmation but failed for an unrelated,
-pre-existing reason (dart:ffi/win32, out of scope); no Android
-emulator was available in this environment either - reported accurately
-as code-grounded, not a literal physical-device screenshot.
+OPERATOR STEPS STILL REQUIRED (no secret values ever printed/logged):
+1. wrangler secret put ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY on
+   mkr-backend.
+2. Call GET /api/mkr/admin/alpaca-capability-test (admin session) and
+   review real per-symbol results.
+3. Only after reviewing results AND confirming the licensing gate above:
+   explicitly set HYBRID_ROUTING_ENABLED (and, separately,
+   HYBRID_CRYPTO_ROUTING_ENABLED if crypto routing is also wanted) and
+   MARKET_SECONDARY_ENABLED to "true" in wrangler.toml. All three gates
+   require independent, explicit operator action - nothing in this pass
+   flips them automatically.
 
 REGRESSION:
-- Flutter: 357/357 passing. home_controller_test.dart and
-  markets_controller_test.dart rewritten around the new
-  getCatalog()+getQuotesFor() pattern (old hardcoded pulseSymbols/
-  snapshotSymbols assertions removed since those lists no longer exist);
-  new dedicated regression coverage for catalog-first/lazy loading
-  (initial page size, category/search discovering an unloaded symbol,
-  retained-on-filter-switch caching, refresh() scoping, per-fetch cap).
-  getCatalog() stubs added to 6 other fake MarketService test doubles
-  (trivial, unused by those tests). flutter analyze: no issues.
-- Backend: 540/540 passing (4 new tests for the deeper fix; 3 existing
-  tests across 2 files corrected from asserting the old buggy
-  null-for-everyone fall-through to the now-consistent throw). TypeScript
+- Backend: 568/568 passing (46 test files) - added capability.test.ts
+  [11], admin-alpaca-capability-routes.test.ts [3], ~15 new tests in
+  provider-manager.test.ts, 6 new hybrid integration tests in
+  market-routes-quote-cache.test.ts, 1 fixture fix in
+  config-service.test.ts. Zero existing assertions weakened. TypeScript
   typecheck clean.
+- Flutter: 357/357 passing, zero regressions (no Flutter source files
+  touched this pass). flutter analyze: no issues found.
 - flutter build apk --debug and flutter build appbundle --release: both
-  succeed.
-- Security scan: no secrets. Final mock-data grep: MockMarketCatalog
-  usage unchanged from the prior-turn baseline (16 pre-existing files,
-  none newly using it in real mode).
-- git diff reviewed - 16 files (816 insertions, 176 deletions); no Market
-  Pool/infra redesign, no paid provider, no Alpaca activation, no
-  fabricated market/calendar/AI data; auc/backend untouched.
+  succeed (AAB 54.3MB).
+- Security scan: git diff grepped for credential patterns - only fake
+  test placeholders ('fake-id-not-real' etc.) and env-var NAMES
+  (ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY), zero real secret values.
+  MockMarketCatalog grep: all usage pre-existing, demo-mode-scoped,
+  unchanged from prior-turn baseline (no Flutter files modified).
 
 PRODUCTION:
-- mkr-backend Cloudflare Worker deployed this pass for the deeper
-  provider-manager.ts fix (see above) - required to live-verify it.
-- Live smoke (post-deploy): health OK; Home's new 3-symbol set resolves
-  0 errors; Markets' new 8-symbol initial page resolves cleanly after the
-  deeper fix (previously reproduced the silent-drop live); full 20-symbol
-  catalog: 13 items + 7 honest errors (forex + SET/SET50), 0 silently
-  missing; Calendar Today/This Week both correct.
-
-RELEASE READINESS (re-confirmed, no change this pass):
-1. A real release keystore still does not exist - Gradle scaffolding
-   works (this pass's own release build proves it), android/key.properties
-   remains the app owner's own credential to generate/safeguard.
-2. A publicly hosted Privacy Policy URL is still required - cannot be
-   hosted from this repo.
-Neither claimed resolved; a debug-signed release artifact is never
-represented as production-ready.
-
-REMAINING DEFERRED RISKS (real, not hand-waved):
-1. Twelve Data Basic's 8-credit/minute ceiling is unchanged - this pass
-   removes MKR's own self-inflicted bursts (the actual provable cause of
-   the reported symptoms), not the provider's own capacity; the system
-   now degrades honestly under real heavy load instead of claiming the
-   ceiling was raised.
-2. SET/SET50 remain catalog-enabled but genuinely provider-unavailable -
-   flagged, not disabled (no D1/admin access).
-3. The ad-overlap fix is grounded in code-level padding analysis, not a
-   literal physical-device screenshot - no real device/emulator was
-   available in this environment.
-4. Flutter web builds are broken (unrelated, pre-existing dart:ffi/win32
-   issue) - noted only because it blocked one verification avenue; not a
-   Play Store blocker, out of scope, not touched.
+- mkr-backend Cloudflare Worker deployed this pass (Version ID
+  6a57a22b-042f-45af-bcd2-54380b36d190) - safe, all new flags off.
+- Live smoke (post-deploy): /api/mkr/market/health -> secondary: null
+  (correct, Alpaca not activated); /api/mkr/market/quote?symbol=AAPL ->
+  source: "twelve_data" (confirms hybrid routing did not engage, as
+  expected); /api/mkr/admin/alpaca-capability-test (no admin session) ->
+  401 (route registered, correctly auth-protected, not a stray 404/500).
+  Safe-disabled behavior confirmed on the live deployment.
 
 NEXT:
-Claude has completed this pass and stopped, per its own instruction. No
-further improvement loop started. Waiting for GPT/Mac review.
+Claude has completed this pass and stopped, per its own instruction (one
+consolidated Hybrid Provider Architecture pass - no serial micro-fixes
+started after). Waiting for GPT/Mac review, and for the operator steps
+above (secrets -> capability test -> licensing review -> explicit flag
+flips) before any Alpaca production routing is enabled.

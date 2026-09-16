@@ -12,6 +12,9 @@ export interface Env {
   MARKET_PRIMARY_PROVIDER: string;
   MARKET_SECONDARY_PROVIDER: string;
   MARKET_SECONDARY_ENABLED: string;
+  /** Hybrid Provider Architecture task (2026-09-16) - both optional, both unset/absent = "false" (safe default). See config/defaults.ts's FeatureFlags doc comments for the full gating story; also requires MARKET_SECONDARY_ENABLED=true and real Alpaca credentials to have any effect. */
+  HYBRID_ROUTING_ENABLED?: string;
+  HYBRID_CRYPTO_ROUTING_ENABLED?: string;
   CACHE_QUOTE_TTL_SECONDS: string;
   CACHE_CANDLE_INTRADAY_TTL_SECONDS: string;
   CACHE_CANDLE_DAILY_TTL_SECONDS: string;

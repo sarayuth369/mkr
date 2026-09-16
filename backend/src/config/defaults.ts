@@ -19,6 +19,10 @@ export interface FeatureFlags {
   alertsEnabled: boolean;
   pushNotificationsEnabled: boolean;
   subscriptionEnabled: boolean;
+  /** Hybrid Provider Architecture task (2026-09-16) - see src/providers/capability.ts's doc comment for the full capability/preference/activation split these two flags gate. Both default OFF: production routing stays byte-identical to pre-hybrid behavior (Twelve Data always tried first) until an operator explicitly opts in, per the task's own "do not turn on Alpaca public fallback/display blindly" constraint. Also requires `secondaryEnabled` (unchanged, pre-existing) - MarketProviderManager re-checks that independently regardless of these flags. */
+  hybridRoutingEnabled: boolean;
+  /** Crypto gets its OWN, more conservative switch - never inferred from `hybridRoutingEnabled` alone (the task is explicit that crypto capability must come from an actual provider test, not the asset-class name). */
+  hybridCryptoRoutingEnabled: boolean;
 }
 
 export interface CacheTtls {
@@ -98,6 +102,9 @@ export function defaultConfig(env: Env): RuntimeConfig {
       alertsEnabled: false,
       pushNotificationsEnabled: false,
       subscriptionEnabled: false,
+      // Hybrid Provider Architecture task - default OFF, see FeatureFlags' own doc comments.
+      hybridRoutingEnabled: env.HYBRID_ROUTING_ENABLED === 'true',
+      hybridCryptoRoutingEnabled: env.HYBRID_CRYPTO_ROUTING_ENABLED === 'true',
     },
   };
 }

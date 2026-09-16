@@ -2,11 +2,17 @@ import { cachedFetch, cacheKey, coalesced, getCached, putCached } from '../cache
 import { getConfig } from '../config/config-service';
 import { ApiError, jsonResponse } from '../errors';
 import { logError, logInfo } from '../logging';
+import { resolvePreferredProvider } from '../providers/capability';
 import { catalogFor, type SymbolRow } from '../symbols/symbol-catalog';
 import { isValidMkrSymbolFormat, mapSymbolFromRows, parseSymbolList } from '../symbols/symbol-mapper';
 import type { Env, ProviderId } from '../types';
 import { candleTtlFor, mapProviderError, parseTimeframe } from './normalize';
 import { managerFor } from './provider-manager-factory';
+
+/** Hybrid Provider Architecture task (2026-09-16) - the one place a request route resolves a symbol row's routing preference, so `handleQuote`/`handleQuotes`/`handleCandles` all derive it the exact same way. `undefined` (never `null`) matches `MarketProviderManager`'s optional-param contract. */
+function preferredProviderForRow(row: SymbolRow, featureFlags: Awaited<ReturnType<typeof getConfig>>['featureFlags']): ProviderId | undefined {
+  return resolvePreferredProvider(row.category, row.alpaca_symbol !== null, featureFlags) ?? undefined;
+}
 
 export async function requireSymbolRow(env: Env, symbol: string): Promise<SymbolRow> {
   if (!isValidMkrSymbolFormat(symbol)) throw new ApiError('INVALID_SYMBOL', `Invalid symbol format: ${symbol}`);
@@ -23,6 +29,7 @@ export async function handleQuote(request: Request, env: Env, requestId: string)
   const row = await requireSymbolRow(env, symbol);
   const config = await getConfig(env);
   const symbolFor = (id: ProviderId) => mapSymbolFromRows([row], symbol, id);
+  const preferredProvider = preferredProviderForRow(row, config.featureFlags);
   const ttl = row.cache_ttl_seconds ?? config.cacheTtls.quoteSeconds;
 
   const start = Date.now();
@@ -34,7 +41,7 @@ export async function handleQuote(request: Request, env: Env, requestId: string)
     // NormalizedQuote, so nothing is lost by dropping the old wrapper.
     const { value } = await cachedFetch(env.MKR_CACHE, cacheKey('quote', symbol), ttl, async () => {
       const manager = await managerFor(env, config);
-      const { result } = await manager.getQuote(symbol, symbolFor, 'P1'); // user-requested market data
+      const { result } = await manager.getQuote(symbol, symbolFor, 'P1', preferredProvider); // user-requested market data
       return result;
     });
     logInfo('quote served', { requestId, route: 'quote', symbol, provider: value?.source, latencyMs: Date.now() - start });
@@ -104,6 +111,15 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
         const row = rowBySymbol.get(mkrSymbol);
         return row ? mapSymbolFromRows([row], mkrSymbol, id) : null;
       };
+      // Hybrid Provider Architecture task - per-symbol routing preference,
+      // derived the exact same way handleQuote/handleCandles do (see
+      // preferredProviderForRow). `null` (not `undefined`) for a symbol
+      // whose row somehow isn't in rowBySymbol - matches
+      // resolvePreferredProvider's own "no mapping, no preference" default.
+      const preferredProviderFor = (mkrSymbol: string): ProviderId | null => {
+        const row = rowBySymbol.get(mkrSymbol);
+        return row ? (preferredProviderForRow(row, config.featureFlags) ?? null) : null;
+      };
       // Single-flight: concurrent requests that land on the exact same
       // uncached-symbol set (the common case - same catalog, same cache
       // state, arriving within the same isolate near-simultaneously) share
@@ -111,7 +127,7 @@ export async function handleQuotes(request: Request, env: Env, requestId: string
       // provider. This is what getCached/putCached above bypassed - see
       // coalesced()'s doc comment in cache-service.ts.
       const coalesceKey = `batch-quotes:${[...uncached].sort().join(',')}`;
-      const { result } = await coalesced(coalesceKey, () => manager.getBatchQuotes(uncached, providerSymbolFor, 'P1')); // user-requested market data
+      const { result } = await coalesced(coalesceKey, () => manager.getBatchQuotes(uncached, providerSymbolFor, 'P1', preferredProviderFor)); // user-requested market data
 
       await Promise.all(
         uncached.map(async (symbol) => {
@@ -159,13 +175,14 @@ export async function handleCandles(request: Request, env: Env, requestId: strin
   const row = await requireSymbolRow(env, symbol);
   const config = await getConfig(env);
   const symbolFor = (id: ProviderId) => mapSymbolFromRows([row], symbol, id);
+  const preferredProvider = preferredProviderForRow(row, config.featureFlags);
   const ttl = row.cache_ttl_seconds ?? candleTtlFor(timeframe, config.cacheTtls);
 
   const start = Date.now();
   try {
     const { value } = await cachedFetch(env.MKR_CACHE, cacheKey('candles', symbol, `${timeframe}:${outputSize}`), ttl, async () => {
       const manager = await managerFor(env, config);
-      const { result, source } = await manager.getCandles(symbol, timeframe, outputSize, symbolFor, 'P1'); // user-requested market data
+      const { result, source } = await manager.getCandles(symbol, timeframe, outputSize, symbolFor, 'P1', preferredProvider); // user-requested market data
       return { candles: result, source };
     });
     logInfo('candles served', { requestId, route: 'candles', symbol, provider: value.source, latencyMs: Date.now() - start });

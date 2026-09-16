@@ -192,98 +192,126 @@ export class MarketProviderManager {
     return probe.healthy ? 'healthy' : 'unhealthy';
   }
 
+  /**
+   * 2026-09-16 Hybrid Provider Architecture task: the ordered list of
+   * providers a call should try, in order - generalizes the previous
+   * hard-coded "always primary, then secondary" into a routing decision
+   * this class makes ONCE per call, from [preferredProvider] (resolved by
+   * the caller via capability.ts's `resolvePreferredProvider`, itself
+   * driven by the D1 catalog mapping + the two hybrid feature flags - see
+   * that file's doc comment for the full capability/preference/activation
+   * split).
+   *
+   * `secondaryEnabled` remains THE one gate for "may Alpaca be contacted
+   * at all" - unchanged in meaning, and re-checked HERE regardless of
+   * [preferredProvider], so a caller that resolves a stale/wrong
+   * preference can never cause Alpaca to be contacted while it's globally
+   * disabled. When [preferredProvider] doesn't match the secondary's own
+   * id (including when there IS no secondary, or hybrid routing simply
+   * didn't apply to this symbol), the order is byte-identical to the
+   * pre-hybrid behavior: primary first, secondary second.
+   */
+  private routeSlots(preferredProvider?: ProviderId): MarketDataProvider[] {
+    const alpacaAllowed = this.secondaryEnabled && this.secondary !== null;
+    const preferSecondary = alpacaAllowed && preferredProvider !== undefined && preferredProvider === this.secondary!.id;
+
+    const slots: MarketDataProvider[] = [];
+    if (preferSecondary) {
+      slots.push(this.secondary!);
+      if (this.primary) slots.push(this.primary);
+    } else {
+      if (this.primary) slots.push(this.primary);
+      if (alpacaAllowed) slots.push(this.secondary!);
+    }
+    return slots;
+  }
+
+  /**
+   * Walks [routeSlots] in order, applying the SAME confirmed-health/
+   * circuit/quota discipline to whichever provider occupies each slot -
+   * the algorithm itself is unchanged from the pre-hybrid two-block
+   * version; only "which provider is first" is now a per-call decision
+   * instead of always `this.primary`. A slot's failure only advances to
+   * the NEXT slot when genuinely confirmed unhealthy (or the failure WAS
+   * itself the half-open trial's own confirmation) - a transient/
+   * unconfirmed failure on ANY slot propagates immediately, matching the
+   * original's "primary" behavior; the LAST slot always throws on
+   * failure regardless of confirmation outcome, since there is nothing
+   * left to fall back to - matching the original's "secondary" behavior.
+   */
   private async withFailover<T>(
     call: (provider: MarketDataProvider, providerSymbol: string) => Promise<T>,
     symbolFor: (id: ProviderId) => string | null,
     priority: RequestPriority,
+    preferredProvider?: ProviderId,
   ): Promise<{ result: T; source: ProviderId }> {
+    const slots = this.routeSlots(preferredProvider);
     let budgetDeniedTier: string | null = null;
 
-    if (this.primary) {
-      const admission = admitCircuitRequest(this.primary.id);
-      if (admission.allowed) {
-        const symbol = symbolFor(this.primary.id);
-        if (symbol) {
-          const decision = this.admit(this.primary.id, priority);
-          if (decision.allowed) {
-            try {
-              const result = await call(this.primary, symbol);
-              recordSuccess(this.primary.id);
-              recordCircuitSuccess(this.primary.id);
-              return { result, source: this.primary.id };
-            } catch (err) {
-              recordFailure(this.primary.id, (err as Error).message);
-              if (isSymbolSpecificError(err)) {
-                if (admission.isProbe) releaseCircuitProbe(this.primary.id); // claimed but never a real health signal - free the slot
-                throw err; // never a provider-health event - see isSymbolSpecificError
-              }
-              if (admission.isProbe) {
-                // The half-open trial's own outcome IS the confirmation -
-                // no separate healthCheck needed (would just double-spend
-                // quota to re-ask a question this attempt already answered).
-                recordCircuitFailure(this.primary.id);
-              } else {
-                const confirmation = await this.confirmUnhealthy(this.primary.id, this.primary);
-                if (confirmation !== 'unhealthy') {
-                  // 'healthy' - confirmed still reachable, a one-off/
-                  // transient fault, not a genuine outage. 'unknown' - the
-                  // confirmation probe itself was budget-denied, so nothing
-                  // was actually learned - never trip the circuit on an
-                  // UNVERIFIED outage. Either way: do not fail over; propagate.
-                  throw err;
-                }
-                recordCircuitFailure(this.primary.id); // confirmed unhealthy - trip/extend the breaker
-              }
-              // Confirmed unhealthy either way - fall through to the secondary below.
-            }
-          } else {
-            if (admission.isProbe) releaseCircuitProbe(this.primary.id); // claimed but never attempted - free the slot
-            budgetDeniedTier = decision.tier; // never contacted primary at all - not a health event
-          }
-        } else if (admission.isProbe) {
-          releaseCircuitProbe(this.primary.id); // no symbol mapping - never attempted, free the slot
-        }
-      }
-    }
+    for (let i = 0; i < slots.length; i++) {
+      const provider = slots[i]!;
+      const isLastSlot = i === slots.length - 1;
+      const admission = admitCircuitRequest(provider.id);
+      if (!admission.allowed) continue; // circuit already open - skip straight to the next slot, if any
 
-    if (this.secondaryEnabled && this.secondary) {
-      const admission = admitCircuitRequest(this.secondary.id);
-      if (admission.allowed) {
-        const symbol = symbolFor(this.secondary.id);
-        if (symbol) {
-          const decision = this.admit(this.secondary.id, priority);
-          if (decision.allowed) {
-            try {
-              const result = await call(this.secondary, symbol);
-              recordSuccess(this.secondary.id);
-              recordCircuitSuccess(this.secondary.id);
-              return { result, source: this.secondary.id };
-            } catch (err) {
-              recordFailure(this.secondary.id, (err as Error).message);
-              // Finding 2: the secondary gets the SAME confirmed-unhealthy
-              // treatment as the primary - a transient error must not
-              // needlessly trip the circuit and disable Alpaca. There is no
-              // further fallback either way, so the real error always
-              // propagates - only whether the circuit trips differs.
-              if (isSymbolSpecificError(err)) {
-                if (admission.isProbe) releaseCircuitProbe(this.secondary.id); // never a provider-health signal - see isSymbolSpecificError
-              } else if (admission.isProbe) {
-                recordCircuitFailure(this.secondary.id);
-              } else {
-                const confirmation = await this.confirmUnhealthy(this.secondary.id, this.secondary);
-                if (confirmation === 'unhealthy') recordCircuitFailure(this.secondary.id);
-                // 'healthy' or 'unknown' (budget-denied confirmation): never
-                // trip the circuit on an unverified outage - same rule as primary.
-              }
-              throw err;
-            }
-          } else {
-            if (admission.isProbe) releaseCircuitProbe(this.secondary.id);
-            budgetDeniedTier = decision.tier;
-          }
-        } else if (admission.isProbe) {
-          releaseCircuitProbe(this.secondary.id);
+      const symbol = symbolFor(provider.id);
+      if (!symbol) {
+        if (admission.isProbe) releaseCircuitProbe(provider.id); // no symbol mapping - never attempted, free the slot
+        continue;
+      }
+
+      const decision = this.admit(provider.id, priority);
+      if (!decision.allowed) {
+        if (admission.isProbe) releaseCircuitProbe(provider.id); // claimed but never attempted - free the slot
+        budgetDeniedTier = decision.tier; // never contacted this provider at all - not a health event
+        continue;
+      }
+
+      try {
+        const result = await call(provider, symbol);
+        recordSuccess(provider.id);
+        recordCircuitSuccess(provider.id);
+        return { result, source: provider.id };
+      } catch (err) {
+        recordFailure(provider.id, (err as Error).message);
+        if (isSymbolSpecificError(err)) {
+          if (admission.isProbe) releaseCircuitProbe(provider.id); // claimed but never a real health signal - free the slot
+          throw err; // never a provider-health event - see isSymbolSpecificError
         }
+        if (admission.isProbe) {
+          // The half-open trial's own outcome IS the confirmation - no
+          // separate healthCheck needed (would just double-spend quota to
+          // re-ask a question this attempt already answered).
+          recordCircuitFailure(provider.id);
+        } else {
+          const confirmation = await this.confirmUnhealthy(provider.id, provider);
+          if (confirmation !== 'unhealthy') {
+            // 'healthy' - confirmed still reachable, a one-off/transient
+            // fault, not a genuine outage. 'unknown' - the confirmation
+            // probe itself was budget-denied, so nothing was actually
+            // learned - never trip the circuit on an UNVERIFIED outage.
+            // Either way: do not fail over; propagate immediately.
+            throw err;
+          }
+          recordCircuitFailure(provider.id); // confirmed unhealthy - trip/extend the breaker
+        }
+        // 2026-09-16 Hybrid Provider Architecture task: preserves the
+        // PRE-HYBRID behavior exactly for both possible orderings. The
+        // primary (Twelve Data) NEVER throws its own error from here - a
+        // confirmed-unhealthy primary always falls through, to the next
+        // slot if any, or to the generic fallback below if not (matches
+        // the original "always primary first" code, where primary-only
+        // configurations - no secondary at all - fell through to the
+        // generic message, never primary's own error). The secondary
+        // (Alpaca) throws its OWN specific error (more diagnostic value
+        // than a generic message) but ONLY once it's the LAST slot with
+        // nothing left to try - in the pre-hybrid order that's always true
+        // (secondary was structurally always last), so this is
+        // byte-identical there; in a hybrid-swapped order (Alpaca
+        // preferred FIRST), a confirmed-unhealthy Alpaca instead falls
+        // through to let Twelve Data - the real fallback - actually run,
+        // rather than aborting the whole call on Alpaca's failure alone.
+        if (provider === this.secondary && isLastSlot) throw err;
       }
     }
 
@@ -291,8 +319,8 @@ export class MarketProviderManager {
     throw new ProviderError('No healthy provider available for this symbol', 'unknown');
   }
 
-  getQuote(mkrSymbol: string, symbolFor: (id: ProviderId) => string | null, priority: RequestPriority = 'P1') {
-    return this.withFailover<NormalizedQuote | null>((provider, symbol) => provider.getQuote(symbol, mkrSymbol), symbolFor, priority);
+  getQuote(mkrSymbol: string, symbolFor: (id: ProviderId) => string | null, priority: RequestPriority = 'P1', preferredProvider?: ProviderId) {
+    return this.withFailover<NormalizedQuote | null>((provider, symbol) => provider.getQuote(symbol, mkrSymbol), symbolFor, priority, preferredProvider);
   }
 
   /**
@@ -336,11 +364,77 @@ export class MarketProviderManager {
    * The secondary path is unaffected - it already unconditionally throws
    * on its own failure (see its own catch block below), so it never
    * reaches this fallback at all.
+   *
+   * 2026-09-16 Hybrid Provider Architecture task: [preferredProviderFor],
+   * when given, splits [mkrSymbols] into (at most) two groups - symbols
+   * that prefer the secondary (Alpaca) and everything else - and runs
+   * [batchWithFailover] once per non-empty group CONCURRENTLY (the two
+   * groups hit entirely different upstream services with independent
+   * rate limits, so there is no shared-provider concurrency risk the way
+   * there would be firing multiple chunks at the SAME provider at once -
+   * see TwelveDataProvider.getBatchQuotes's own doc comment for why THAT
+   * stays sequential), then merges both groups' results. A symbol's own
+   * per-provider routing is fully preserved even when its preferred
+   * group's call fails and the OTHER group's succeeds - only that
+   * symbol's own group is affected, matching "a failed request must
+   * still obey the existing confirmed-health/failover rules... do not
+   * turn one symbol's failure into a global provider outage." When
+   * [preferredProviderFor] is omitted (or nothing in [mkrSymbols]
+   * actually prefers the secondary), this is a single, byte-identical
+   * call to the pre-hybrid behavior.
    */
   async getBatchQuotes(
     mkrSymbols: string[],
     providerSymbolFor: (id: ProviderId, mkrSymbol: string) => string | null,
     priority: RequestPriority = 'P1',
+    preferredProviderFor?: (mkrSymbol: string) => ProviderId | null,
+  ): Promise<{ result: Record<string, NormalizedQuote | null>; source: ProviderId | null }> {
+    if (!preferredProviderFor || !this.secondary) {
+      return this.batchWithFailover(mkrSymbols, providerSymbolFor, priority);
+    }
+
+    const secondaryId = this.secondary.id;
+    const preferSecondaryGroup = mkrSymbols.filter((s) => preferredProviderFor(s) === secondaryId);
+    const preferPrimaryGroup = mkrSymbols.filter((s) => preferredProviderFor(s) !== secondaryId);
+
+    if (preferSecondaryGroup.length === 0) return this.batchWithFailover(mkrSymbols, providerSymbolFor, priority);
+    if (preferPrimaryGroup.length === 0) return this.batchWithFailover(mkrSymbols, providerSymbolFor, priority, secondaryId);
+
+    const [primaryGroupOutcome, secondaryGroupOutcome] = await Promise.allSettled([
+      this.batchWithFailover(preferPrimaryGroup, providerSymbolFor, priority),
+      this.batchWithFailover(preferSecondaryGroup, providerSymbolFor, priority, secondaryId),
+    ]);
+
+    const merged: Record<string, NormalizedQuote | null> = {};
+    let anyGroupSucceeded = false;
+    let lastError: unknown;
+    if (primaryGroupOutcome.status === 'fulfilled') {
+      Object.assign(merged, primaryGroupOutcome.value.result);
+      anyGroupSucceeded = true;
+    } else {
+      lastError = primaryGroupOutcome.reason;
+    }
+    if (secondaryGroupOutcome.status === 'fulfilled') {
+      Object.assign(merged, secondaryGroupOutcome.value.result);
+      anyGroupSucceeded = true;
+    } else {
+      lastError = secondaryGroupOutcome.reason;
+    }
+
+    if (!anyGroupSucceeded) throw lastError;
+    // Mixed providers contributed - no single scalar can honestly
+    // represent "the" source (unused by any caller today - see this
+    // method's own doc comment history - but `null` matches the
+    // existing "ambiguous" convention rather than fabricating one).
+    return { result: merged, source: null };
+  }
+
+  /** The actual per-group failover walk - see [getBatchQuotes]'s doc comment for why this is now a private helper callable once per hybrid-routed group. Algorithm is unchanged from the pre-hybrid single-pass version; only [routeSlots] (see its own doc comment) decides which provider is tried first. */
+  private async batchWithFailover(
+    mkrSymbols: string[],
+    providerSymbolFor: (id: ProviderId, mkrSymbol: string) => string | null,
+    priority: RequestPriority,
+    preferredProvider?: ProviderId,
   ): Promise<{ result: Record<string, NormalizedQuote | null>; source: ProviderId | null }> {
     const buildMap = (id: ProviderId): Record<string, string> => {
       const map: Record<string, string> = {};
@@ -350,102 +444,90 @@ export class MarketProviderManager {
       }
       return map;
     };
+    const slots = this.routeSlots(preferredProvider);
     let budgetDeniedTier: string | null = null;
-    let primaryAttemptFailed = false;
+    let anyAttemptFailed = false;
 
-    if (this.primary) {
-      const admission = admitCircuitRequest(this.primary.id);
-      if (admission.allowed) {
-        const map = buildMap(this.primary.id);
-        if (Object.keys(map).length > 0) {
-          const decision = this.admit(this.primary.id, priority);
-          if (decision.allowed) {
-            try {
-              const result = await this.primary.getBatchQuotes(map);
-              recordSuccess(this.primary.id);
-              recordCircuitSuccess(this.primary.id);
-              return { result, source: this.primary.id };
-            } catch (err) {
-              recordFailure(this.primary.id, (err as Error).message);
-              if (isSymbolSpecificError(err)) {
-                if (admission.isProbe) releaseCircuitProbe(this.primary.id); // never a provider-health signal - see isSymbolSpecificError
-                throw err;
-              }
-              if (admission.isProbe) {
-                recordCircuitFailure(this.primary.id); // the trial's own failure is the confirmation
-                primaryAttemptFailed = true;
-              } else {
-                const confirmation = await this.confirmUnhealthy(this.primary.id, this.primary);
-                if (confirmation !== 'unhealthy') throw err; // 'healthy' (transient) or 'unknown' (unverified) - propagate, don't fail over, don't trip
-                recordCircuitFailure(this.primary.id);
-                primaryAttemptFailed = true;
-              }
-            }
-          } else {
-            if (admission.isProbe) releaseCircuitProbe(this.primary.id);
-            budgetDeniedTier = decision.tier;
-          }
-        } else if (admission.isProbe) {
-          releaseCircuitProbe(this.primary.id);
-        }
-      } else if (Object.keys(buildMap(this.primary.id)).length > 0) {
-        // Circuit already open - the primary is known-unhealthy from a
-        // recent confirmation and wasn't even contacted this call, but
-        // this call DID have something to ask it for. Same "a real
-        // provider was needed and unavailable" fault as an in-call failure.
-        primaryAttemptFailed = true;
+    for (let i = 0; i < slots.length; i++) {
+      const provider = slots[i]!;
+      const isLastSlot = i === slots.length - 1;
+      const admission = admitCircuitRequest(provider.id);
+      if (!admission.allowed) {
+        // Circuit already open - known-unhealthy from a recent
+        // confirmation, not even contacted this call, but this call DID
+        // have something to ask it for. Same "a real provider was needed
+        // and unavailable" fault as an in-call failure (2026-09-15
+        // post-phone Closed Testing correction task's own root-cause fix,
+        // preserved here).
+        if (Object.keys(buildMap(provider.id)).length > 0) anyAttemptFailed = true;
+        continue;
       }
-    }
 
-    if (this.secondaryEnabled && this.secondary) {
-      const admission = admitCircuitRequest(this.secondary.id);
-      if (admission.allowed) {
-        const map = buildMap(this.secondary.id);
-        if (Object.keys(map).length > 0) {
-          const decision = this.admit(this.secondary.id, priority);
-          if (decision.allowed) {
-            try {
-              const result = await this.secondary.getBatchQuotes(map);
-              recordSuccess(this.secondary.id);
-              recordCircuitSuccess(this.secondary.id);
-              return { result, source: this.secondary.id };
-            } catch (err) {
-              recordFailure(this.secondary.id, (err as Error).message);
-              // Finding 2: same confirmed-unhealthy treatment as the primary.
-              if (isSymbolSpecificError(err)) {
-                if (admission.isProbe) releaseCircuitProbe(this.secondary.id); // never a provider-health signal - see isSymbolSpecificError
-              } else if (admission.isProbe) {
-                recordCircuitFailure(this.secondary.id);
-              } else {
-                const confirmation = await this.confirmUnhealthy(this.secondary.id, this.secondary);
-                if (confirmation === 'unhealthy') recordCircuitFailure(this.secondary.id);
-              }
-              throw err;
-            }
-          } else {
-            if (admission.isProbe) releaseCircuitProbe(this.secondary.id);
-            budgetDeniedTier = decision.tier;
-          }
-        } else if (admission.isProbe) {
-          releaseCircuitProbe(this.secondary.id);
+      const map = buildMap(provider.id);
+      if (Object.keys(map).length === 0) {
+        if (admission.isProbe) releaseCircuitProbe(provider.id);
+        continue;
+      }
+
+      const decision = this.admit(provider.id, priority);
+      if (!decision.allowed) {
+        if (admission.isProbe) releaseCircuitProbe(provider.id);
+        budgetDeniedTier = decision.tier;
+        continue;
+      }
+
+      try {
+        const result = await provider.getBatchQuotes(map);
+        recordSuccess(provider.id);
+        recordCircuitSuccess(provider.id);
+        return { result, source: provider.id };
+      } catch (err) {
+        recordFailure(provider.id, (err as Error).message);
+        if (isSymbolSpecificError(err)) {
+          if (admission.isProbe) releaseCircuitProbe(provider.id);
+          throw err;
         }
+        if (admission.isProbe) {
+          recordCircuitFailure(provider.id); // the trial's own failure is the confirmation
+          anyAttemptFailed = true;
+        } else {
+          const confirmation = await this.confirmUnhealthy(provider.id, provider);
+          if (confirmation !== 'unhealthy') throw err; // 'healthy' (transient) or 'unknown' (unverified) - propagate, don't fail over, don't trip
+          recordCircuitFailure(provider.id);
+          anyAttemptFailed = true;
+        }
+        // See withFailover's identical comment: primary never throws its
+        // own error (always falls through to the generic message below);
+        // secondary throws its own error only once it's the LAST slot -
+        // byte-identical to the pre-hybrid behavior in the default order,
+        // and lets a hybrid-swapped Alpaca-preferred group actually fall
+        // back to Twelve Data instead of aborting on Alpaca's failure alone.
+        if (provider === this.secondary && isLastSlot) throw err;
       }
     }
 
     if (budgetDeniedTier) throw budgetErrorFor(budgetDeniedTier);
-    // 2026-09-16 post-phone Closed Testing correction task: a real fault
-    // (see [primaryAttemptFailed]'s doc comment above) must surface as an
-    // error, never be silently absorbed into the "nothing mapped" fallback
-    // below - matches [withFailover]'s own final fallback message exactly.
-    if (primaryAttemptFailed) throw new ProviderError('No healthy provider available for these symbols', 'unknown');
-    // Nothing mapped for either provider - a genuine mapping outcome, not a fault.
+    // 2026-09-15 post-phone Closed Testing correction task: a real fault
+    // must surface as an error, never be silently absorbed into the
+    // "nothing mapped" fallback below - matches [withFailover]'s own
+    // final fallback message exactly.
+    if (anyAttemptFailed) throw new ProviderError('No healthy provider available for these symbols', 'unknown');
+    // Nothing mapped for either provider (in THIS group) - a genuine mapping outcome, not a fault.
     return { result: Object.fromEntries(mkrSymbols.map((s) => [s, null])), source: null };
   }
 
-  getCandles(mkrSymbol: string, timeframe: MkrTimeframe, outputSize: number, symbolFor: (id: ProviderId) => string | null, priority: RequestPriority = 'P1') {
-    return this.withFailover<NormalizedCandle[]>((provider, symbol) => provider.getCandles(symbol, mkrSymbol, timeframe, outputSize), symbolFor, priority);
+  getCandles(mkrSymbol: string, timeframe: MkrTimeframe, outputSize: number, symbolFor: (id: ProviderId) => string | null, priority: RequestPriority = 'P1', preferredProvider?: ProviderId) {
+    return this.withFailover<NormalizedCandle[]>((provider, symbol) => provider.getCandles(symbol, mkrSymbol, timeframe, outputSize), symbolFor, priority, preferredProvider);
   }
 
+  /**
+   * No `preferredProvider` param, unlike [getQuote]/[getCandles]/
+   * [getBatchQuotes] - Alpaca has no real market-status endpoint here
+   * (`AlpacaProvider.getMarketStatus` always returns a stub "unavailable"
+   * result, never a real HTTP call - see that method's own doc comment),
+   * so preferring it for this specific operation would never be
+   * meaningful; Twelve Data stays first exactly as before.
+   */
   getMarketStatus(mkrSymbol: string, symbolFor: (id: ProviderId) => string | null, priority: RequestPriority = 'P1') {
     return this.withFailover<NormalizedMarketStatus>((provider, symbol) => provider.getMarketStatus(symbol, mkrSymbol), symbolFor, priority);
   }

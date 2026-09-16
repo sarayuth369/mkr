@@ -29,6 +29,7 @@ import {
   handleAdminUserUpdate,
 } from './admin/admin-users-routes';
 import { handleAdminCalendar } from './admin/admin-calendar-routes';
+import { handleAdminAlpacaCapabilityTest } from './admin/admin-alpaca-capability-routes';
 import { handleCalendarEvents, handleCalendarToday, handleCalendarWeek } from './calendar/calendar-routes';
 import { runCalendarIngestion } from './calendar/ingestion';
 import { adminCorsHeaders, publicCorsHeaders } from './cors';
@@ -115,6 +116,14 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
   // source status, last success/failure, event counts - minimal, reusing
   // the existing admin auth/routing rather than a separate subsystem.
   if (path === '/api/mkr/admin/calendar' && request.method === 'GET') return handleAdminCalendar(request, env);
+
+  // Hybrid Provider Architecture task (2026-09-16), item 4 - real,
+  // sequential Alpaca capability test against a small representative
+  // symbol set, gated by the SAME admin auth as every other route here.
+  // Read-only: makes real Alpaca REST calls but never changes any config
+  // or routing flag - see admin-alpaca-capability-routes.ts's own doc
+  // comment.
+  if (path === '/api/mkr/admin/alpaca-capability-test' && request.method === 'GET') return handleAdminAlpacaCapabilityTest(request, env);
 
   throw new ApiError('NOT_FOUND', `No admin route for ${request.method} ${path}`);
 }

@@ -76,6 +76,8 @@ describe('updateConfig', () => {
         alertsEnabled: false,
         pushNotificationsEnabled: false,
         subscriptionEnabled: false,
+        hybridRoutingEnabled: false,
+        hybridCryptoRoutingEnabled: false,
       },
     });
     const config = await getConfig(env);
