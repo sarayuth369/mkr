@@ -6,7 +6,7 @@ TASK: 2026-09-16 MKR Final Release Gate One-Pass
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_FINAL_RELEASE_GATE_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded below after commit)
+COMMIT: 3e774f1
 BACKEND DEPLOYS: mkr-backend Cloudflare Worker deployed once this pass -
 Version ID 022c4dfc-40c2-4699-a989-cbd2de9f950d. Confirmed live bindings:
 HYBRID_ROUTING_ENABLED="false", HYBRID_CRYPTO_ROUTING_ENABLED="false",
