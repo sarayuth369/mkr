@@ -6,7 +6,7 @@ TASK: 2026-09-17 MKR Hosted Privacy Policy / Play Console One-Pass
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_PRIVACY_POLICY_HOSTED_PAGE_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded in the follow-up docs commit on this same pass - see git log)
+COMMIT: 6c48091
 BACKEND DEPLOY: mkr-backend Cloudflare Worker, Version 8b4ad4eb-f582-4ba8-a324-b8f8eeaa9a20
 (adds the new GET /privacy public page route).
 
