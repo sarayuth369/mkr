@@ -6,7 +6,7 @@ TASK: 2026-09-17 MKR Catalog + UI Expansion One-Pass
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_CATALOG_UI_EXPANSION_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded in the follow-up docs commit on this same pass - see git log)
+COMMIT: 890bedb
 BACKEND DEPLOY: mkr-backend Cloudflare Worker, Version f4475edb-72b6-4e94-b3eb-0c41f800250e
 (adds catalog-discovery reference/verify admin routes, admin symbols bulk-update route,
 filtered admin symbols GET). All D1 catalog mutations this pass were made live via the
