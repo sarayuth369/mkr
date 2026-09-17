@@ -58,5 +58,15 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- 2026-09-17 Hosted Privacy Policy task - required for url_launcher's
+             launchUrl(..., mode: LaunchMode.externalApplication) to find a
+             browser on Android 11+ package-visibility rules; without this the
+             package manager query silently returns nothing and launchUrl
+             falls through to this app's own coded fallback for every device,
+             not just ones genuinely missing a browser. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
     </queries>
 </manifest>

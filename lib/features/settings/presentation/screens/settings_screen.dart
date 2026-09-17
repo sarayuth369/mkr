@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/localization/locale_controller.dart';
 import '../../../../core/persistence/app_local_store.dart';
@@ -18,8 +19,33 @@ import '../../../watchlist/application/watchlist_controller.dart';
 import 'about_screen.dart';
 import 'static_text_screen.dart';
 
+/// 2026-09-17 Hosted Privacy Policy task - the real, public policy page,
+/// served by the same deployed Worker every other MKR network call
+/// already uses (`market_data_config.dart`'s `_backendUrlDefine` default),
+/// not a new domain/service.
+const _hostedPrivacyPolicyUrl = 'https://mkr-backend.biz2success.workers.dev/privacy';
+
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
+
+  /// Opens the real hosted policy in the device's browser. Falls back to
+  /// the existing in-app static text (unchanged, still fully localized)
+  /// only if the URL genuinely cannot be launched (e.g. no browser
+  /// available) - never leaves the user with neither.
+  Future<void> _openPrivacyPolicy(BuildContext context, AppLocalizations l10n) async {
+    final uri = Uri.parse(_hostedPrivacyPolicyUrl);
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && context.mounted) {
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => StaticTextScreen(title: l10n.settingsPrivacyPolicy, body: l10n.privacyPolicyBody),
+      ));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -124,9 +150,8 @@ class SettingsScreen extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.privacy_tip_outlined),
             title: Text(l10n.settingsPrivacyPolicy),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => StaticTextScreen(title: l10n.settingsPrivacyPolicy, body: l10n.privacyPolicyBody),
-            )),
+            trailing: const Icon(Icons.open_in_new, size: 18),
+            onTap: () => _openPrivacyPolicy(context, l10n),
           ),
           ListTile(
             leading: const Icon(Icons.description_outlined),

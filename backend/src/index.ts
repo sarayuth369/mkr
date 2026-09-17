@@ -1,5 +1,6 @@
 import { refreshAlertIndex } from './alerts/alert-index';
 import { handleAiAsk, handleAiAssetInsight, handleAiBrief, handleAiEventImpact, handleAiNewsSummary } from './ai/ai-routes';
+import { handlePrivacyPage } from './pages/privacy-page';
 import {
   handleAdminAuditLog,
   handleAdminCacheGet,
@@ -241,6 +242,15 @@ export default {
     // deployment, not a theoretical concern.
     if (path === '/api/mkr/market/stream') {
       return handleMarketStream(request, env);
+    }
+
+    // 2026-09-17 Hosted Privacy Policy task - a plain public webpage, not
+    // an `/api/mkr/*` JSON endpoint: no auth, no CORS envelope, no request
+    // ID header needed (this is a normal browser page load, not a
+    // cross-origin API fetch) - returned directly, ahead of the JSON
+    // try/catch below, same as the WebSocket upgrade case above.
+    if (path === '/privacy' && request.method === 'GET') {
+      return handlePrivacyPage();
     }
 
     try {
