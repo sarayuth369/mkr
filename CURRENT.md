@@ -6,7 +6,7 @@ TASK: 2026-09-17 MKR Final UX + Market Reliability + Catalog Polish One-Pass
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_FINAL_UX_RELIABILITY_CATALOG_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded in the follow-up docs commit on this same pass - see git log)
+COMMIT: 0f88505
 BACKEND DEPLOY: mkr-backend Cloudflare Worker, Version 66072d17-af47-4f66-966c-e70601f2860e
 (AI asset-insight active-fetch fix, AI brief symbol-list correction, new admin
 audit-log route, admin symbols status/providerCoverage fields). A D1 catalog
