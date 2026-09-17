@@ -14,6 +14,7 @@ import {
   handleAdminRateLimitsGet,
   handleAdminRateLimitsUpdate,
   handleAdminSettings,
+  handleAdminSymbolsBulkUpdate,
   handleAdminSymbolsGet,
   handleAdminSymbolsUpdate,
 } from './admin/admin-routes';
@@ -30,6 +31,7 @@ import {
 } from './admin/admin-users-routes';
 import { handleAdminCalendar } from './admin/admin-calendar-routes';
 import { handleAdminAlpacaCapabilityTest } from './admin/admin-alpaca-capability-routes';
+import { handleAdminCatalogDiscoveryReference, handleAdminCatalogDiscoveryVerify } from './admin/admin-catalog-discovery-routes';
 import { handleCalendarEvents, handleCalendarToday, handleCalendarWeek } from './calendar/calendar-routes';
 import { runCalendarIngestion } from './calendar/ingestion';
 import { adminCorsHeaders, publicCorsHeaders } from './cors';
@@ -76,6 +78,7 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
   if (path === '/api/mkr/admin/providers' && request.method === 'POST') return handleAdminProvidersUpdate(request, env, actor);
   if (path === '/api/mkr/admin/symbols' && request.method === 'GET') return handleAdminSymbolsGet(request, env);
   if (path === '/api/mkr/admin/symbols' && request.method === 'POST') return handleAdminSymbolsUpdate(request, env, actor);
+  if (path === '/api/mkr/admin/symbols/bulk' && request.method === 'POST') return handleAdminSymbolsBulkUpdate(request, env, actor);
   if (path === '/api/mkr/admin/cache' && request.method === 'GET') return handleAdminCacheGet(request, env);
   if (path === '/api/mkr/admin/cache' && request.method === 'POST') return handleAdminCacheUpdate(request, env, actor);
   if (path === '/api/mkr/admin/rate-limits' && request.method === 'GET') return handleAdminRateLimitsGet(request, env);
@@ -124,6 +127,12 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
   // or routing flag - see admin-alpaca-capability-routes.ts's own doc
   // comment.
   if (path === '/api/mkr/admin/alpaca-capability-test' && request.method === 'GET') return handleAdminAlpacaCapabilityTest(request, env);
+
+  // 2026-09-17 Catalog Expansion task - real, bounded, sequential candidate
+  // verification against Twelve Data/Alpaca before any new catalog row is
+  // enabled - see admin-catalog-discovery-routes.ts's own doc comment.
+  if (path === '/api/mkr/admin/catalog-discovery/verify' && request.method === 'POST') return handleAdminCatalogDiscoveryVerify(request, env);
+  if (path === '/api/mkr/admin/catalog-discovery/reference' && request.method === 'GET') return handleAdminCatalogDiscoveryReference(request, env);
 
   throw new ApiError('NOT_FOUND', `No admin route for ${request.method} ${path}`);
 }

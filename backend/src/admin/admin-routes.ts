@@ -115,8 +115,30 @@ export async function handleAdminProvidersUpdate(request: Request, env: Env, act
   return jsonResponse(after);
 }
 
-export async function handleAdminSymbolsGet(_request: Request, env: Env): Promise<Response> {
-  return jsonResponse(await catalogFor(env).all());
+/**
+ * 2026-09-17 Catalog Expansion task - the catalog is materially larger now
+ * (see schema.sql), so Admin Web needs to filter/search it rather than
+ * always rendering every row. Filtering happens in-memory over the
+ * already-fetched full row set (no new SQL path, no added D1 query
+ * surface) - the catalog is still small enough (low hundreds of rows at
+ * most, per this task's own "largest PRACTICAL, not the whole provider
+ * universe" instruction) that this costs nothing meaningful, and it keeps
+ * `SymbolCatalog` itself unchanged/lower-risk. Never triggers any provider
+ * request - this is exactly the same D1 read `handleAdminSymbolsGet`
+ * already did, just filtered before the response is built.
+ */
+export async function handleAdminSymbolsGet(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const category = url.searchParams.get('category');
+  const search = url.searchParams.get('search')?.trim().toLowerCase();
+  const enabledOnly = url.searchParams.get('enabledOnly') === 'true';
+
+  let rows = await catalogFor(env).all();
+  if (category) rows = rows.filter((r) => r.category === category);
+  if (enabledOnly) rows = rows.filter((r) => r.enabled !== 0);
+  if (search) rows = rows.filter((r) => r.symbol.toLowerCase().includes(search) || r.display_name.toLowerCase().includes(search));
+
+  return jsonResponse(rows);
 }
 
 export async function handleAdminSymbolsUpdate(request: Request, env: Env, actor: string): Promise<Response> {
@@ -158,6 +180,62 @@ export async function handleAdminSymbolsUpdate(request: Request, env: Env, actor
   });
 
   return jsonResponse(await catalog.get(body.symbol));
+}
+
+/**
+ * 2026-09-17 Catalog Expansion task - "safe bulk enable/disable only if
+ * already structurally safe" (task's own words). This is: each patch is
+ * routed through the exact same single-row `upsert` the individual-symbol
+ * route already used (no new SQL, no new validation path), applied
+ * sequentially to a bounded batch, and NEVER creates a row that doesn't
+ * already exist (a bulk call is for managing what's there, not for mass
+ * catalog import - that stays the discovery-verify + individual-upsert
+ * flow). No provider request of any kind - patches only enabled/featured/
+ * sortOrder, the three fields that were the actual pain point of managing
+ * a much bigger catalog one row at a time.
+ */
+export async function handleAdminSymbolsBulkUpdate(request: Request, env: Env, actor: string): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as {
+    patches?: { symbol?: string; enabled?: boolean; featured?: boolean; sortOrder?: number }[];
+  } | null;
+  if (!body || !Array.isArray(body.patches) || body.patches.length === 0) {
+    throw new ApiError('INVALID_PARAMETER', 'Body must be { patches: [{ symbol, enabled?, featured?, sortOrder? }] }');
+  }
+  if (body.patches.length > 100) {
+    throw new ApiError('INVALID_PARAMETER', 'A maximum of 100 patches may be applied per call');
+  }
+
+  const catalog = catalogFor(env);
+  const results: { symbol: string; updated: boolean; reason?: string }[] = [];
+  for (const patch of body.patches) {
+    if (!patch.symbol) {
+      results.push({ symbol: '(missing)', updated: false, reason: 'symbol is required' });
+      continue;
+    }
+    const before = await catalog.get(patch.symbol);
+    if (!before) {
+      // Never creates a row - see the function's own doc comment.
+      results.push({ symbol: patch.symbol, updated: false, reason: 'symbol does not exist - bulk update never creates new rows' });
+      continue;
+    }
+    await catalog.upsert({
+      symbol: before.symbol,
+      display_name: before.display_name,
+      category: before.category,
+      enabled: (patch.enabled ?? before.enabled === 1) ? 1 : 0,
+      featured: (patch.featured ?? before.featured === 1) ? 1 : 0,
+      sort_order: patch.sortOrder ?? before.sort_order,
+      twelve_data_symbol: before.twelve_data_symbol,
+      alpaca_symbol: before.alpaca_symbol,
+      default_timeframe: before.default_timeframe,
+      cache_ttl_seconds: before.cache_ttl_seconds,
+    });
+    results.push({ symbol: patch.symbol, updated: true });
+  }
+
+  await recordAuditEntry(env, { actor, action: 'symbol.bulk_updated', target: `${results.filter((r) => r.updated).length}/${results.length}`, oldValue: null, newValue: null });
+
+  return jsonResponse({ results });
 }
 
 export async function handleAdminCacheGet(_request: Request, env: Env): Promise<Response> {

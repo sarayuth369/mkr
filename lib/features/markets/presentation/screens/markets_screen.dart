@@ -22,20 +22,46 @@ class MarketsScreen extends StatefulWidget {
 
 class _MarketsScreenState extends State<MarketsScreen> {
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
 
+  // 2026-09-17 Catalog Expansion task: Indices and Thailand chips removed.
+  // Live verification against the real Twelve Data account confirmed
+  // every symbol in both categories is unsupported on the current plan
+  // (Grow/Venture-gated indices; Thai XBKK equities gated the same way) -
+  // every row was disabled rather than left enabled for appearance (see
+  // schema.sql), which left both categories with zero enabled symbols.
+  // A chip that always resolves to the empty state is worse than no chip;
+  // if either provider capability is ever added, restore the chip here
+  // alongside re-enabling the relevant rows.
   List<MapEntry<String, AssetClass?>> _categories(AppLocalizations l10n) => [
         MapEntry(l10n.filterAll, null),
         MapEntry(l10n.categoryGold, AssetClass.gold),
         MapEntry(l10n.categoryUsStocks, AssetClass.usStock),
-        MapEntry(l10n.categoryIndices, AssetClass.indices),
         MapEntry(l10n.categoryCrypto, AssetClass.crypto),
         MapEntry(l10n.categoryForex, AssetClass.forex),
-        MapEntry(l10n.categoryThailand, AssetClass.thailand),
       ];
+
+  @override
+  void initState() {
+    super.initState();
+    // 2026-09-17 Catalog Expansion task: triggers MarketsController.loadMore
+    // only when the list is genuinely near its end - never on every scroll
+    // frame, never a burst of calls (loadMore itself is a no-op while
+    // already loading or with nothing left to fetch, so a few redundant
+    // near-bottom frames before the first page lands cost nothing extra).
+    _scrollController.addListener(() {
+      if (!_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (position.pixels >= position.maxScrollExtent - 200) {
+        context.read<MarketsController>().loadMore();
+      }
+    });
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -113,6 +139,7 @@ class _MarketsScreenState extends State<MarketsScreen> {
                       if (controller.state.isPartial) _PartialDataBanner(message: l10n.marketsPartialData),
                       Expanded(
                         child: ListView.builder(
+                          controller: _scrollController,
                           // 2026-09-16 post-phone Closed Testing correction
                           // task: this list sits directly above the fixed
                           // MkrBottomBannerAd (bottomNavigationBar already
@@ -125,8 +152,20 @@ class _MarketsScreenState extends State<MarketsScreen> {
                           // Market Detail all already use `all(16)`,
                           // matched here on the bottom edge).
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                          itemCount: quotes.length,
+                          // 2026-09-17 Catalog Expansion task: one extra
+                          // trailing row for the load-more indicator when
+                          // this view genuinely has more catalog matches
+                          // than have been fetched yet - never rendered
+                          // once every match in the current filter is
+                          // resolved or confirmed unavailable.
+                          itemCount: quotes.length + (controller.hasMore ? 1 : 0),
                           itemBuilder: (context, index) {
+                            if (index >= quotes.length) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+                              );
+                            }
                             final quote = quotes[index];
                             return AssetRow(
                               quote: quote,

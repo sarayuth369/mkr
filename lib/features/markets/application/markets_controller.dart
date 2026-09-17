@@ -235,4 +235,69 @@ class MarketsController extends ChangeNotifier {
   }
 
   List<MarketQuote> visibleQuotes() => _state.dataOrNull ?? const [];
+
+  /// 2026-09-17 Catalog Expansion task: with a materially larger catalog,
+  /// a category/search view can now genuinely have more matches than one
+  /// [_maxSymbolsPerFetch]-sized page ever fetches - previously the tail
+  /// of any view past the first 8 was silently unreachable (never
+  /// requested, so never rendered, with no signal that more existed).
+  /// `hasMore`/`loadMore` let the screen add a bounded next page on
+  /// scroll, using the exact same catalog-first + capped-batch discipline
+  /// [_ensureQuotes] already established - never a bigger burst, just
+  /// another one of the same size.
+  bool get hasMore {
+    final visible = _matchingCatalog();
+    return visible.any((s) => !_quotes.containsKey(s.symbol) && !_unavailable.contains(s.symbol));
+  }
+
+  bool _loadingMore = false;
+  bool get loadingMore => _loadingMore;
+
+  /// Deliberately separate from [_ensureQuotes] rather than a parameter on
+  /// it: a "load more" action must never flash the already-visible page
+  /// back to a loading skeleton, and a failure here must never replace
+  /// good, already-rendered data with an error - it just leaves the next
+  /// page's symbols unresolved for a later retry (scrolling again, or a
+  /// pull-to-refresh), unlike [_ensureQuotes]'s initial/filter-change
+  /// loads where surfacing the error is the correct behavior.
+  Future<void> loadMore() async {
+    if (_disposed || _loadingMore) return;
+    final pending = _matchingCatalog().map((s) => s.symbol).where((s) => !_quotes.containsKey(s) && !_unavailable.contains(s)).toList();
+    if (pending.isEmpty) return;
+
+    final requestId = _loadRequestId;
+    _loadingMore = true;
+    if (!_disposed) notifyListeners();
+
+    final targets = pending.take(_maxSymbolsPerFetch).toList();
+    try {
+      final result = await _service.getQuotesFor(targets);
+      if (requestId != _loadRequestId || _disposed) return;
+      switch (result) {
+        case MarketFetchSuccess(:final quotes):
+          for (final q in quotes) {
+            _quotes[q.symbol] = q;
+            _unavailable.remove(q.symbol);
+          }
+        case MarketFetchPartial(:final quotes, :final failedSymbols):
+          for (final q in quotes) {
+            _quotes[q.symbol] = q;
+            _unavailable.remove(q.symbol);
+          }
+          _unavailable.addAll(failedSymbols);
+        case MarketFetchEmpty():
+          _unavailable.addAll(targets);
+        case MarketFetchFailure():
+          break; // leave `targets` unresolved - do not disturb the existing visible page
+      }
+    } catch (_) {
+      // same reasoning as MarketFetchFailure above
+    } finally {
+      if (requestId == _loadRequestId && !_disposed) {
+        _loadingMore = false;
+        _recompute();
+        notifyListeners();
+      }
+    }
+  }
 }

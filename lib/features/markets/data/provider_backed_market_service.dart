@@ -181,12 +181,29 @@ class ProviderBackedMarketService implements MarketService {
     return candles.map((c) => c.close).toList();
   }
 
+  /// 2026-09-17 Catalog Expansion task: previously fetched a quote for
+  /// EVERY catalog match with no cap - safe only while the catalog stayed
+  /// tiny (~28 rows, at most a handful of matches for any query). Once the
+  /// catalog materially expands, a short/common query (a single letter,
+  /// "USD", "Corp") could match dozens of rows and fire one unbounded
+  /// batch request. Capped to the same bound `MarketsController` already
+  /// uses for its own search fetches (`_maxSymbolsPerFetch`), so this
+  /// provider-level path and the Markets screen's own path can never
+  /// diverge in safety even though they're reached from different UI
+  /// entry points (this one is also used by Watchlist's "Add Symbol"
+  /// search, which has no local pagination of its own).
+  static const _searchResultLimit = 8;
+
   @override
   Future<MarketFetchResult> search(String query) {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return Future.value(const MarketFetchEmpty());
     return _fetchSymbols(
-      (catalog) => catalog.where((s) => s.symbol.toLowerCase().contains(q) || s.displayName.toLowerCase().contains(q)).map((s) => s.symbol).toList(),
+      (catalog) => catalog
+          .where((s) => s.symbol.toLowerCase().contains(q) || s.displayName.toLowerCase().contains(q))
+          .take(_searchResultLimit)
+          .map((s) => s.symbol)
+          .toList(),
     );
   }
 
