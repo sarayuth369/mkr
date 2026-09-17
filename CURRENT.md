@@ -6,7 +6,7 @@ TASK: 2026-09-17 MKR Pre-Closed-Testing Final One-Pass
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_PRE_CLOSED_TESTING_FINAL_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded in the follow-up docs commit on this same pass - see git log)
+COMMIT: 59a0f07
 BACKEND DEPLOY: mkr-backend Cloudflare Worker, Version bae7a92a-882a-472e-b489-d220c56f06f0
 (fixes a real admin-audit gap: secondaryProvider-only changes previously
 wrote zero audit rows).
