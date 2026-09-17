@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../features/ai/domain/ai_insight.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../theme/app_theme.dart';
 
 /// AI-generated brief shown on Home / Market Detail / Gold Radar. Summary
 /// and "why it matters" are always visible; the bulleted "what to watch"
@@ -34,7 +35,16 @@ class _AIInsightCardState extends State<AIInsightCard> {
           children: [
             Row(
               children: [
-                Icon(Icons.auto_awesome, size: 18, color: theme.colorScheme.primary),
+                // 2026-09-17 Pre-Closed-Testing Final task: this card is
+                // reused on Home/Market Detail/Gold Radar - previously used
+                // theme.colorScheme.primary here, while Home's own wrapper
+                // additionally applied a violet aiAccent gradient border
+                // around the exact same card, and AI Ask's message bubbles
+                // use aiAccent for their icon too. Using the dedicated
+                // aiAccent token here makes the "this is AI-generated"
+                // visual identity consistent everywhere this card appears,
+                // independent of which screen wraps it.
+                Icon(Icons.auto_awesome, size: 18, color: context.marketColors.aiAccent),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(

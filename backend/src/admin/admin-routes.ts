@@ -107,6 +107,18 @@ export async function handleAdminProvidersUpdate(request: Request, env: Env, act
       newValue: after.secondaryEnabled,
     });
   }
+  // 2026-09-17 Pre-Closed-Testing Final task - real audit gap found: a
+  // request that changes ONLY `secondaryProvider` (e.g. alpaca ->
+  // twelve_data) while `secondaryEnabled` stays the same previously wrote
+  // zero audit rows, even though the config value on disk changed. This
+  // was found while investigating why a prior pass's hybrid-flag drift
+  // could not be traced - not itself the cause of that specific incident
+  // (see `defaults.ts`'s env-var fallback, a separate gap this task's own
+  // report documents), but a real, independently-fixable hole in the same
+  // "every runtime-config write must be traceable" contract.
+  if (before.secondaryProvider !== after.secondaryProvider) {
+    await recordAuditEntry(env, { actor, action: 'provider.secondary_provider.changed', oldValue: before.secondaryProvider, newValue: after.secondaryProvider });
+  }
   if (before.primaryProvider !== after.primaryProvider) {
     await recordAuditEntry(env, { actor, action: 'provider.primary.changed', oldValue: before.primaryProvider, newValue: after.primaryProvider });
   }

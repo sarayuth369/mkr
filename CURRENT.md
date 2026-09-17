@@ -2,122 +2,111 @@ PROJECT: MKR
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: 2026-09-17 MKR Final UX + Market Reliability + Catalog Polish One-Pass
-TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_FINAL_UX_RELIABILITY_CATALOG_PASS.md
+TASK: 2026-09-17 MKR Pre-Closed-Testing Final One-Pass
+TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_PRE_CLOSED_TESTING_FINAL_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: 0f88505
-BACKEND DEPLOY: mkr-backend Cloudflare Worker, Version 66072d17-af47-4f66-966c-e70601f2860e
-(AI asset-insight active-fetch fix, AI brief symbol-list correction, new admin
-audit-log route, admin symbols status/providerCoverage fields). A D1 catalog
-correction (nulling 5 stale broken mapping strings so they correctly compute
-as "dead" instead of "standby" - see report Section 4) was applied live via
-the admin API before this report was finalized.
+COMMIT: (recorded in the follow-up docs commit on this same pass - see git log)
+BACKEND DEPLOY: mkr-backend Cloudflare Worker, Version bae7a92a-882a-472e-b489-d220c56f06f0
+(fixes a real admin-audit gap: secondaryProvider-only changes previously
+wrote zero audit rows).
 
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_FINAL_UX_RELIABILITY_CATALOG_PASS_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MKR_PRE_CLOSED_TESTING_FINAL_ONE_PASS_REPORT.md
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
 PREVIOUS STATE:
-MKR Catalog + UI Expansion One-Pass, completed, was WAITING_FOR_GPT_REVIEW
-(commit ec0305f).
+MKR Final UX + Market Reliability + Catalog Polish One-Pass, completed,
+was WAITING_FOR_GPT_REVIEW (commit e2e17d9).
 
-THIS PASS SUMMARY: Audited Home/Markets reliability, AI Asset-Insight,
-Admin Symbols/audit-log, and UI polish in parallel, then fixed all material
-findings in one integrated pass.
+THIS PASS SUMMARY: primarily a re-verification/audit-depth pass, not a
+rebuild - the two prior passes already fixed the material Home/Markets
+reliability, AI Asset-Insight, and admin-auditability bugs. This pass:
 
-TWO REAL RELIABILITY BUGS FOUND AND FIXED (matching the reported
-intermittent "PROVIDER UNAVAILABLE" symptom):
-1. MarketProviderManager.ensureConnected() previously cached a FAILED
-   connect attempt forever - once the first connection attempt completed
-   (success or failure), every later call returned that same already-
-   settled future permanently, so a single transient health-check blip at
-   cold start stuck the whole app in providerError until backgrounded/
-   reopened. Fixed with a bounded 15s cooldown-based retry - self-heals
-   without ever hammering healthCheck() per call.
-2. MarketsController's "nothing to fetch" early-return path left a stale
-   _lastFetchError from a PREVIOUS, unrelated category set, so switching
-   back to a category whose symbols were already resolved/unavailable
-   could show a different category's stale error message. Fixed by
-   clearing the error when nothing was actually fetched this call.
-Both regression-tested. Two further real mechanisms (per-isolate circuit
-breaker state; cold-cache-with-no-stale-fallback) were confirmed real but
-intentionally NOT fixed - documented as accepted platform tradeoffs, not
-proven regressions, out of this pass's scope.
-
-AI ASSET-INSIGHT BUG FOUND AND FIXED: root cause confirmed via live
-investigation - the route only ever did a passive, read-only cache lookup
-under the same key /market/quote writes to, with no active fetch of its
-own; a cold/never-warmed cache entry silently produced a hardcoded
-"no data" fallback the model then honestly paraphrased. Fixed by giving it
-the same active-fetch path /market/quote itself uses. Live-verified fixed
-for both XAU/USD and NVDA on the deployed Worker. Also fixed handleAiBrief's
-hardcoded 5-symbol grounding list, 3 of which were symbols the prior pass
-permanently disabled (DXY/US10Y/OIL) - replaced with currently-enabled
-symbols.
-
-ADMIN SYMBOLS / AUDIT-LOG: added GET /admin/audit-log (the listAuditLog
-function existed since the first admin route but nothing ever exposed it -
-exactly the gap the prior pass hit when it couldn't trace who set hybrid
-flags to true). Added computed status (enabled/standby/dead) and
-providerCoverage fields to GET /admin/symbols, plus a status filter. This
-surfaced a real data-integrity gap: 5 of the 10 legacy dead rows
-(SPX/NDX/DJI/RUT/VIX) still carried their old, confirmed-broken Twelve Data
-mapping string, making them misreport as "standby" instead of "dead" -
-corrected by nulling those mapping columns (in D1 live and in schema.sql).
-
-UI POLISH: fixed a real bug (AI Ask rendered the raw caught exception as a
-chat message on failure - now a friendly localized error bubble), Calendar's
-freshness dot (hardcoded raw colors -> theme's live/stale/offline tokens),
-Market Detail's price-change text and "not found" state (bypassed theme ->
-theme.textTheme / shared EmptyState), Portfolio/Alerts hardcoded text
-styles -> theme.textTheme, Watchlist/Alerts padding (12 -> 16, matching
-every other list screen), Home's Radar empty state (bare text -> muted
-icon+caption). Surveyed but deliberately deferred: Watchlist/Portfolio
-missing ad slots and live-status indicators, AI accent-color consistency
-across screens, one NewsCard cosmetic nitpick - all documented in the
-report, not silently dropped.
+1. Re-tested Home/Markets reliability live (5/5 quote calls succeeded,
+   circuit closed) - confirmed the prior pass's two fixes hold.
+2. Re-assessed the circuit breaker's per-isolate tradeoff per this task's
+   explicit instruction - decided NOT to redesign it (no new concrete
+   regression found beyond what's already fixed; a real fix would need new
+   Durable-Object infrastructure, explicitly out of bounds without proof).
+3. Re-confirmed catalog integrity live: 32 enabled / 52 standby / 10 dead,
+   zero drift since the prior pass, hybrid flags still false.
+4. Found and fixed a REAL admin-audit gap: handleAdminProvidersUpdate
+   could change secondaryProvider alone with zero audit entry written.
+   Fixed and regression-tested.
+5. Found (but deliberately did not "fix" in code) a real structural gap:
+   hybridRoutingEnabled/hybridCryptoRoutingEnabled/secondaryEnabled all
+   fall back to wrangler.toml env vars when unset in KV - a redeploy that
+   changes those env vars bypasses the audit log entirely. This is very
+   plausibly the real explanation for the EARLIER (already-resolved) flag-
+   drift incident. Not removed, since the env fallback is a legitimate
+   operator control surface - documented as an operator-process
+   recommendation instead (treat wrangler.toml changes to these 3 vars
+   with the same scrutiny as an admin-API flag flip).
+6. Live-tested AI Asset-Insight/Brief for XAU/USD, NVDA, AND a crypto
+   symbol (BTC) plus a disabled symbol (SPX) as a negative control - all
+   correct: real data for enabled symbols, an honest "no data" statement
+   for a genuinely unavailable one, no fabrication anywhere.
+7. Fixed one UI consistency item: AIInsightCard's icon now uses the
+   dedicated aiAccent theme token (was theme.colorScheme.primary),
+   matching the AI-branding treatment already used elsewhere.
+8. Investigated a broad "raw exception leak" concern the audit initially
+   raised across ~20 call sites - on inspection this was overstated: the
+   app's domain exceptions (MarketFetchException/MarketCatalogException/
+   MarketAIException) are all deliberately designed with a clean
+   toString() => message by architecture, confirmed via their own
+   definitions and doc comments. Judged a mass rewrite unwarranted given
+   the low actual residual risk versus regression risk under time
+   pressure - documented as a smaller follow-up if a real leak is ever
+   observed live, not done speculatively here.
+9. Found (not fixed) that the Android release build type sets neither
+   minifyEnabled nor shrinkResources - a real pre-Play-Store gap, but
+   flipping it blind without real-device runtime verification of the
+   obfuscated build was judged too risky to do in this environment.
+   Flagged as an operator/follow-up action needing real-device testing.
 
 REGRESSION:
-- Backend: 620/620 tests passing (49 test files, +1 new file, +10
-  new/updated tests). npm run typecheck: clean.
-- Flutter: 374/374 tests passing (+5 new tests). flutter analyze: no
-  issues found.
+- Backend: 621/621 tests passing (49 test files, +1 new regression test).
+  npm run typecheck: clean.
+- Flutter: 374/374 tests passing (unchanged - this pass's UI fix needed no
+  new test surface). flutter analyze: no issues found.
 - flutter build apk --debug and flutter build appbundle --release
-  (54.3MB): both succeed. Same pre-existing debug-signing warning as every
-  prior pass (unchanged, not a regression).
+  (54.3MB): both succeed. Same pre-existing debug-signing warning,
+  unchanged.
 - Security scan: git diff grepped for credential patterns - zero real
-  secret values. auc/backend confirmed untouched.
+  secret values across the 3 files this pass touched. auc/backend
+  confirmed untouched.
 
 PRODUCTION FLAGS: secondaryEnabled, hybridRoutingEnabled,
-hybridCryptoRoutingEnabled all confirmed "false" as of the end of this
-pass - verified via a direct config read as the final live-smoke step.
-Twelve Data remains primary; Alpaca remains a verified, disabled standby
-(52 rows, fully mapped, ready for activation).
+hybridCryptoRoutingEnabled all confirmed "false" via a live admin
+dashboard read as the final verification step.
+
+READINESS: no known blocking ENGINEERING defects for Closed Testing.
+Closed Testing itself is blocked strictly by operator prerequisites
+(real release keystore, real Play Billing setup, real AdMob account) -
+see report Section 13 - none of which Claude can perform.
 
 REMAINING OPERATOR ACTIONS:
-1. Enable the 52 verified-standby US stocks/ETFs whenever a
-   secondaryEnabled=true production-activation decision is made (a
-   licensing/product decision, not engineering) - mapping is ready, only a
-   bulk-enable call is needed.
-2. The PRIOR pass's flag-drift root cause (secondaryEnabled/hybrid flags
-   found unexpectedly true) remains formally untraced historically - the
-   new audit-log route means any FUTURE recurrence can now actually be
-   investigated.
-3. Thailand/Indices/global-commodity-index coverage remains genuinely
+1. Generate/safeguard a real Android release upload keystore.
+2. Set up Google Play Console + real Play Billing products; build the
+   real in_app_purchase + server-side receipt validation integration
+   (replaces MockBillingRepository).
+3. Create an AdMob account + real ad unit IDs; build the google_mobile_ads
+   SDK integration once available.
+4. Confirm the Firebase console project is genuinely live/active
+   server-side (repo-level config is correct).
+5. Treat any future wrangler.toml change to the 3 hybrid/secondary env
+   vars with the same scrutiny as an admin-API flag flip - this path
+   bypasses the audit log by design.
+6. Consider enabling Android release minifyEnabled/shrinkResources before
+   real Play Store submission - only with real-device runtime testing of
+   the obfuscated build, not a blind flip.
+7. Enable the 52 verified-standby US stocks/ETFs whenever a
+   secondaryEnabled=true production-activation decision is made.
+8. Thailand/Indices/global-commodity-index coverage remains genuinely
    unavailable on the current Twelve Data plan - a plan-upgrade decision.
-4. The circuit breaker's per-isolate state is a real, understood
-   contributor to occasional "retry succeeds" behavior - fixing it would
-   need a Durable-Object-based redesign, intentionally out of this pass's
-   scope. Consider for a future pass if reports persist after this pass's
-   two fixes.
-5. A handful of lower-priority UI inconsistencies were surveyed but not
-   fixed this pass (see report Section 6) - candidates for a future
-   UI-focused pass.
-6. The two prior-pass Closed Testing blockers (release keystore, real Play
-   Billing) are unchanged, unrelated to this pass.
 
 NEXT:
 Claude has completed this pass and stopped, per its own instruction - no

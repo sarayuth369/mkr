@@ -59,6 +59,24 @@ describe('Task 6 - admin provider budgets (reuses the existing /admin/providers 
     expect(auditCalls.some((c) => c.args.includes('provider.budgets.changed'))).toBe(true);
   });
 
+  it('UPDATE audit-logs a secondaryProvider-only change (2026-09-17 Pre-Closed-Testing audit gap fix)', async () => {
+    // Regression test: previously a request that changed ONLY
+    // secondaryProvider (secondaryEnabled unchanged) wrote zero audit
+    // rows, even though the config value on disk genuinely changed - a
+    // real gap in "every runtime-config write must be traceable".
+    const { env, auditCalls } = makeEnv();
+
+    const response = await handleAdminProvidersUpdate(
+      new Request('https://x', { method: 'POST', body: JSON.stringify({ secondaryProvider: 'twelve_data' }) }), // default secondaryProvider is 'alpaca' - this is a genuine change
+      env,
+      'admin',
+    );
+    const body = (await response.json()) as { data: { secondaryProvider: string } };
+
+    expect(body.data.secondaryProvider).toBe('twelve_data');
+    expect(auditCalls.some((c) => c.args.includes('provider.secondary_provider.changed'))).toBe(true);
+  });
+
   it('UPDATE rejects a negative budget rather than silently accepting it', async () => {
     const { env } = makeEnv();
 
