@@ -91,7 +91,13 @@ class _PortfolioBody extends StatelessWidget {
               Card(
                 margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(
-                  title: Text(line.holding.symbol, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  // 2026-09-17 Final UX/Reliability task: previously bare
+                  // `TextStyle`s bypassing the theme entirely - the one
+                  // divergence on a screen that is otherwise disciplined
+                  // about `theme.textTheme` (see `_SummaryCard`/
+                  // `_AllocationChart` above), and the most visible
+                  // content on the screen since it's the main holdings list.
+                  title: Text(line.holding.symbol, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
                   subtitle: Text('${line.holding.quantity} @ ${Formatters.price(line.holding.avgPrice)}'),
                   trailing: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -100,10 +106,9 @@ class _PortfolioBody extends StatelessWidget {
                       Text(Formatters.price(line.marketValue)),
                       Text(
                         '${Formatters.changeAbs(line.totalPL)} (${line.totalPLPct.toStringAsFixed(1)}%)',
-                        style: TextStyle(
-                          color: line.totalPL >= 0 ? context.marketColors.gain : context.marketColors.loss,
-                          fontSize: 12,
-                        ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: line.totalPL >= 0 ? context.marketColors.gain : context.marketColors.loss,
+                            ),
                       ),
                     ],
                   ),

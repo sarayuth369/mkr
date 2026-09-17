@@ -272,6 +272,7 @@
   "aiAskPromptExplainStock": "Explain this stock",
   "aiAskPromptWhyMoving": "Why is the market moving?",
   "aiAskThinking": "Thinking…",
+  "aiAskError": "Couldn't get a response right now. Please try again.",
   "homeHeaderTitle": "Market Radar",
   "homeHeaderSubtitle": "See the market. Smarter.",
   "homeGlobalMarkets": "Global Markets",

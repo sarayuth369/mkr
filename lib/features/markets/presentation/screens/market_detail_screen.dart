@@ -8,6 +8,7 @@ import '../../../../core/widgets/day_range_bar.dart';
 import '../../../../domain/market_candle.dart';
 import '../../../../domain/market_data_mode.dart';
 import '../../../../core/widgets/economic_event_card.dart';
+import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_state.dart';
 import '../../../../core/widgets/loading_skeleton.dart';
 import '../../../../core/widgets/market_data_status_chip.dart';
@@ -82,7 +83,7 @@ class _MarketDetailBody extends StatelessWidget {
         child: controller.quoteState.when(
         loading: () => const Padding(padding: EdgeInsets.all(16), child: LoadingSkeletonList(rows: 4)),
         error: (message) => ErrorState(message: message, onRetry: controller.retry),
-        empty: () => Center(child: Text(l10n.marketDetailSymbolNotFound)),
+        empty: () => EmptyState(message: l10n.marketDetailSymbolNotFound, icon: Icons.search_off),
         success: (quote, isStale, lastUpdated) {
           final changeColor = quote.isUp ? marketColors.gain : marketColors.loss;
           return RefreshIndicator(
@@ -104,7 +105,13 @@ class _MarketDetailBody extends StatelessWidget {
                     const SizedBox(width: 10),
                     Text(
                       '${Formatters.changeAbs(quote.changeAbs)} (${Formatters.changePct(quote.changePct)})',
-                      style: TextStyle(color: changeColor, fontWeight: FontWeight.w600),
+                      // 2026-09-17 Final UX/Reliability task: previously a
+                      // bare TextStyle bypassing the theme entirely - the
+                      // single most prominent price line on the screen was
+                      // the one place NOT using theme.textTheme, so it lost
+                      // the theme's tabular-figure styling that the rest of
+                      // the app's price text relies on.
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(color: changeColor, fontWeight: FontWeight.w600),
                     ),
                   ],
                 ),

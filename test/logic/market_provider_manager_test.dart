@@ -700,6 +700,67 @@ void main() {
     });
   });
 
+  group('2026-09-17 Final UX/Reliability task — ensureConnected self-heals from a past failed connect', () {
+    test('a failed initial connect is retried (not permanently stuck) once the cooldown elapses', () async {
+      // Regression test: previously `ensureConnected()` was
+      // `_connectFuture ?? connect()` - once the FIRST attempt completed
+      // (even into providerError), every later call returned that same
+      // already-settled future forever, so a single transient health-check
+      // blip at cold start permanently stuck the whole manager until the
+      // app was backgrounded/reopened - exactly the reported "sometimes
+      // PROVIDER UNAVAILABLE, a retry (app reopen) fixes it" symptom.
+      final primary = FakeProvider('twelveData', healthy: false);
+      final manager = MarketProviderManager(primary: primary, reconnectCooldown: const Duration(milliseconds: 10));
+
+      final first = await manager.getQuote('AAPL').catchError((_) => null);
+      expect(first, isNull);
+      expect(manager.mode, MarketDataMode.providerError);
+      expect(primary.healthCheckCalls, 1);
+
+      // Provider recovers, but nothing in the app ever calls connect()/
+      // reconnect() again on its own - the fix must self-heal via
+      // ensureConnected() alone once the cooldown has passed.
+      primary.healthy = true;
+      primary.quoteResult = _quote('AAPL', 42); // a real result, so the reconnected call doesn't also trigger a separate _handleFailure confirmation
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+
+      final result = await manager.getQuote('AAPL');
+
+      expect(manager.mode, MarketDataMode.live);
+      expect(primary.healthCheckCalls, 2, reason: 'exactly one fresh health check was attempted after the cooldown elapsed');
+      expect(result?.price, 42);
+    });
+
+    test('does not hammer healthCheck on every call while still within the cooldown window', () async {
+      final primary = FakeProvider('twelveData', healthy: false);
+      final manager = MarketProviderManager(primary: primary, reconnectCooldown: const Duration(seconds: 30));
+
+      await manager.getQuote('AAPL').catchError((_) => null);
+      expect(primary.healthCheckCalls, 1);
+
+      // Provider is now healthy, but still well within the cooldown window -
+      // must NOT retry yet (bounded retry, never a request-storm-on-every-call).
+      primary.healthy = true;
+      await manager.getQuote('AAPL').catchError((_) => null);
+      await manager.getQuote('AAPL').catchError((_) => null);
+
+      expect(primary.healthCheckCalls, 1, reason: 'still within cooldown - no new health check attempted');
+      expect(manager.mode, MarketDataMode.providerError);
+    });
+
+    test('a currently-live manager never re-probes just because ensureConnected is called again', () async {
+      final primary = FakeProvider('twelveData', healthy: true, quoteResult: _quote('AAPL', 1));
+      final manager = MarketProviderManager(primary: primary, reconnectCooldown: const Duration(milliseconds: 1));
+      await manager.connect();
+      primary.healthCheckCalls = 0;
+
+      await Future<void>.delayed(const Duration(milliseconds: 5)); // well past the (tiny) cooldown
+      await manager.getQuote('AAPL');
+
+      expect(primary.healthCheckCalls, 0, reason: 'already connected and healthy with real data - no reason to re-probe');
+    });
+  });
+
   group('2026-09-16 Final Release Gate audit — a genuine provider-level stream error reaches the manager\'s own listeners', () {
     test('watchQuotes forwards an error added to the underlying provider\'s own stream, not just the "no provider available" case', () async {
       // Distinct from the "no provider available" tests above: here a

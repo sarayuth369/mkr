@@ -1,11 +1,96 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleAiAsk, handleAiAssetInsight, handleAiBrief, handleAiEventImpact, handleAiNewsSummary } from '../src/ai/ai-routes';
-import { cacheKey } from '../src/cache/cache-service';
+import { _resetInFlightForTests, cacheKey } from '../src/cache/cache-service';
 import { ApiError } from '../src/errors';
+import { _resetCircuitsForTests } from '../src/providers/circuit-breaker';
+import { _resetHealthForTests } from '../src/providers/provider-manager';
+import { _resetQuotaUsageForTests } from '../src/providers/quota-manager';
+import type { SymbolRow } from '../src/symbols/symbol-catalog';
 import type { Env, NormalizedQuote } from '../src/types';
 import { createFakeKv } from './fakes';
 
-function makeEnv(overrides: { aiEnabled?: boolean; aiRun?: unknown; quotes?: Record<string, Partial<NormalizedQuote>> } = {}): Env {
+// 2026-09-17 Final UX/Reliability task: `handleAiAssetInsight` now actively
+// fetches a live quote (the same `requireSymbolRow` + `cachedFetch` +
+// `manager.getQuote` path `/market/quote` uses) instead of only passively
+// reading whatever another route happened to already cache - see
+// ai-routes.ts's `liveQuoteContext` doc comment for the real bug this
+// fixes. That means these tests need a working fake D1 catalog (not the
+// empty `{}` this file used before) and, for the "cold cache" cases, a
+// stubbed Twelve Data fetch response - the exact same pattern already
+// established in market-routes-quote-cache.test.ts.
+function symbolRow(overrides: Partial<SymbolRow> & { symbol: string }): SymbolRow {
+  return {
+    display_name: overrides.symbol,
+    category: 'us_stock',
+    enabled: 1,
+    featured: 0,
+    sort_order: 0,
+    twelve_data_symbol: overrides.symbol,
+    alpaca_symbol: null,
+    default_timeframe: 'd1',
+    cache_ttl_seconds: null,
+    updated_at: 0,
+    ...overrides,
+  };
+}
+
+const CATALOG: SymbolRow[] = [
+  symbolRow({ symbol: 'XAU/USD', category: 'gold', featured: 1 }),
+  symbolRow({ symbol: 'NVDA', featured: 1, alpaca_symbol: 'NVDA' }),
+  symbolRow({ symbol: 'BTC', category: 'crypto', twelve_data_symbol: 'BTC/USD', alpaca_symbol: 'BTC/USD' }),
+  symbolRow({ symbol: 'ETH', category: 'crypto', twelve_data_symbol: 'ETH/USD', alpaca_symbol: 'ETH/USD' }),
+  symbolRow({ symbol: 'EUR/USD', category: 'forex' }),
+];
+
+function fakeSymbolsD1(rows: SymbolRow[]): Env['MKR_DB'] {
+  return {
+    prepare() {
+      let boundArgs: unknown[] = [];
+      return {
+        bind(...args: unknown[]) {
+          boundArgs = args;
+          return this;
+        },
+        async all() {
+          return { results: rows, success: true, meta: {} };
+        },
+        async first<T>() {
+          const symbol = boundArgs[0] as string | undefined;
+          return (rows.find((r) => r.symbol === symbol) ?? null) as T | null;
+        },
+        async run() {
+          return { success: true, meta: {} };
+        },
+      };
+    },
+  } as unknown as Env['MKR_DB'];
+}
+
+function twelveDataQuote(price: number) {
+  return { close: String(price), open: String(price - 1), high: String(price + 1), low: String(price - 2), previous_close: String(price - 0.5), volume: '1000', name: 'Test', currency: 'USD', is_market_open: true };
+}
+
+/** Stubs `fetch` to answer Twelve Data's quote shape for whichever symbols
+ * are given - a symbol NOT in `bySymbol` gets Twelve Data's own "not found"
+ * error envelope, simulating a genuine provider-side miss. */
+function fetchStub(bySymbol: Record<string, ReturnType<typeof twelveDataQuote>>) {
+  return vi.fn(async (url: string) => {
+    const u = new URL(String(url));
+    const requested = (u.searchParams.get('symbol') ?? '').split(',').filter(Boolean)[0] ?? '';
+    const data = bySymbol[requested];
+    return new Response(JSON.stringify(data ?? { status: 'error', message: 'symbol not found' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  });
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  _resetInFlightForTests();
+  _resetCircuitsForTests();
+  _resetHealthForTests();
+  _resetQuotaUsageForTests();
+});
+
+function makeEnv(overrides: { aiEnabled?: boolean; aiRun?: unknown; quotes?: Record<string, Partial<NormalizedQuote>>; catalog?: SymbolRow[] } = {}): Env {
   const config = createFakeKv();
   const cache = createFakeKv();
   if (overrides.aiEnabled !== false) {
@@ -14,7 +99,7 @@ function makeEnv(overrides: { aiEnabled?: boolean; aiRun?: unknown; quotes?: Rec
   for (const [symbol, quote] of Object.entries(overrides.quotes ?? {})) {
     void cache.put(
       cacheKey('quote', symbol),
-      JSON.stringify({ v: { symbol, price: 100, changePercent: 1, sessionStatus: 'open', ...quote }, cachedAt: Date.now() }),
+      JSON.stringify({ v: { symbol, price: 100, changePercent: 1, sessionStatus: 'open', ...quote }, storedAt: Date.now() }),
     );
   }
 
@@ -22,7 +107,7 @@ function makeEnv(overrides: { aiEnabled?: boolean; aiRun?: unknown; quotes?: Rec
   return {
     MKR_CONFIG: config,
     MKR_CACHE: cache,
-    MKR_DB: {} as never,
+    MKR_DB: fakeSymbolsD1(overrides.catalog ?? CATALOG),
     MARKET_STREAM: {} as never,
     RATE_LIMITER: {} as never,
     AI: { run } as never,
@@ -38,6 +123,7 @@ function makeEnv(overrides: { aiEnabled?: boolean; aiRun?: unknown; quotes?: Rec
     RATE_LIMIT_ADMIN_PER_MINUTE: '120',
     RATE_LIMIT_WS_MAX_CONNECTIONS: '500',
     ADMIN_WEB_ORIGIN: 'https://mkr-admin.pages.dev',
+    TWELVE_DATA_API_KEY: 'fake-key-not-real',
   };
 }
 
@@ -161,14 +247,67 @@ describe('AI routes - handleAiAssetInsight', () => {
     await expect(handleAiAssetInsight(req, env, 'r1')).rejects.toMatchObject({ code: 'INVALID_PARAMETER' });
   });
 
-  it('grounds the prompt in that symbol\'s cached quote', async () => {
+  it('grounds the prompt in that symbol\'s cached quote (cache hit - no provider fetch needed)', async () => {
     const run = vi.fn(async () => ({ response: VALID_INSIGHT_JSON }));
+    const fetchSpy = fetchStub({});
+    vi.stubGlobal('fetch', fetchSpy);
     const env = makeEnv({ aiRun: run, quotes: { 'XAU/USD': { price: 4321 } } });
     const req = new Request('https://x/api/mkr/ai/asset-insight', { method: 'POST', body: JSON.stringify({ symbol: 'XAU/USD' }) });
     const res = await handleAiAssetInsight(req, env, 'r1');
     expect(res.status).toBe(200);
     const userMessage = userPromptFrom(run);
     expect(userMessage).toContain('XAU/USD: 4321');
+    expect(fetchSpy).not.toHaveBeenCalled(); // fresh cache entry - never re-fetched from the provider
+  });
+
+  // 2026-09-17 Final UX/Reliability task - THE regression test for the real
+  // bug: live smoke found this route returning "no available data" for
+  // XAU/USD/NVDA despite both having real, working live quotes at that
+  // moment. Root cause was a cold/never-warmed cache entry with no active
+  // fetch fallback - this reproduces exactly that (no `quotes` pre-seeded)
+  // and asserts the fix actively fetches a real quote instead of falling
+  // back to the "no data" placeholder.
+  it('actively fetches a live quote when the cache is cold, instead of falling back to "no data" (the real bug this task fixes)', async () => {
+    const run = vi.fn(async () => ({ response: VALID_INSIGHT_JSON }));
+    const fetchSpy = fetchStub({ NVDA: twelveDataQuote(180) });
+    vi.stubGlobal('fetch', fetchSpy);
+    const env = makeEnv({ aiRun: run }); // no `quotes` seeded - cache starts genuinely cold
+    const req = new Request('https://x/api/mkr/ai/asset-insight', { method: 'POST', body: JSON.stringify({ symbol: 'NVDA' }) });
+
+    const res = await handleAiAssetInsight(req, env, 'r1');
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // a real, single, bounded fetch happened
+    const userMessage = userPromptFrom(run);
+    expect(userMessage).toContain('NVDA: 180');
+    expect(userMessage).not.toContain('No live quote data');
+  });
+
+  it('normalizes symbol casing exactly like /market/quote, so both routes share one cache entry', async () => {
+    const run = vi.fn(async () => ({ response: VALID_INSIGHT_JSON }));
+    const env = makeEnv({ aiRun: run, quotes: { 'XAU/USD': { price: 4321 } } }); // seeded under the canonical UPPERCASE key
+    const req = new Request('https://x/api/mkr/ai/asset-insight', { method: 'POST', body: JSON.stringify({ symbol: 'xau/usd' }) }); // lowercase from the client
+    const fetchSpy = fetchStub({});
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const res = await handleAiAssetInsight(req, env, 'r1');
+
+    expect(res.status).toBe(200);
+    const userMessage = userPromptFrom(run);
+    expect(userMessage).toContain('XAU/USD: 4321'); // hit the same cache entry - no case-mismatch miss
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('a disabled/unknown symbol degrades to the honest "no data" context instead of throwing the whole insight', async () => {
+    const run = vi.fn(async () => ({ response: VALID_INSIGHT_JSON }));
+    const env = makeEnv({ aiRun: run }); // 'SPX' is not in the fake catalog at all
+    const req = new Request('https://x/api/mkr/ai/asset-insight', { method: 'POST', body: JSON.stringify({ symbol: 'SPX' }) });
+
+    const res = await handleAiAssetInsight(req, env, 'r1');
+
+    expect(res.status).toBe(200);
+    const userMessage = userPromptFrom(run);
+    expect(userMessage).toContain('No live quote data is currently available.');
   });
 });
 

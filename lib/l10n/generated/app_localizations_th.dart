@@ -755,6 +755,9 @@ class AppLocalizationsTh extends AppLocalizations {
   String get aiAskThinking => 'กำลังคิด…';
 
   @override
+  String get aiAskError => 'ขอคำตอบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
+
+  @override
   String get homeHeaderTitle => 'Market Radar';
 
   @override

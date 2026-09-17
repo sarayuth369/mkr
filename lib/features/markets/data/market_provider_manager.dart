@@ -27,8 +27,10 @@ class MarketProviderManager {
     this.secondaryEnabled = false,
     CandleCache? candleCache,
     Duration? staleAfter,
+    Duration? reconnectCooldown,
   })  : _candleCache = candleCache ?? CandleCache(),
-        _staleAfter = staleAfter ?? const Duration(seconds: 60);
+        _staleAfter = staleAfter ?? const Duration(seconds: 60),
+        _reconnectCooldown = reconnectCooldown ?? const Duration(seconds: 15);
 
   final MarketDataProvider primary;
   final MarketDataProvider? secondary;
@@ -40,6 +42,20 @@ class MarketProviderManager {
   DateTime? _lastUpdated;
   MarketDataProvider? _active;
   Future<void>? _connectFuture;
+  DateTime? _lastConnectAttempt;
+
+  /// 2026-09-17 Final UX/Reliability task - see [ensureConnected]'s doc
+  /// comment for the bug this bounds: without a cooldown, a provider that's
+  /// still genuinely down would get a fresh `healthCheck()` probe on every
+  /// single quote/candle/watch call, which is exactly the kind of
+  /// unbounded-retry request pattern this app's architecture otherwise goes
+  /// to great lengths to avoid. Defaults to 15s, matching the order of
+  /// magnitude of the backend's own circuit-breaker initial backoff
+  /// (`circuit-breaker.ts`'s `INITIAL_BACKOFF_SECONDS`), so a client retry
+  /// is unlikely to arrive before the backend itself would plausibly have
+  /// recovered anyway. Overridable (like [staleAfter]) so tests don't need
+  /// to sleep for 15 real seconds to exercise the retry path.
+  final Duration _reconnectCooldown;
 
   /// Client-side single-flight for [getQuotes], keyed by the exact
   /// (sorted) symbol set — 2026-09-15 hardening task: "Prevent duplicate
@@ -71,6 +87,7 @@ class MarketProviderManager {
   /// shared future to point at it — used for an explicit reconnect (e.g.
   /// [ProviderBackedMarketService.resume] after the app was backgrounded).
   Future<void> connect() {
+    _lastConnectAttempt = DateTime.now();
     final future = _doConnect();
     _connectFuture = future;
     return future;
@@ -90,8 +107,32 @@ class MarketProviderManager {
   /// off at startup, instead of racing it and silently seeing `_active ==
   /// null` (confirmed live: without this, Home's first `getAllQuotes()` call
   /// always lost the race against the health-check, returning an empty list
-  /// forever with no error and no retry). A no-op once already connected.
-  Future<void> ensureConnected() => _connectFuture ?? connect();
+  /// forever with no error and no retry).
+  ///
+  /// 2026-09-17 Final UX/Reliability task fix: previously this was just
+  /// `_connectFuture ?? connect()` — once the FIRST connection attempt
+  /// completed (success OR failure), `_connectFuture` was permanently
+  /// non-null, so every future call returned that same already-completed
+  /// future forever. A single transient health-check blip at cold start
+  /// (or a real-but-temporary provider outage) permanently stuck the whole
+  /// manager in `providerError` for the rest of the app session — the only
+  /// things that ever called `connect()` again were app launch and
+  /// app-resume-from-background, which is exactly why "PROVIDER UNAVAILABLE,
+  /// but backgrounding and reopening the app fixes it" was the observed
+  /// symptom. Now: still a no-op while already connected OR while a
+  /// connection attempt is genuinely in flight, but a PAST failure is
+  /// retried on the next call once [_reconnectCooldown] has elapsed, so the
+  /// app self-heals from a transient outage without any user action and
+  /// without hammering `healthCheck()` on every single quote request.
+  Future<void> ensureConnected() {
+    if (_active != null) return _connectFuture ?? Future<void>.value();
+    if (_connectFuture == null) return connect();
+    final lastAttempt = _lastConnectAttempt;
+    if (lastAttempt != null && DateTime.now().difference(lastAttempt) < _reconnectCooldown) {
+      return _connectFuture!; // still connecting, or too soon to retry a past failure
+    }
+    return connect();
+  }
 
   Future<bool> _tryActivate(MarketDataProvider provider) async {
     if (!await provider.healthCheck()) return false;

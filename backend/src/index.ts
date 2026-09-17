@@ -1,6 +1,7 @@
 import { refreshAlertIndex } from './alerts/alert-index';
 import { handleAiAsk, handleAiAssetInsight, handleAiBrief, handleAiEventImpact, handleAiNewsSummary } from './ai/ai-routes';
 import {
+  handleAdminAuditLog,
   handleAdminCacheGet,
   handleAdminCacheUpdate,
   handleAdminDashboard,
@@ -79,6 +80,7 @@ async function routeAdmin(request: Request, env: Env, path: string, id: string):
   if (path === '/api/mkr/admin/symbols' && request.method === 'GET') return handleAdminSymbolsGet(request, env);
   if (path === '/api/mkr/admin/symbols' && request.method === 'POST') return handleAdminSymbolsUpdate(request, env, actor);
   if (path === '/api/mkr/admin/symbols/bulk' && request.method === 'POST') return handleAdminSymbolsBulkUpdate(request, env, actor);
+  if (path === '/api/mkr/admin/audit-log' && request.method === 'GET') return handleAdminAuditLog(request, env);
   if (path === '/api/mkr/admin/cache' && request.method === 'GET') return handleAdminCacheGet(request, env);
   if (path === '/api/mkr/admin/cache' && request.method === 'POST') return handleAdminCacheUpdate(request, env, actor);
   if (path === '/api/mkr/admin/rate-limits' && request.method === 'GET') return handleAdminRateLimitsGet(request, env);

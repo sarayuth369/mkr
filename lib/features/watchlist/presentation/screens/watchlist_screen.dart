@@ -76,7 +76,10 @@ class WatchlistScreen extends StatelessWidget {
                   ),
                 Expanded(
                   child: ReorderableListView.builder(
-                    padding: const EdgeInsets.all(12),
+                    // 2026-09-17 Final UX/Reliability task: matches the
+                    // `all(16)` content-padding convention every other main
+                    // list screen uses (Markets/Home/Detail/Calendar/News).
+                    padding: const EdgeInsets.all(16),
                     itemCount: quotes.length,
                     // ignore: deprecated_member_use
                     onReorder: controller.reorder,

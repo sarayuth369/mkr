@@ -345,9 +345,25 @@ class _RadarSection extends StatelessWidget {
     return controller.radarState.when(
       loading: () => const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: LoadingSkeletonList(rows: 2, rowHeight: 40)),
       error: (message) => ErrorState(message: message, onRetry: controller.refresh),
+      // 2026-09-17 Final UX/Reliability task: previously bare, unstyled
+      // `Text` - the only empty state on this screen not using the app's
+      // muted-caption + icon treatment (every sibling section here
+      // collapses to nothing when empty, but Today's Radar's own section
+      // header above this widget always renders regardless, so silently
+      // collapsing would leave a header floating over nothing - a small
+      // deliberate empty row reads as "checked, nothing today" instead).
       empty: () => Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Text(l10n.homeNothingScheduled),
+        child: Row(
+          children: [
+            Icon(Icons.event_available_outlined, size: 18, color: Theme.of(context).colorScheme.outline),
+            const SizedBox(width: 8),
+            Text(
+              l10n.homeNothingScheduled,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
       ),
       success: (items, isStale, lastUpdated) => Column(
         children: [for (final item in items) RadarCard(item: item)],

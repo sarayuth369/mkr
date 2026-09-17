@@ -272,6 +272,7 @@
   "aiAskPromptExplainStock": "อธิบายหุ้นตัวนี้",
   "aiAskPromptWhyMoving": "ทำไมตลาดถึงเคลื่อนไหว",
   "aiAskThinking": "กำลังคิด…",
+  "aiAskError": "ขอคำตอบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
   "homeHeaderTitle": "Market Radar",
   "homeHeaderSubtitle": "รู้ทันตลาด ฉลาดกว่าเดิม",
   "homeGlobalMarkets": "ตลาดโลก",

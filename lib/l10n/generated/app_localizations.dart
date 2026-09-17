@@ -1538,6 +1538,12 @@ abstract class AppLocalizations {
   /// **'Thinking…'**
   String get aiAskThinking;
 
+  /// No description provided for @aiAskError.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t get a response right now. Please try again.'**
+  String get aiAskError;
+
   /// No description provided for @homeHeaderTitle.
   ///
   /// In en, this message translates to:

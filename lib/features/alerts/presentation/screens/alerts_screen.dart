@@ -48,7 +48,9 @@ class AlertsScreen extends StatelessWidget {
             ],
           ),
           success: (alerts, isStale, lastUpdated) => ListView.builder(
-            padding: const EdgeInsets.all(12),
+            // 2026-09-17 Final UX/Reliability task: matches the `all(16)`
+            // content-padding convention every other main list screen uses.
+            padding: const EdgeInsets.all(16),
             itemCount: alerts.length,
             itemBuilder: (context, index) {
               final alert = alerts[index];

@@ -174,6 +174,18 @@ class MarketsController extends ChangeNotifier {
 
     if (targets.isEmpty) {
       if (requestId != _loadRequestId || _disposed) return;
+      // 2026-09-17 Final UX/Reliability task: nothing was fetched by THIS
+      // call (every matching symbol was already resolved or already known
+      // unavailable), so any `_lastFetchError` still set here can only be
+      // left over from a DIFFERENT, earlier category/search view's hard
+      // failure - previously it stayed set and `_recompute()` would render
+      // that unrelated error for the current view (e.g. switch away from a
+      // failed category to one whose symbols are already all in
+      // `_unavailable` from an earlier attempt - _lastFetchError bled
+      // through to the new, never-actually-attempted view). A genuine
+      // failure for the CURRENT view always takes the non-empty-targets
+      // branch below, which already clears and re-sets this correctly.
+      _lastFetchError = null;
       _recompute();
       if (!_disposed) notifyListeners();
       return;

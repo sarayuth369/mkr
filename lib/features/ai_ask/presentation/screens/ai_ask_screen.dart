@@ -170,20 +170,38 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final isUser = message.role == ChatRole.user;
     final aiColor = context.marketColors.aiAccent;
+    // 2026-09-17 Final UX/Reliability task: an error bubble previously
+    // rendered the raw caught exception (e.g. "Exception: SocketException
+    // ...") as if it were the assistant's own reply - a genuinely broken-
+    // looking first impression on any network/provider failure. It now
+    // substitutes the localized, friendly `aiAskError` string and uses the
+    // theme's error container styling instead of the normal assistant
+    // bubble, so a failure reads as "something went wrong" rather than a
+    // stray stack trace pretending to be an answer.
+    final isError = message.isError;
 
     final bubble = Container(
       constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: isUser ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHigh,
+        color: isUser
+            ? theme.colorScheme.primary
+            : isError
+                ? theme.colorScheme.errorContainer
+                : theme.colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Text(
-        message.text,
+        isError ? l10n.aiAskError : message.text,
         style: theme.textTheme.bodyMedium?.copyWith(
-          color: isUser ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface,
+          color: isUser
+              ? theme.colorScheme.onPrimary
+              : isError
+                  ? theme.colorScheme.onErrorContainer
+                  : theme.colorScheme.onSurface,
         ),
       ),
     );
@@ -198,8 +216,12 @@ class _MessageBubble extends StatelessWidget {
             : [
                 CircleAvatar(
                   radius: 14,
-                  backgroundColor: aiColor.withValues(alpha: 0.15),
-                  child: Icon(Icons.auto_awesome, size: 14, color: aiColor),
+                  backgroundColor: isError ? theme.colorScheme.errorContainer : aiColor.withValues(alpha: 0.15),
+                  child: Icon(
+                    isError ? Icons.error_outline : Icons.auto_awesome,
+                    size: 14,
+                    color: isError ? theme.colorScheme.onErrorContainer : aiColor,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Flexible(child: bubble),

@@ -1,8 +1,12 @@
-import { cacheKey, getCached } from '../cache/cache-service';
+import { cachedFetch, cacheKey, getCached } from '../cache/cache-service';
 import { getConfig } from '../config/config-service';
 import { ApiError, jsonResponse } from '../errors';
-import { logError } from '../logging';
-import type { Env, NormalizedQuote } from '../types';
+import { logError, logInfo } from '../logging';
+import { requireSymbolRow } from '../market/market-routes';
+import { managerFor } from '../market/provider-manager-factory';
+import { resolvePreferredProvider } from '../providers/capability';
+import { mapSymbolFromRows } from '../symbols/symbol-mapper';
+import type { Env, NormalizedQuote, ProviderId } from '../types';
 
 /** Matches lib/features/ai/domain/ai_insight.dart's AIInsight exactly. */
 interface AiInsightPayload {
@@ -145,6 +149,12 @@ async function runInsight(env: Env, requestId: string, route: string, userPrompt
   return parseInsight(extractModelText(raw, route), route);
 }
 
+/** Passive KV read only - never fetches. Kept for [handleAiBrief], which
+ * deliberately avoids forcing a fresh provider fetch for a 5-symbol
+ * grounding list on every Home render (that would add a real request
+ * burst for a card the task's own reliability pass explicitly forbids
+ * increasing). A cold cache here just means thinner grounding, never
+ * fabricated numbers. */
 async function cachedQuoteContext(env: Env, symbols: string[]): Promise<string> {
   const lines: string[] = [];
   for (const symbol of symbols) {
@@ -156,13 +166,69 @@ async function cachedQuoteContext(env: Env, symbols: string[]): Promise<string> 
   return lines.length > 0 ? lines.join('\n') : 'No live quote data is currently cached.';
 }
 
+/**
+ * 2026-09-17 Final UX/Reliability task - live smoke found `/ai/asset-insight`
+ * returning a generic "no available data" summary for XAU/USD and NVDA even
+ * though both had real, working live quotes at the same moment. Root cause
+ * (confirmed via live investigation): this route only ever did a PASSIVE KV
+ * read of whatever another route happened to have already cached under the
+ * same key - a cold/expired/never-yet-warmed cache entry silently produced
+ * the literal fallback string "No live quote data is currently cached.",
+ * which the model then honestly paraphrased (per its own "never invent a
+ * number" system prompt) into what looked like a data bug but was actually
+ * this route never fetching anything itself.
+ *
+ * Fixed by giving this single-symbol route the exact same active-fetch path
+ * `/market/quote` uses (`requireSymbolRow` + `cachedFetch` +
+ * `manager.getQuote` under the identical `cacheKey('quote', symbol)`) -
+ * this is a single bounded request for the one symbol the user is already
+ * looking at (Market Detail screen), never a burst, and it now shares a
+ * cache entry with `/market/quote` instead of only ever reading one no
+ * other route is obligated to have populated yet.
+ */
+async function liveQuoteContext(env: Env, requestId: string, symbols: string[]): Promise<string> {
+  const config = await getConfig(env);
+  const lines: string[] = [];
+  for (const symbol of symbols) {
+    try {
+      const row = await requireSymbolRow(env, symbol);
+      const symbolFor = (id: ProviderId) => mapSymbolFromRows([row], symbol, id);
+      const preferredProvider = resolvePreferredProvider(row.category, row.alpaca_symbol !== null, config.featureFlags) ?? undefined;
+      const ttl = row.cache_ttl_seconds ?? config.cacheTtls.quoteSeconds;
+      const { value: quote } = await cachedFetch(env.MKR_CACHE, cacheKey('quote', symbol), ttl, async () => {
+        const manager = await managerFor(env, config);
+        const { result } = await manager.getQuote(symbol, symbolFor, 'P1', preferredProvider); // user is actively viewing this symbol's AI insight
+        return result;
+      });
+      if (!quote) continue;
+      const changeText = quote.changePercent === null ? 'change unknown' : `${quote.changePercent >= 0 ? '+' : ''}${quote.changePercent.toFixed(2)}%`;
+      lines.push(`${symbol}: ${quote.price} (${changeText}), session ${quote.sessionStatus}`);
+    } catch (err) {
+      // One symbol's genuine fetch failure (disabled/unknown symbol,
+      // provider transiently down) must not fail the whole insight - it
+      // just means thinner grounding for that symbol, same "never fabricate"
+      // contract as the passive path above.
+      logError('AI live quote-context fetch failed', { requestId, symbol, message: (err as Error).message });
+    }
+  }
+  return lines.length > 0 ? lines.join('\n') : 'No live quote data is currently available.';
+}
+
 /** Daily market brief for Home's "AI Market Brief" card - grounded in
  * whatever quotes are currently cache-warm (never forces a fresh provider
  * fetch just for this; a cold cache simply means less specific grounding
- * data, never fabricated numbers). */
+ * data, never fabricated numbers).
+ *
+ * 2026-09-17 Final UX/Reliability task: DXY/US10Y/OIL were removed from
+ * this list - the prior catalog-expansion pass disabled all three
+ * (confirmed genuinely unsupported on the current Twelve Data plan), so
+ * no route has requested them since and this context permanently lost
+ * 3 of its 5 grounding symbols. Replaced with symbols confirmed live in
+ * the current enabled catalog and likely already cache-warm from Home's
+ * own concurrent quote requests. */
 export async function handleAiBrief(_request: Request, env: Env, requestId: string): Promise<Response> {
   await requireAiEnabled(env);
-  const context = await cachedQuoteContext(env, ['XAU/USD', 'BTC', 'DXY', 'US10Y', 'OIL']);
+  const context = await cachedQuoteContext(env, ['XAU/USD', 'BTC', 'ETH', 'NVDA', 'EUR/USD']);
   const insight = await runInsight(
     env,
     requestId,
@@ -172,13 +238,20 @@ export async function handleAiBrief(_request: Request, env: Env, requestId: stri
   return jsonResponse(insight);
 }
 
-/** Per-symbol insight for a Market Detail screen. */
+/** Per-symbol insight for a Market Detail screen - see [liveQuoteContext]'s
+ * doc comment for the real-data bug this route previously had. */
 export async function handleAiAssetInsight(request: Request, env: Env, requestId: string): Promise<Response> {
   await requireAiEnabled(env);
   const body = (await request.json().catch(() => null)) as { symbol?: string } | null;
-  const symbol = body?.symbol?.trim();
-  if (!symbol) throw new ApiError('INVALID_PARAMETER', 'symbol is required');
-  const context = await cachedQuoteContext(env, [symbol]);
+  const rawSymbol = body?.symbol?.trim();
+  if (!rawSymbol) throw new ApiError('INVALID_PARAMETER', 'symbol is required');
+  // Matches /market/quote's own normalization exactly (market-routes.ts) -
+  // previously this route skipped `.toUpperCase()`, so a differently-cased
+  // request from any future call site would have produced a distinct cache
+  // key and guaranteed a permanent miss.
+  const symbol = rawSymbol.toUpperCase();
+  const context = await liveQuoteContext(env, requestId, [symbol]);
+  logInfo('ai asset-insight context resolved', { requestId, symbol, hadLiveData: !context.startsWith('No live quote data') });
   const insight = await runInsight(
     env,
     requestId,

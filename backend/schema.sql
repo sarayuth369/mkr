@@ -160,11 +160,19 @@ INSERT OR IGNORE INTO symbols (symbol, display_name, category, enabled, featured
   ('LQD', 'iShares iBoxx Investment Grade Corporate Bond ETF', 'us_stock', 0, 0, 149, NULL, 'LQD', 'd1', strftime('%s','now')),
   ('AGG', 'iShares Core US Aggregate Bond ETF', 'us_stock', 0, 0, 150, NULL, 'AGG', 'd1', strftime('%s','now')),
   ('BND', 'Vanguard Total Bond Market ETF', 'us_stock', 0, 0, 151, NULL, 'BND', 'd1', strftime('%s','now')),
-  ('SPX', 'S&P 500 Index', 'indices', 0, 0, 20, 'SPX', NULL, 'd1', strftime('%s','now')),
-  ('NDX', 'Nasdaq 100 Index', 'indices', 0, 0, 21, 'NDX', NULL, 'd1', strftime('%s','now')),
-  ('DJI', 'Dow Jones Industrial Average', 'indices', 0, 0, 22, 'DJI', NULL, 'd1', strftime('%s','now')),
-  ('RUT', 'Russell 2000 Index', 'indices', 0, 0, 23, 'RUT', NULL, 'd1', strftime('%s','now')),
-  ('VIX', 'CBOE Volatility Index', 'indices', 0, 0, 24, 'VIX', NULL, 'd1', strftime('%s','now')),
+  -- 2026-09-17 Final UX/Reliability task: the `twelve_data_symbol` strings
+  -- these five rows carried (e.g. 'SPX') were confirmed BROKEN, not
+  -- merely gated - live verification returned a genuine plan-gate or
+  -- invalid-symbol error, never `works`. Left populated, they made the
+  -- admin API's computed `status` field misreport these as "standby"
+  -- (a real, working-but-inactive mapping awaiting an activation decision)
+  -- indistinguishable from the genuinely-verified-and-waiting Alpaca-only
+  -- rows - nulled out so `status` correctly computes "dead" for these.
+  ('SPX', 'S&P 500 Index', 'indices', 0, 0, 20, NULL, NULL, 'd1', strftime('%s','now')),
+  ('NDX', 'Nasdaq 100 Index', 'indices', 0, 0, 21, NULL, NULL, 'd1', strftime('%s','now')),
+  ('DJI', 'Dow Jones Industrial Average', 'indices', 0, 0, 22, NULL, NULL, 'd1', strftime('%s','now')),
+  ('RUT', 'Russell 2000 Index', 'indices', 0, 0, 23, NULL, NULL, 'd1', strftime('%s','now')),
+  ('VIX', 'CBOE Volatility Index', 'indices', 0, 0, 24, NULL, NULL, 'd1', strftime('%s','now')),
   ('BTC', 'Bitcoin', 'crypto', 1, 1, 30, 'BTC/USD', 'BTC/USD', 'd1', strftime('%s','now')),
   ('ETH', 'Ethereum', 'crypto', 1, 0, 31, 'ETH/USD', 'ETH/USD', 'd1', strftime('%s','now')),
   ('SOL', 'Solana', 'crypto', 1, 0, 32, 'SOL/USD', 'SOL/USD', 'd1', strftime('%s','now')),

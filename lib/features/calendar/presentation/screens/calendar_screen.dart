@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/widgets/economic_event_card.dart';
 import '../../../../core/widgets/empty_state.dart';
@@ -161,11 +162,17 @@ class _FreshnessRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
+    final marketColors = context.marketColors;
+    // 2026-09-17 Final UX/Reliability task: previously hardcoded raw
+    // Material colors (Colors.green/orange) instead of the app's own
+    // live/stale/offline semantic tokens - this dot is the same "data
+    // honesty" indicator as MarketDataStatusChip elsewhere in the app, and
+    // ignored the theme's dark-mode-tuned palette entirely.
     final (label, color) = switch (controller.freshness) {
-      CalendarFreshness.live => (l10n.calendarFreshnessLive, Colors.green),
-      CalendarFreshness.stale => (l10n.calendarFreshnessStale, Colors.orange),
-      CalendarFreshness.degraded => (l10n.calendarFreshnessDegraded, Colors.orange),
-      CalendarFreshness.offline => (l10n.calendarFreshnessOffline, theme.colorScheme.error),
+      CalendarFreshness.live => (l10n.calendarFreshnessLive, marketColors.live),
+      CalendarFreshness.stale => (l10n.calendarFreshnessStale, marketColors.stale),
+      CalendarFreshness.degraded => (l10n.calendarFreshnessDegraded, marketColors.stale),
+      CalendarFreshness.offline => (l10n.calendarFreshnessOffline, marketColors.offline),
     };
     return Row(
       children: [

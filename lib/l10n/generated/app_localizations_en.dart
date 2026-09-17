@@ -756,6 +756,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get aiAskThinking => 'Thinking…';
 
   @override
+  String get aiAskError =>
+      'Couldn\'t get a response right now. Please try again.';
+
+  @override
   String get homeHeaderTitle => 'Market Radar';
 
   @override

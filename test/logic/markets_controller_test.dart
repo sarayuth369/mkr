@@ -282,6 +282,57 @@ void main() {
     });
   });
 
+  group('MarketsController — 2026-09-17 Final UX/Reliability task — stale error must not bleed across an unrelated category switch', () {
+    test('switching back to a category whose own symbols are already confirmed unavailable shows empty, not a different category\'s stale error', () async {
+      // Regression test for a real bug found by code audit: _ensureQuotes'
+      // "nothing to fetch" early-return called _recompute() without first
+      // clearing _lastFetchError, so a hard failure from a PREVIOUSLY
+      // viewed, completely unrelated category could still be showing when
+      // the user switched back to a category that was never re-fetched at
+      // all this time (every one of its symbols was already resolved or
+      // already confirmed unavailable from an earlier attempt).
+      final catalog = [
+        _symbol('F0', sortOrder: 0, featured: true, assetClass: AssetClass.gold),
+        for (var i = 1; i <= 7; i++) _symbol('U$i', sortOrder: i),
+        _symbol('X1', sortOrder: 8, assetClass: AssetClass.indices), // excluded from the 8-symbol initial page
+        _symbol('W1', sortOrder: 9, assetClass: AssetClass.forex), // excluded from the 8-symbol initial page
+      ];
+      final service = _FakeMarketService(catalog: catalog);
+      // Call 0: the initial 8-symbol page - all succeed.
+      service.quotesForResultByCallIndex[0] = MarketFetchSuccess([
+        _quote('F0', 1, assetClass: AssetClass.gold),
+        for (var i = 1; i <= 7; i++) _quote('U$i', i.toDouble()),
+      ]);
+      final controller = MarketsController(service);
+      await Future<void>.delayed(Duration.zero);
+
+      // Call 1: switching to Indices fetches X1, which the provider
+      // confirms has no data - a genuine, benign "unavailable", not an
+      // error (MarketFetchPartial with X1 in failedSymbols).
+      service.quotesForResultByCallIndex[1] = const MarketFetchPartial([], ['X1']);
+      controller.setCategory(AssetClass.indices);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state, isA<ApiEmpty<List<MarketQuote>>>());
+
+      // Call 2: switching to Forex fetches W1, which genuinely hard-fails
+      // this time (e.g. a real rate-limit/provider error) - _lastFetchError
+      // is now set.
+      service.quotesForResultByCallIndex[2] = const MarketFetchFailure(MarketFetchFailureKind.providerError, 'Market data provider rate limit reached.');
+      controller.setCategory(AssetClass.forex);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state, isA<ApiError<List<MarketQuote>>>());
+
+      // Switching BACK to Indices: X1 is already confirmed unavailable from
+      // call 1, so nothing new is fetched (no call 3) - this must show
+      // Indices' own honest empty state, never Forex's stale error message.
+      controller.setCategory(AssetClass.indices);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.getQuotesForCallCount, 3, reason: 'no new fetch was made for Indices - it was already resolved as unavailable');
+      expect(controller.state, isA<ApiEmpty<List<MarketQuote>>>(), reason: 'must not show Forex\'s stale error for a category that was never re-fetched');
+    });
+  });
+
   group('MarketsController — 2026-09-15 Home/Markets final user-visible audit (item 3) — overlapping refresh() race guard', () {
     test('a slower, older fetch finishing after a newer one never overwrites the newer result', () async {
       final firstCall = Completer<MarketFetchResult>();

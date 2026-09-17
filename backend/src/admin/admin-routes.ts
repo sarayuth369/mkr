@@ -7,6 +7,7 @@ import { catalogFor } from '../symbols/symbol-catalog';
 import type { Env, ProviderId } from '../types';
 import { createSessionToken, verifyPassword } from './auth';
 import { listAuditLog, recordAuditEntry } from './audit-log';
+import type { SymbolRow } from '../symbols/symbol-catalog';
 
 // Task 6: this used to be a second, local copy of provider-manager-factory.ts's
 // managerFor - a real "alternate route" that bypassed whatever the shared
@@ -127,18 +128,58 @@ export async function handleAdminProvidersUpdate(request: Request, env: Env, act
  * request - this is exactly the same D1 read `handleAdminSymbolsGet`
  * already did, just filtered before the response is built.
  */
+/**
+ * 2026-09-17 Final UX/Reliability task - "STANDBY" here means exactly what
+ * the catalog-expansion pass left behind: a row with a real, previously
+ * verified provider mapping that is disabled only because activating its
+ * sole capable provider (Alpaca) is a separate, not-yet-made production
+ * decision - never a placeholder and never a fabricated mapping. "DEAD"
+ * means disabled with no working mapping at all (the legacy
+ * SPX/NDX/.../SET50 rows). This distinction already existed implicitly in
+ * the data (`enabled` + whether a mapping column is populated); it was
+ * just never surfaced to Admin Web, which could only see a flat
+ * enabled/disabled boolean and had no way to tell "verified, standing by"
+ * apart from "verified dead, do not re-enable this."
+ */
+type SymbolStatus = 'enabled' | 'standby' | 'dead';
+type ProviderCoverage = 'twelve_data' | 'alpaca' | 'both' | 'none';
+
+function statusFor(row: SymbolRow): SymbolStatus {
+  if (row.enabled !== 0) return 'enabled';
+  return row.twelve_data_symbol || row.alpaca_symbol ? 'standby' : 'dead';
+}
+
+function coverageFor(row: SymbolRow): ProviderCoverage {
+  const hasTd = !!row.twelve_data_symbol;
+  const hasAlpaca = !!row.alpaca_symbol;
+  if (hasTd && hasAlpaca) return 'both';
+  if (hasTd) return 'twelve_data';
+  if (hasAlpaca) return 'alpaca';
+  return 'none';
+}
+
+function withStatus(row: SymbolRow) {
+  return { ...row, status: statusFor(row), providerCoverage: coverageFor(row) };
+}
+
 export async function handleAdminSymbolsGet(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const category = url.searchParams.get('category');
   const search = url.searchParams.get('search')?.trim().toLowerCase();
   const enabledOnly = url.searchParams.get('enabledOnly') === 'true';
+  const status = url.searchParams.get('status') as SymbolStatus | null;
 
   let rows = await catalogFor(env).all();
   if (category) rows = rows.filter((r) => r.category === category);
   if (enabledOnly) rows = rows.filter((r) => r.enabled !== 0);
   if (search) rows = rows.filter((r) => r.symbol.toLowerCase().includes(search) || r.display_name.toLowerCase().includes(search));
 
-  return jsonResponse(rows);
+  let withComputed = rows.map(withStatus);
+  if (status && (status === 'enabled' || status === 'standby' || status === 'dead')) {
+    withComputed = withComputed.filter((r) => r.status === status);
+  }
+
+  return jsonResponse(withComputed);
 }
 
 export async function handleAdminSymbolsUpdate(request: Request, env: Env, actor: string): Promise<Response> {
@@ -236,6 +277,25 @@ export async function handleAdminSymbolsBulkUpdate(request: Request, env: Env, a
   await recordAuditEntry(env, { actor, action: 'symbol.bulk_updated', target: `${results.filter((r) => r.updated).length}/${results.length}`, oldValue: null, newValue: null });
 
   return jsonResponse({ results });
+}
+
+/**
+ * 2026-09-17 Final UX/Reliability task - `listAuditLog`/`recordAuditEntry`
+ * have existed since the very first admin route, and every runtime-config
+ * change this session has made (provider/feature-flag toggles, symbol
+ * upserts) has been dutifully recorded - but nothing ever exposed a route
+ * to READ it back. The prior catalog-expansion pass hit this gap directly:
+ * `secondaryEnabled`/`hybridRoutingEnabled`/`hybridCryptoRoutingEnabled`
+ * were found live `true` with no way to determine who or what set them,
+ * since there was no way to query the log that should have recorded it.
+ * `recordAuditEntry`'s own `assertSafeToLog` already refuses to persist
+ * anything that looks like a secret at write time, so reading these rows
+ * back is safe by construction - no separate redaction needed here.
+ */
+export async function handleAdminAuditLog(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const limit = Number(url.searchParams.get('limit')) || 100;
+  return jsonResponse(await listAuditLog(env, limit));
 }
 
 export async function handleAdminCacheGet(_request: Request, env: Env): Promise<Response> {

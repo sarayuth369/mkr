@@ -99,7 +99,9 @@ class AlertCard extends StatelessWidget {
         ),
         title: Text(
           localizedAlertSummary(l10n, alert),
-          style: const TextStyle(fontWeight: FontWeight.w600),
+          // 2026-09-17 Final UX/Reliability task: bare TextStyles bypassing
+          // the theme, on the two most prominent pieces of text in the card.
+          style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -115,7 +117,7 @@ class AlertCard extends StatelessWidget {
               ),
               child: Text(
                 alertStatusLabel(l10n, status).toUpperCase(),
-                style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w800),
+                style: theme.textTheme.labelSmall?.copyWith(color: statusColor, fontWeight: FontWeight.w800),
               ),
             ),
           ],
