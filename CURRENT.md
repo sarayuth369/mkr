@@ -6,7 +6,7 @@ TASK: 2026-09-17/18 MKR AdMob + Google Play Billing One-Pass
 TITLE: Fix per D:\FlutterProjects\gpt-claude\GPT_TO_CLAUDE_MKR_ADMOB_BILLING_ONE_PASS.md
 STATUS: WAITING_FOR_GPT_REVIEW
 
-COMMIT: (recorded in the follow-up docs commit on this same pass - see git log)
+COMMIT: 6129407
 BACKEND DEPLOY: mkr-backend Cloudflare Worker, Version 83d1afc6-8646-479b-8758-33950306bfc7
 (adds POST /api/mkr/billing/verify-purchase, updates hosted privacy policy
 Advertising/Payments sections to match the real integration).
