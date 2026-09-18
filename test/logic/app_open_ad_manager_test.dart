@@ -25,6 +25,10 @@ class _FakeAdService implements AdService {
 
   @override
   Future<void> maybeShowInterstitial(BuildContext context, {required String trigger}) async {}
+
+  int disposeCalls = 0;
+  @override
+  void dispose() => disposeCalls++;
 }
 
 const _config = AdConfig(
@@ -33,6 +37,7 @@ const _config = AdConfig(
   bottomBannerEnabled: true,
   appOpenEnabled: true,
   testMode: true,
+  androidAppId: 'test-app-id',
   androidBannerAdUnitId: 'test-banner',
   androidAppOpenAdUnitId: 'test-app-open',
 );
@@ -94,6 +99,7 @@ void main() {
         bottomBannerEnabled: true,
         appOpenEnabled: false,
         testMode: true,
+        androidAppId: 'test-app-id',
         androidBannerAdUnitId: 'test-banner',
         androidAppOpenAdUnitId: 'test-app-open',
       ),
@@ -122,5 +128,18 @@ void main() {
 
     expect(adService.showCalls, 0);
     expect(manager.canShow(isPremium: false), isFalse);
+  });
+
+  test('dispose() forwards to the underlying AdService (2026-09-17 AdMob + Billing task fix)', () {
+    // Regression test: previously AppOpenAdManager.dispose() was a
+    // literal empty no-op and nothing ever called it - a real
+    // GoogleMobileAdsService holding a loaded native ad had no way to
+    // ever release it via this path.
+    final adService = _FakeAdService();
+    final manager = AppOpenAdManager(adService: adService, config: _config);
+
+    manager.dispose();
+
+    expect(adService.disposeCalls, 1);
   });
 }

@@ -556,6 +556,10 @@ class AppLocalizationsTh extends AppLocalizations {
   }
 
   @override
+  String get premiumPurchaseFailedMessage =>
+      'ทำรายการซื้อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
+
+  @override
   String premiumGateFeatureLocked(String feature) {
     return '$feature เป็นฟีเจอร์พรีเมียม';
   }

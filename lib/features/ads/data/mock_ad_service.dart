@@ -5,16 +5,12 @@ import '../domain/ad_analytics.dart';
 import '../domain/ad_service.dart';
 
 /// Renders clearly-labeled placeholders instead of loading a real ad SDK —
-/// avoids a native Gradle dependency while still exercising the full call
-/// pattern the real AdMob integration will use later. Uses Google's
-/// published test ad unit IDs as a placeholder reference only (no network
-/// call is actually made by this implementation).
+/// used for demo mode and widget tests, alongside [GoogleMobileAdsService]
+/// (the real implementation, 2026-09-17 AdMob + Billing task). Never
+/// actually makes a network call. Google's real test ad unit ID constants
+/// now live on [AdConfig] (this class doesn't need them itself).
 class MockAdService implements AdService {
   MockAdService({AdAnalytics analytics = const NoopAdAnalytics()}) : _analytics = analytics;
-
-  static const testBannerUnitId = 'ca-app-pub-3940256099942544/6300978111';
-  static const testInterstitialUnitId = 'ca-app-pub-3940256099942544/1033173712';
-  static const testAppOpenUnitId = 'ca-app-pub-3940256099942544/9257395921';
 
   static const int _interstitialEveryNTriggers = 3;
   final Map<String, int> _triggerCounts = {};
@@ -91,4 +87,7 @@ class MockAdService implements AdService {
       ),
     );
   }
+
+  @override
+  void dispose() {}
 }

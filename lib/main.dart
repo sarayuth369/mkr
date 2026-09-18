@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
 import 'app/app.dart';
@@ -11,6 +12,7 @@ import 'core/config/supabase_config.dart';
 import 'core/deeplink/auth_callback.dart';
 import 'core/deeplink/windows_uri_scheme_registrar.dart';
 import 'core/persistence/app_local_store.dart';
+import 'features/ads/data/ump_consent_service.dart';
 import 'features/push/data/firebase_push_notification_service.dart';
 
 /// Safe, idempotent Firebase Cloud Messaging bootstrap (MKR Firebase FCM
@@ -27,6 +29,25 @@ import 'features/push/data/firebase_push_notification_service.dart';
 /// only ever constructed in app.dart when `Firebase.apps` ends up
 /// non-empty; every other path keeps using [NoopPushNotificationService],
 /// exactly like an unconfigured Supabase project already does.
+/// 2026-09-17 AdMob + Billing task - Android-only, matches
+/// [_initializeFirebase]'s exact "never crash startup, degrade gracefully"
+/// shape. Runs the UMP consent flow FIRST (Google's own documented order:
+/// resolve consent, initialize the SDK, only then ever request an ad), and
+/// returns whether ads may be requested this session at all — threaded
+/// into [MkrApp] so [GoogleMobileAdsService] never has to guess.
+Future<bool> _initializeAdsAndGetConsent() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
+  try {
+    final canRequestAds = await const UmpConsentService().requestConsentAndCheckIfAdsCanBeRequested();
+    await MobileAds.instance.initialize();
+    return canRequestAds;
+  } catch (_) {
+    // Consent/network failure, or Play Services unavailable — no ad is
+    // ever requested this session rather than risk one without consent.
+    return false;
+  }
+}
+
 Future<void> _initializeFirebase() async {
   if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
   if (Firebase.apps.isNotEmpty) return; // idempotent - e.g. a hot restart re-running main()
@@ -73,6 +94,7 @@ Future<void> _mainInGuardedZone() async {
   WidgetsFlutterBinding.ensureInitialized();
   final store = await AppLocalStore.create();
   await _initializeFirebase();
+  final canRequestAds = await _initializeAdsAndGetConsent();
   // Dev/test-machine registration only (Windows has no manifest-based
   // intent-filter equivalent) — no-op on every other platform. A packaged
   // production Windows distribution would register this via an MSIX
@@ -87,5 +109,5 @@ Future<void> _mainInGuardedZone() async {
     await sb.Supabase.initialize(url: SupabaseConfig.instance.url, publishableKey: SupabaseConfig.instance.anonKey);
   }
 
-  runApp(MkrApp(store: store));
+  runApp(MkrApp(store: store, canRequestAds: canRequestAds));
 }

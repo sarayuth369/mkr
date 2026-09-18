@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:mkr/features/ads/data/mock_ad_service.dart';
 import 'package:mkr/features/ads/domain/ad_config.dart';
 import 'package:mkr/features/ads/domain/ad_service.dart';
@@ -14,6 +17,7 @@ import 'package:provider/provider.dart';
 class _FakeBillingRepository implements BillingRepository {
   _FakeBillingRepository(this.tier);
   final PremiumTier tier;
+  final _entitlementController = StreamController<PremiumTier>.broadcast();
 
   @override
   Future<PremiumTier> getCurrentTier() async => tier;
@@ -23,6 +27,18 @@ class _FakeBillingRepository implements BillingRepository {
 
   @override
   Future<PremiumTier> restore() async => tier;
+
+  @override
+  Future<Map<String, ProductDetails>> queryProductDetails() async => {};
+
+  @override
+  Future<void> refreshFromStore() async {}
+
+  @override
+  Stream<PremiumTier> get entitlementChanges => _entitlementController.stream;
+
+  @override
+  void dispose() => _entitlementController.close();
 }
 
 Widget _harness({
@@ -34,6 +50,7 @@ Widget _harness({
     bottomBannerEnabled: true,
     appOpenEnabled: true,
     testMode: true,
+    androidAppId: 'test-app-id',
     androidBannerAdUnitId: 'test-banner',
     androidAppOpenAdUnitId: 'test-app-open',
   ),
@@ -76,6 +93,7 @@ void main() {
         bottomBannerEnabled: true,
         appOpenEnabled: true,
         testMode: true,
+        androidAppId: 'test-app-id',
         androidBannerAdUnitId: 'test-banner',
         androidAppOpenAdUnitId: 'test-app-open',
       ),
@@ -94,6 +112,7 @@ void main() {
         bottomBannerEnabled: false,
         appOpenEnabled: true,
         testMode: true,
+        androidAppId: 'test-app-id',
         androidBannerAdUnitId: 'test-banner',
         androidAppOpenAdUnitId: 'test-app-open',
       ),

@@ -1,5 +1,6 @@
 import { refreshAlertIndex } from './alerts/alert-index';
 import { handleAiAsk, handleAiAssetInsight, handleAiBrief, handleAiEventImpact, handleAiNewsSummary } from './ai/ai-routes';
+import { handleVerifyPurchase } from './billing/verify-purchase-route';
 import { handlePrivacyPage } from './pages/privacy-page';
 import {
   handleAdminAuditLog,
@@ -197,6 +198,22 @@ async function routeNews(request: Request, env: Env, path: string): Promise<Resp
   throw new ApiError('NOT_FOUND', `No news route for ${request.method} ${path}`);
 }
 
+/**
+ * 2026-09-17 AdMob + Billing task - see verify-purchase-route.ts's own doc
+ * comment for why this honestly reports "not configured" rather than a
+ * real check (no Google Play Developer API service account exists yet).
+ * Same public rate-limit bucket as every other client-facing route.
+ */
+async function routeBilling(request: Request, env: Env, path: string, id: string): Promise<Response> {
+  const { limit } = rateLimitEnv(env, 'public');
+  const rl = await checkRateLimit(env.RATE_LIMITER, `public:${clientKeyFromRequest(request)}`, limit, 60);
+  if (!rl.allowed) return rateLimitedResponse(rl);
+
+  if (path === '/api/mkr/billing/verify-purchase' && request.method === 'POST') return handleVerifyPurchase(request, env, id);
+
+  throw new ApiError('NOT_FOUND', `No billing route for ${request.method} ${path}`);
+}
+
 export default {
   /** Two independent cron schedules share this one handler (wrangler.toml
    * [triggers]), distinguished by `event.cron`:
@@ -262,6 +279,7 @@ export default {
       else if (path.startsWith('/api/mkr/ai/')) response = await routeAi(request, env, path, id);
       else if (path === '/api/mkr/news' || path === '/api/mkr/news/related') response = await routeNews(request, env, path);
       else if (path.startsWith('/api/mkr/calendar/')) response = await routeCalendar(request, env, path);
+      else if (path.startsWith('/api/mkr/billing/')) response = await routeBilling(request, env, path, id);
       else if (isAdminRoute) response = await routeAdmin(request, env, path, id);
       else throw new ApiError('NOT_FOUND', `No route for ${request.method} ${path}`);
 

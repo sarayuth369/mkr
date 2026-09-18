@@ -557,6 +557,10 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get premiumPurchaseFailedMessage =>
+      'Purchase couldn\'t be completed. Please try again.';
+
+  @override
   String premiumGateFeatureLocked(String feature) {
     return '$feature is a premium feature';
   }

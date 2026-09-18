@@ -78,5 +78,12 @@ class AppOpenAdManager {
     await showIfAvailable(context, isPremium: isPremium);
   }
 
-  void dispose() {}
+  /// 2026-09-17 AdMob + Billing task: previously an empty no-op - the real
+  /// [GoogleMobileAdsService] can hold a loaded native ad object that must
+  /// be released, and nothing called this before (confirmed by this
+  /// task's own audit: `Provider<AppOpenAdManager>` in `app.dart` never
+  /// passed a `dispose:` callback). Now wired from both ends: this
+  /// forwards to the real service's own [AdService.dispose], and
+  /// `app.dart` actually calls this via the provider's `dispose:` callback.
+  void dispose() => _adService.dispose();
 }

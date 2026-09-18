@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
@@ -11,6 +12,7 @@ import '../core/persistence/app_local_store.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/theme_controller.dart';
 import '../features/ads/application/app_open_ad_manager.dart';
+import '../features/ads/data/google_mobile_ads_service.dart';
 import '../features/ads/data/mock_ad_service.dart';
 import '../features/ads/domain/ad_analytics.dart';
 import '../features/ads/domain/ad_config.dart';
@@ -34,6 +36,7 @@ import '../features/auth/data/supabase_auth_service.dart';
 import '../features/auth/domain/auth_service.dart';
 import '../features/billing/application/entitlement_controller.dart';
 import '../features/billing/data/mock_billing_repository.dart';
+import '../features/billing/data/play_billing_repository.dart';
 import '../features/billing/domain/billing_repository.dart';
 import '../features/calendar/application/calendar_controller.dart';
 import '../features/calendar/data/mkr_economic_calendar_service.dart';
@@ -140,10 +143,53 @@ EconomicCalendarService _buildEconomicCalendarService() {
   return MkrEconomicCalendarService(backendBaseUrl: config.backendBaseUrl);
 }
 
+/// True only on a real Android device/build - matches this app's existing
+/// Firebase-init/deep-link-registration convention of gating platform-only
+/// integrations this exact way (`main.dart`'s `_initializeFirebase`,
+/// `windows_uri_scheme_registrar.dart`). Both `google_mobile_ads` and
+/// `in_app_purchase_android` are Android Play-Store concepts specifically
+/// for this app (Windows is a dev-only target, no Play Store presence) -
+/// keeping desktop/web on the existing Mock* implementations, unaffected,
+/// per this task's own "keep desktop/web unaffected" requirement.
+bool get _isRealAndroidBuild => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+/// 2026-09-17 AdMob + Billing task - real `google_mobile_ads`-backed
+/// [AdService] on Android, unchanged [MockAdService] everywhere else.
+/// [canRequestAds] comes from `main.dart`'s UMP consent flow, resolved
+/// BEFORE `runApp` - the real service therefore knows from its first
+/// instant alive whether it's allowed to ever request an ad this session.
+AdService _buildAdService(BuildContext context, {required bool canRequestAds}) {
+  final analytics = context.read<AdAnalytics>();
+  if (!_isRealAndroidBuild) return MockAdService(analytics: analytics);
+  return GoogleMobileAdsService(config: context.read<AdConfig>(), canRequestAds: canRequestAds, analytics: analytics);
+}
+
+/// Real Google Play Billing on Android, unchanged [MockBillingRepository]
+/// everywhere else (demo mode/Windows dev builds/widget tests).
+BillingRepository _buildBillingRepository(AppLocalStore store) {
+  if (!_isRealAndroidBuild) return MockBillingRepository(store);
+  return PlayBillingRepository(store);
+}
+
 class MkrApp extends StatelessWidget {
-  const MkrApp({super.key, required this.store, MarketService? marketService}) : _marketServiceOverride = marketService;
+  const MkrApp({
+    super.key,
+    required this.store,
+    this.canRequestAds = false,
+    MarketService? marketService,
+    AdService? adService,
+    BillingRepository? billingRepository,
+  })  : _marketServiceOverride = marketService,
+        _adServiceOverride = adService,
+        _billingRepositoryOverride = billingRepository;
 
   final AppLocalStore store;
+
+  /// Resolved once at startup by `main.dart`'s UMP consent flow, before
+  /// `runApp` — see `_buildAdService`'s doc comment. Defaults `false`
+  /// (never request ads) so any construction path that doesn't explicitly
+  /// thread a real value (tests, `main.dart` not yet run) fails safe.
+  final bool canRequestAds;
 
   /// Test-only seam (2026-09-15 hardening task): widget tests construct
   /// [MkrApp] directly with no way to control `MarketDataConfig`'s
@@ -155,6 +201,20 @@ class MkrApp extends StatelessWidget {
   /// [MockMarketService]) makes such tests deterministic without any
   /// network dependency; production `main.dart` never passes this.
   final MarketService? _marketServiceOverride;
+
+  /// Same test-only seam as [_marketServiceOverride], for the exact same
+  /// reason (2026-09-17 AdMob + Billing task): `defaultTargetPlatform`
+  /// defaults to `TargetPlatform.android` inside Flutter's own test
+  /// binding regardless of the host OS actually running the test - so
+  /// `_buildAdService`/`_buildBillingRepository`'s Android check alone
+  /// would have constructed the REAL `GoogleMobileAdsService`/
+  /// `PlayBillingRepository` (real platform-channel calls that never
+  /// resolve under `flutter test`) for every widget test, not just ones
+  /// that opted into real-mode testing. Confirmed live: `flutter test`
+  /// hung on `pumpAndSettle` across every test that builds `MkrApp` before
+  /// this override was added.
+  final AdService? _adServiceOverride;
+  final BillingRepository? _billingRepositoryOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -172,10 +232,16 @@ class MkrApp extends StatelessWidget {
         Provider<EconomicCalendarService>(create: (_) => _buildEconomicCalendarService()),
         Provider<NotificationService>(create: (_) => MockNotificationService()),
         Provider<PortfolioRepository>(create: (_) => MockPortfolioRepository(store)),
-        Provider<BillingRepository>(create: (_) => MockBillingRepository(store)),
+        // Disposed via EntitlementController.dispose() (which owns this
+        // repository's lifecycle directly), not a Provider `dispose:`
+        // callback here — avoids disposing the same StreamController twice.
+        Provider<BillingRepository>(create: (_) => _billingRepositoryOverride ?? _buildBillingRepository(store)),
         Provider<AdAnalytics>(create: (_) => const NoopAdAnalytics()),
         Provider<AdConfig>(create: (_) => AdConfig.fromEnvironment()),
-        Provider<AdService>(create: (ctx) => MockAdService(analytics: ctx.read<AdAnalytics>())),
+        Provider<AdService>(
+          create: (ctx) => _adServiceOverride ?? _buildAdService(ctx, canRequestAds: canRequestAds),
+          dispose: (_, service) => service.dispose(),
+        ),
         Provider<PushNotificationService>(create: (_) => _buildPushNotificationService()),
 
         // User-data seam (Phase 2.2): Supabase-backed when configured (see
@@ -239,6 +305,12 @@ class MkrApp extends StatelessWidget {
         ChangeNotifierProvider(create: (ctx) => AiAskController(ctx.read<MarketAIService>())),
         Provider<AppOpenAdManager>(
           create: (ctx) => AppOpenAdManager(adService: ctx.read<AdService>(), config: ctx.read<AdConfig>()),
+          // 2026-09-17 AdMob + Billing task: previously missing entirely -
+          // AppOpenAdManager.dispose() existed but nothing ever called it
+          // (confirmed by this task's own audit). Now forwards to the real
+          // GoogleMobileAdsService's own dispose (a loaded-but-unshown
+          // native app-open ad must be released, not leaked).
+          dispose: (_, manager) => manager.dispose(),
         ),
       ],
       child: const _AppView(),
@@ -276,6 +348,12 @@ class _AppViewState extends State<_AppView> with WidgetsBindingObserver {
     switch (state) {
       case AppLifecycleState.resumed:
         marketService.resume();
+        // 2026-09-17 AdMob + Billing task: "entitlement refresh on
+        // startup/resume" - a subscription purchased/lapsed on another
+        // device, or a Play Billing confirmation that only completed while
+        // this app was backgrounded, is caught promptly rather than only
+        // at the next cold start.
+        unawaited(context.read<EntitlementController>().refresh());
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
       case AppLifecycleState.inactive:

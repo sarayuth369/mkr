@@ -47,6 +47,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- 2026-09-17 AdMob + Billing task - the real MKR AdMob Application
+             ID (matches AdConfig.androidAppId in Dart, kept there only for
+             admin/diagnostic display). Not a secret - Google's own AdMob
+             integration docs require this exact value hardcoded here; it
+             identifies the app to AdMob, it does not authenticate anything.
+             Ad UNIT selection (test vs real) is a separate, runtime-gated
+             concern (AdConfig.testMode) - this App ID stays the same either
+             way, per Google's documented test-ads guidance. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-1918372113970166~1172227772"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

@@ -195,6 +195,7 @@
       "title": {"type": "String"}
     }
   },
+  "premiumPurchaseFailedMessage": "ทำรายการซื้อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
   "premiumGateFeatureLocked": "{feature} เป็นฟีเจอร์พรีเมียม",
   "@premiumGateFeatureLocked": {
     "placeholders": {

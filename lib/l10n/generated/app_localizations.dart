@@ -1172,6 +1172,12 @@ abstract class AppLocalizations {
   /// **'{title} unlocked'**
   String premiumActivatedMessage(String title);
 
+  /// No description provided for @premiumPurchaseFailedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Purchase couldn\'t be completed. Please try again.'**
+  String get premiumPurchaseFailedMessage;
+
   /// No description provided for @premiumGateFeatureLocked.
   ///
   /// In en, this message translates to:

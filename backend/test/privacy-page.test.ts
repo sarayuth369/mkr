@@ -20,10 +20,13 @@ describe('GET /privacy', () => {
     expect(html).toContain('Alpaca');
   });
 
-  it('honestly states no real advertising/billing integration exists yet, rather than fabricating one', async () => {
+  it('reconciles with the real AdMob + Google Play Billing integration (2026-09-17 AdMob + Billing task) - describes what is real, never overclaims a live production state', async () => {
     const html = await handlePrivacyPage().text();
-    expect(html.toLowerCase()).toContain('placeholder/test advertising');
-    expect(html.toLowerCase()).toContain('no real payment integration is active');
+    expect(html).toContain('Google AdMob');
+    // Honest about the test-ads-by-default safety switch, not a claim of full production ad serving.
+    expect(html.toLowerCase()).toContain('test ads');
+    expect(html).toContain('Google Play');
+    expect(html.toLowerCase()).toContain('does not collect or store payment card information');
   });
 
   it('states an effective/last-updated date', async () => {

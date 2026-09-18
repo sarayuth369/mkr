@@ -147,17 +147,22 @@ const PRIVACY_HTML = `<!DOCTYPE html>
 
     <div class="card">
       <h2>Advertising</h2>
-      <p>This build of MKR displays placeholder/test advertising content only — no real third-party advertising
-      network is integrated yet. If real advertising is enabled in a future release, this policy will be updated
-      first to name the ad provider and describe what data, if any, it collects.</p>
+      <p>MKR uses Google AdMob to display advertising and, where legally required (for example in the EEA, UK,
+      and Switzerland), shows a consent form before requesting any ad. AdMob may collect device and advertising
+      identifiers and other data as described in
+      <a href="https://policies.google.com/technologies/partner-sites" target="_blank" rel="noopener">Google's own
+      Partner Sites policy</a>. During development and testing, MKR is configured to request only Google's test ads,
+      which are never served from real ad inventory and are not personalized; real ad serving is enabled
+      separately for production releases.</p>
     </div>
 
     <div class="card">
       <h2>Payments and subscriptions</h2>
-      <p>MKR does not collect or store payment card information directly. Where a premium subscription is
-      offered, purchases are intended to be processed through the app store's standard billing system. In the
-      current build, no real payment integration is active and no payment is charged — premium features, where
-      shown, are for preview purposes only. This section will be updated once real billing is enabled.</p>
+      <p>MKR does not collect or store payment card information directly — Premium subscriptions (Monthly or
+      Yearly) and a one-time Lifetime purchase are processed entirely through Google Play's own billing system,
+      which handles your payment details. MKR only receives a purchase confirmation from Google Play, never your
+      card or bank information. Purchases require these products to be configured and available in Google Play
+      Console; if they are not yet available in your region or app track, purchases will not succeed.</p>
     </div>
 
     <div class="card">

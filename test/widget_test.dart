@@ -6,6 +6,8 @@ import 'package:url_launcher_platform_interface/url_launcher_platform_interface.
 
 import 'package:mkr/app/app.dart';
 import 'package:mkr/core/persistence/app_local_store.dart';
+import 'package:mkr/features/ads/data/mock_ad_service.dart';
+import 'package:mkr/features/billing/data/mock_billing_repository.dart';
 import 'package:mkr/features/markets/data/mock_market_service.dart';
 import 'package:mkr/features/markets/domain/market_service.dart';
 
@@ -39,6 +41,21 @@ class _FakeUrlLauncherPlatform extends UrlLauncherPlatform {
 /// "real" during a plain `flutter test` run.
 MarketService _testMarketService() => MockMarketService();
 
+/// 2026-09-17 AdMob + Billing task: `defaultTargetPlatform` defaults to
+/// `TargetPlatform.android` inside Flutter's own test binding regardless
+/// of the host OS, so without explicit overrides `MkrApp` would construct
+/// the REAL `GoogleMobileAdsService`/`PlayBillingRepository` (real
+/// platform-channel calls with no native test harness behind them) for
+/// every widget test - confirmed live: every test in this file hung on
+/// `pumpAndSettle` before these overrides were added. Same seam/reasoning
+/// as `_testMarketService` above.
+Widget _testApp({required AppLocalStore store, required MarketService marketService}) => MkrApp(
+      store: store,
+      marketService: marketService,
+      adService: MockAdService(),
+      billingRepository: MockBillingRepository(store),
+    );
+
 /// The App Open ad placeholder shows automatically on cold start (see
 /// [AppOpenAdHost]) — dismiss it first, the way a real user would, before
 /// asserting on or interacting with anything underneath it.
@@ -55,7 +72,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'onboarding_complete': true});
     final store = await AppLocalStore.create();
 
-    await tester.pumpWidget(MkrApp(store: store, marketService: _testMarketService()));
+    await tester.pumpWidget(_testApp(store: store, marketService: _testMarketService()));
     await tester.pumpAndSettle();
     await _dismissAppOpenAdIfShown(tester);
 
@@ -75,7 +92,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'onboarding_complete': true});
     final store = await AppLocalStore.create();
 
-    await tester.pumpWidget(MkrApp(store: store, marketService: _testMarketService()));
+    await tester.pumpWidget(_testApp(store: store, marketService: _testMarketService()));
     await tester.pumpAndSettle();
     await _dismissAppOpenAdIfShown(tester);
 
@@ -98,7 +115,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'onboarding_complete': true});
     final store = await AppLocalStore.create();
 
-    await tester.pumpWidget(MkrApp(store: store, marketService: _testMarketService()));
+    await tester.pumpWidget(_testApp(store: store, marketService: _testMarketService()));
     await tester.pumpAndSettle();
     await _dismissAppOpenAdIfShown(tester);
 
@@ -126,7 +143,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'onboarding_complete': true});
     final store = await AppLocalStore.create();
 
-    await tester.pumpWidget(MkrApp(store: store, marketService: _testMarketService()));
+    await tester.pumpWidget(_testApp(store: store, marketService: _testMarketService()));
     await tester.pumpAndSettle();
     await _dismissAppOpenAdIfShown(tester);
 

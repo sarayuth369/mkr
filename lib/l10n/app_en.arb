@@ -195,6 +195,7 @@
       "title": {"type": "String"}
     }
   },
+  "premiumPurchaseFailedMessage": "Purchase couldn't be completed. Please try again.",
   "premiumGateFeatureLocked": "{feature} is a premium feature",
   "@premiumGateFeatureLocked": {
     "placeholders": {
