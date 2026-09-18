@@ -87,6 +87,29 @@ kotlin {
     }
 }
 
+// 2026-09-18 Closed Testing launch-crash fix - root cause confirmed via
+// `adb logcat` on a real launch: `com.google.android.gms:play-services-ads-api`
+// (pulled in by google_mobile_ads) transitively depends on an ancient
+// `androidx.work:work-runtime:2.7.0`, whose bundled Room 2.2.5 database code
+// is binary-incompatible with the newer `androidx.sqlite:sqlite-framework`
+// this project's other dependencies resolve elsewhere in the graph. Nothing
+// else in the tree pulls a newer work-runtime for Gradle's normal
+// highest-version-wins resolution to pick instead (confirmed via
+// `./gradlew :app:dependencies`), so WorkManager's own automatic
+// ContentProvider-based initializer (`androidx.startup.InitializationProvider`
+// -> `WorkManagerInitializer`) crashed the whole process at Application
+// attach - BEFORE MainActivity, the Flutter engine, or any Dart code
+// (including main.dart's runZonedGuarded) ever runs. No Dart-side try/catch
+// can address this: it happens earlier than any platform-channel call.
+// Forcing one coherent, modern work-runtime app-wide (whose own Room/sqlite
+// versions are mutually compatible) resolves the split-version conflict at
+// its source rather than patching a symptom.
+configurations.all {
+    resolutionStrategy {
+        force("androidx.work:work-runtime:2.9.1")
+    }
+}
+
 flutter {
     source = "../.."
 }

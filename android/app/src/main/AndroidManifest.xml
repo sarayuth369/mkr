@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Firebase Cloud Messaging (MKR Firebase FCM Integration Task) -
          runtime-requested on Android 13+ via FirebaseMessaging.requestPermission()
          (see lib/features/push/data/firebase_push_notification_service.dart);
@@ -9,6 +10,40 @@
         android:label="Market Radar"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
+        <!-- 2026-09-18 Closed Testing launch-crash fix - root cause confirmed
+             via adb logcat on a real launch: com.google.android.gms:play-
+             services-ads-api (pulled in by google_mobile_ads) transitively
+             depends on androidx.work, whose ContentProvider-based
+             WorkManagerInitializer runs EAGERLY at Application startup -
+             before MainActivity, the Flutter engine, or any Dart code
+             (including main.dart's runZonedGuarded/try-catch) ever runs. On
+             a device where Google Play services is behind what
+             play-services-ads-api expects (confirmed via logcat:
+             "GooglePlayServicesUtil: Google Play services out of date" right
+             before the fatal exception), that eager init throws and takes
+             down the ENTIRE process before the app ever shows a frame - no
+             app-level try/catch can run early enough to prevent it. Nothing
+             in this app (no `workmanager` plugin, no direct androidx.work
+             usage) needs WorkManager to be ready at process start - the ads
+             SDK only uses it lazily for non-critical background telemetry.
+             Disabling this eager auto-init (Google's own documented
+             "on-demand initialization" workaround for WorkManager - see
+             androidx.work.Configuration.Provider docs) makes any future
+             WorkManager use lazy instead,
+             so a failure there can no longer crash startup - it is
+             contained to whatever Dart code path actually needed it
+             (already guarded, e.g. _initializeAdsAndGetConsent's try/catch
+             around MobileAds.instance.initialize()). -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
         <activity
             android:name=".MainActivity"
             android:exported="true"
