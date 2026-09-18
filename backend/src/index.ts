@@ -2,6 +2,8 @@ import { refreshAlertIndex } from './alerts/alert-index';
 import { handleAiAsk, handleAiAssetInsight, handleAiBrief, handleAiEventImpact, handleAiNewsSummary } from './ai/ai-routes';
 import { handleVerifyPurchase } from './billing/verify-purchase-route';
 import { handlePrivacyPage } from './pages/privacy-page';
+import { handleAppAdsTxt } from './pages/app-ads-txt';
+import { handleDeveloperWebsite } from './pages/developer-website-page';
 import {
   handleAdminAuditLog,
   handleAdminCacheGet,
@@ -268,6 +270,20 @@ export default {
     // try/catch below, same as the WebSocket upgrade case above.
     if (path === '/privacy' && request.method === 'GET') {
       return handlePrivacyPage();
+    }
+
+    // 2026-09-18 app-ads.txt + Developer Website task - same reasoning as
+    // /privacy above: plain public pages, not `/api/mkr/*` JSON endpoints,
+    // returned directly ahead of the JSON try/catch. `/app-ads.txt` must be
+    // plain text with no auth/redirect/JSON wrapper per the IAB spec and
+    // AdMob's crawler requirements; `/` is the Developer Website root Play
+    // Console needs on record for that crawler to trust app-ads.txt at all.
+    if (path === '/app-ads.txt' && request.method === 'GET') {
+      return handleAppAdsTxt();
+    }
+
+    if (path === '/' && request.method === 'GET') {
+      return handleDeveloperWebsite();
     }
 
     try {
