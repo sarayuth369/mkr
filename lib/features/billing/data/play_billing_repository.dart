@@ -91,11 +91,7 @@ class PlayBillingRepository implements BillingRepository {
       if (!await _iap.isAvailable()) return {};
       final response = await _iap.queryProductDetails(ProductCatalog.playProductIds);
       if (response.error != null || response.productDetails.isEmpty) return {};
-      final result = <String, ProductDetails>{};
-      for (final details in response.productDetails) {
-        result[_storeLookupKeyFor(details)] = details;
-      }
-      return result;
+      return _indexByCatalogKey(response.productDetails);
     } catch (_) {
       // Offline, Play Store app unavailable, or products not yet
       // configured in Play Console — callers fall back to ProductCatalog's
@@ -104,18 +100,95 @@ class PlayBillingRepository implements BillingRepository {
     }
   }
 
-  /// Mirrors [Product.storeLookupKey] on the Play-response side — a
-  /// [GooglePlayProductDetails] for a subscription carries its base-plan
-  /// ID via `productDetails.subscriptionOfferDetails[subscriptionIndex]`,
-  /// not on the flat `id` (which is only the outer Play product ID and is
-  /// identical across every base plan of the same subscription).
-  String _storeLookupKeyFor(ProductDetails details) {
-    if (details is GooglePlayProductDetails && details.subscriptionIndex != null) {
-      final offers = details.productDetails.subscriptionOfferDetails;
-      final basePlanId = offers != null && details.subscriptionIndex! < offers.length ? offers[details.subscriptionIndex!].basePlanId : null;
-      if (basePlanId != null) return '${details.id}:$basePlanId';
+  /// Resolves every real Play offer into OUR OWN catalog's
+  /// [Product.storeLookupKey] — 2026-09-19 Monetization Release 3 fix.
+  ///
+  /// **This is the actual root cause of the reported "AI Pro mapped to the
+  /// wrong billing plan" bug.** The previous implementation built its
+  /// lookup key from Play's own `basePlanId` string and trusted that it
+  /// was literally `'monthly'`/`'yearly'` — but a Play Console base-plan
+  /// ID is an arbitrary string the operator types in when creating it;
+  /// Play never guarantees it matches this app's own internal labels. If
+  /// the operator's real AI Pro base-plan IDs are spelled differently than
+  /// exactly `monthly`/`yearly` (e.g. an auto-suggested ID, or a
+  /// deliberately different name), the old string-equality lookup key
+  /// silently failed to match the real offer — either throwing
+  /// "not available" or, worse, letting a coincidental collision resolve
+  /// to the wrong offer/tier.
+  ///
+  /// The fix matches each catalog [Product] against Play's real offers for
+  /// its `playProductId` in two passes: (1) exact `basePlanId` string
+  /// equality first (keeps working unchanged if the operator's real ID
+  /// does happen to be literally `monthly`/`yearly`), then (2) the offer's
+  /// own AUTHORITATIVE steady-state billing period — ISO-8601 `P1M`/`P1Y`,
+  /// read from the LAST pricing phase so a leading free-trial/introductory
+  /// phase (which can have a different, shorter period) is never mistaken
+  /// for the recurring period. Play itself reports this and it can never
+  /// be mislabeled, so this resolves correctly regardless of how the
+  /// operator actually named the base plan in Play Console. A product with
+  /// no matching offer is simply omitted (never a wrong-tier fallback) —
+  /// [purchase] then reports it as unavailable rather than buying the
+  /// wrong thing.
+  Map<String, ProductDetails> _indexByCatalogKey(List<ProductDetails> raw) {
+    final byPlayProductId = <String, List<GooglePlayProductDetails>>{};
+    for (final details in raw) {
+      if (details is! GooglePlayProductDetails) continue;
+      byPlayProductId.putIfAbsent(details.id, () => []).add(details);
     }
-    return details.id;
+
+    final result = <String, ProductDetails>{};
+    for (final product in ProductCatalog.all) {
+      final offers = byPlayProductId[product.playProductId];
+      if (offers == null || offers.isEmpty) continue;
+
+      if (product.basePlanId == null) {
+        // Lifetime / any non-subscription product - exactly one offer,
+        // nothing to disambiguate.
+        result[product.storeLookupKey] = offers.first;
+        continue;
+      }
+
+      final match = _resolveSubscriptionOffer(offers, product);
+      if (match != null) result[product.storeLookupKey] = match;
+    }
+    return result;
+  }
+
+  GooglePlayProductDetails? _resolveSubscriptionOffer(List<GooglePlayProductDetails> offers, Product product) {
+    for (final offer in offers) {
+      if (_basePlanIdOf(offer) == product.basePlanId) return offer;
+    }
+    final expectedPeriod = switch (product.period) {
+      BillingPeriod.monthly => 'P1M',
+      BillingPeriod.yearly => 'P1Y',
+      BillingPeriod.lifetime => null,
+    };
+    if (expectedPeriod == null) return null;
+    for (final offer in offers) {
+      if (_recurringBillingPeriodOf(offer) == expectedPeriod) return offer;
+    }
+    return null;
+  }
+
+  String? _basePlanIdOf(GooglePlayProductDetails details) {
+    final offers = details.productDetails.subscriptionOfferDetails;
+    final index = details.subscriptionIndex;
+    if (offers == null || index == null || index >= offers.length) return null;
+    return offers[index].basePlanId;
+  }
+
+  /// The steady-state recurring billing period Play reports for this
+  /// offer, ISO-8601 (e.g. `P1M`/`P1Y`) — taken from the LAST pricing
+  /// phase, since a free-trial/introductory phase (if any) is always
+  /// listed before the regular recurring phase and can carry a shorter
+  /// period (e.g. a 1-week trial ahead of a yearly plan).
+  String? _recurringBillingPeriodOf(GooglePlayProductDetails details) {
+    final offers = details.productDetails.subscriptionOfferDetails;
+    final index = details.subscriptionIndex;
+    if (offers == null || index == null || index >= offers.length) return null;
+    final phases = offers[index].pricingPhases;
+    if (phases.isEmpty) return null;
+    return phases.last.billingPeriod;
   }
 
   @override

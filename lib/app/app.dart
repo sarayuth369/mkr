@@ -302,7 +302,7 @@ class MkrApp extends StatelessWidget {
             calendarService: ctx.read<EconomicCalendarService>(),
           ),
         ),
-        ChangeNotifierProvider(create: (ctx) => AiAskController(ctx.read<MarketAIService>())),
+        ChangeNotifierProvider(create: (ctx) => AiAskController(ctx.read<MarketAIService>(), ctx.read<EntitlementController>())),
         Provider<AppOpenAdManager>(
           create: (ctx) => AppOpenAdManager(adService: ctx.read<AdService>(), config: ctx.read<AdConfig>()),
           // 2026-09-17 AdMob + Billing task: previously missing entirely -

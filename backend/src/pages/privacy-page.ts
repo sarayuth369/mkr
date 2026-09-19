@@ -20,7 +20,7 @@
  * billing say so honestly instead of describing a real ad/payment
  * integration that does not exist yet in this build.
  */
-const LAST_UPDATED = '17 September 2026';
+const LAST_UPDATED = '19 September 2026';
 const CONTACT_USER = 'sarayuth939';
 const CONTACT_DOMAIN = 'gmail.com';
 
@@ -151,9 +151,9 @@ const PRIVACY_HTML = `<!DOCTYPE html>
       and Switzerland), shows a consent form before requesting any ad. AdMob may collect device and advertising
       identifiers and other data as described in
       <a href="https://policies.google.com/technologies/partner-sites" target="_blank" rel="noopener">Google's own
-      Partner Sites policy</a>. During development and testing, MKR is configured to request only Google's test ads,
-      which are never served from real ad inventory and are not personalized; real ad serving is enabled
-      separately for production releases.</p>
+      Partner Sites policy</a>. Published releases of MKR (including Closed Testing) request real ad inventory;
+      only local development builds and automated tests are configured to request Google's test ads instead, which
+      are never served from real ad inventory and are not personalized. Premium subscribers never see ads.</p>
     </div>
 
     <div class="card">

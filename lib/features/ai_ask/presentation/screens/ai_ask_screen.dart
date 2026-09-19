@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../billing/presentation/widgets/premium_gate.dart';
 import '../../application/ai_ask_controller.dart';
 import '../../domain/chat_message.dart';
 
@@ -73,7 +74,10 @@ class _AiAskScreenState extends State<AiAskScreen> {
           ],
         ),
       ),
-      body: Column(
+      body: PremiumGate(
+        isUnlocked: !controller.isLocked,
+        featureName: l10n.aiAskTitle,
+        child: Column(
         children: [
           Expanded(
             child: controller.messages.isEmpty
@@ -157,6 +161,7 @@ class _AiAskScreenState extends State<AiAskScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

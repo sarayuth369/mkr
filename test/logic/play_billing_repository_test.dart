@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:in_app_purchase_android/billing_client_wrappers.dart';
+import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 import 'package:in_app_purchase_platform_interface/in_app_purchase_platform_interface.dart';
 import 'package:mkr/core/persistence/app_local_store.dart';
 import 'package:mkr/features/billing/data/play_billing_repository.dart';
@@ -16,11 +18,80 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// test suite uses via `MockPlatformInterfaceMixin`), so `PlayBillingRepository`'s
 /// real purchase-stream/grant/dedup/restore logic can be tested without a
 /// real Play Store connection.
+///
+/// 2026-09-19 Monetization Release 3 fix - `queryProductDetails` now
+/// returns REAL flattened `GooglePlayProductDetails` (via
+/// `GooglePlayProductDetails.fromProductDetails`, the exact same
+/// conversion the real Android platform performs), not a bare
+/// `ProductDetails` per product ID. This is deliberate: the reported "AI
+/// Pro mapped to the wrong billing plan" bug only reproduces against
+/// realistic Play data, where a single product ID (e.g. `mkr_premium_ai`)
+/// carries MULTIPLE base-plan offers that must be disambiguated - a bare
+/// `ProductDetails(id: 'mkr_premium_ai')` per identifier (the old fake)
+/// could never have caught this class of bug at all.
 class _FakeInAppPurchasePlatform extends InAppPurchasePlatform with MockPlatformInterfaceMixin {
   final _controller = StreamController<List<PurchaseDetails>>.broadcast();
   final List<PurchaseDetails> completedPurchases = [];
   final List<String> boughtProductIds = [];
+  final List<String?> boughtOfferTokens = [];
   int restoreCalls = 0;
+
+  /// Configurable per test. Defaults to a realistic Play Console catalog
+  /// whose subscription base-plan ID strings deliberately do NOT match
+  /// this app's own internal 'monthly'/'yearly' labels — proving the fix
+  /// resolves offers by their real, authoritative billing period rather
+  /// than assuming the operator named the base plan literally
+  /// 'monthly'/'yearly' in Play Console (the actual root cause of the
+  /// reported bug: Play never guarantees that).
+  List<ProductDetailsWrapper> productWrappers = defaultCatalog();
+
+  static List<ProductDetailsWrapper> defaultCatalog() => [
+        _subscription('mkr_premium', [('pro-m-plan', 'P1M', 2990000, r'$2.99'), ('pro-y-plan', 'P1Y', 29990000, r'$29.99')]),
+        _subscription('mkr_premium_ai', [
+          ('ai-pro-monthly-offer', 'P1M', 5990000, r'$5.99'),
+          ('ai-pro-annual-offer', 'P1Y', 59990000, r'$59.99'),
+        ]),
+        ProductDetailsWrapper(
+          description: 'Lifetime',
+          name: 'Lifetime',
+          productId: 'mkr_premium_lifetime',
+          productType: ProductType.inapp,
+          title: 'Lifetime',
+          oneTimePurchaseOfferDetails: const OneTimePurchaseOfferDetailsWrapper(
+            formattedPrice: r'$79.99',
+            priceAmountMicros: 79990000,
+            priceCurrencyCode: 'USD',
+          ),
+        ),
+      ];
+
+  static ProductDetailsWrapper _subscription(String id, List<(String basePlanId, String billingPeriod, int micros, String formatted)> offers) {
+    return ProductDetailsWrapper(
+      description: id,
+      name: id,
+      productId: id,
+      productType: ProductType.subs,
+      title: id,
+      subscriptionOfferDetails: [
+        for (final offer in offers)
+          SubscriptionOfferDetailsWrapper(
+            basePlanId: offer.$1,
+            offerTags: const [],
+            offerIdToken: '$id:${offer.$1}:token',
+            pricingPhases: [
+              PricingPhaseWrapper(
+                billingCycleCount: 0,
+                billingPeriod: offer.$2,
+                formattedPrice: offer.$4,
+                priceAmountMicros: offer.$3,
+                priceCurrencyCode: 'USD',
+                recurrenceMode: RecurrenceMode.infiniteRecurring,
+              ),
+            ],
+          ),
+      ],
+    );
+  }
 
   @override
   Stream<List<PurchaseDetails>> get purchaseStream => _controller.stream;
@@ -30,18 +101,17 @@ class _FakeInAppPurchasePlatform extends InAppPurchasePlatform with MockPlatform
 
   @override
   Future<ProductDetailsResponse> queryProductDetails(Set<String> identifiers) async {
-    return ProductDetailsResponse(
-      productDetails: [
-        for (final id in identifiers)
-          ProductDetails(id: id, title: id, description: id, price: '\$1.00', rawPrice: 1, currencyCode: 'USD'),
-      ],
-      notFoundIDs: const [],
-    );
+    final flattened = <ProductDetails>[
+      for (final wrapper in productWrappers)
+        if (identifiers.contains(wrapper.productId)) ...GooglePlayProductDetails.fromProductDetails(wrapper),
+    ];
+    return ProductDetailsResponse(productDetails: flattened, notFoundIDs: const []);
   }
 
   @override
   Future<bool> buyNonConsumable({required PurchaseParam purchaseParam}) async {
     boughtProductIds.add(purchaseParam.productDetails.id);
+    boughtOfferTokens.add(purchaseParam is GooglePlayPurchaseParam ? purchaseParam.offerToken : null);
     return true;
   }
 
@@ -208,5 +278,97 @@ void main() {
     expect(await verifier.verify(_purchase('mkr_premium', PurchaseStatus.purchased)), isTrue);
     expect(await verifier.verify(_purchase('mkr_premium', PurchaseStatus.restored)), isTrue);
     expect(await verifier.verify(_purchase('mkr_premium', PurchaseStatus.canceled)), isFalse);
+  });
+
+  group('2026-09-19 Monetization Release 3 fix - product/base-plan mapping', () {
+    // The fake catalog's real Play base-plan IDs are deliberately spelled
+    // differently than this app's own 'monthly'/'yearly' labels (see
+    // _FakeInAppPurchasePlatform.defaultCatalog) - these tests only pass if
+    // resolution actually falls back to the offer's authoritative billing
+    // period (P1M/P1Y), not a naive string-equality guess. This is what
+    // directly reproduces (and proves fixed) the reported "AI Pro purchase
+    // mapped to the wrong billing plan" bug.
+
+    test('AI Pro action selects the AI Pro YEARLY product/base plan - never Pro, never the monthly offer', () async {
+      final repo = PlayBillingRepository(store);
+      final resolved = (await repo.queryProductDetails())[ProductCatalog.aiProYearly.storeLookupKey];
+
+      expect(resolved, isNotNull);
+      expect(resolved!.id, 'mkr_premium_ai');
+      expect((resolved as GooglePlayProductDetails).offerToken, 'mkr_premium_ai:ai-pro-annual-offer:token');
+
+      final purchaseFuture = repo.purchase(ProductCatalog.aiProYearly);
+      await Future<void>.delayed(Duration.zero);
+      fakePlatform.emit([_purchase('mkr_premium_ai', PurchaseStatus.purchased, token: 'ai-pro-yearly-tok')]);
+      await purchaseFuture;
+
+      expect(fakePlatform.boughtProductIds, ['mkr_premium_ai']);
+      expect(fakePlatform.boughtOfferTokens, ['mkr_premium_ai:ai-pro-annual-offer:token']);
+      expect(await repo.getCurrentTier(), PremiumTier.aiPro);
+      repo.dispose();
+    });
+
+    test('AI Pro action selects the AI Pro MONTHLY product/base plan when monthly is chosen', () async {
+      final repo = PlayBillingRepository(store);
+      final purchaseFuture = repo.purchase(ProductCatalog.aiProMonthly);
+      await Future<void>.delayed(Duration.zero);
+      fakePlatform.emit([_purchase('mkr_premium_ai', PurchaseStatus.purchased, token: 'ai-pro-monthly-tok')]);
+      await purchaseFuture;
+
+      expect(fakePlatform.boughtOfferTokens, ['mkr_premium_ai:ai-pro-monthly-offer:token']);
+      repo.dispose();
+    });
+
+    test('Pro action selects the Pro product/base plan - never AI Pro', () async {
+      final repo = PlayBillingRepository(store);
+      final purchaseFuture = repo.purchase(ProductCatalog.proYearly);
+      await Future<void>.delayed(Duration.zero);
+      fakePlatform.emit([_purchase('mkr_premium', PurchaseStatus.purchased, token: 'pro-yearly-tok')]);
+      await purchaseFuture;
+
+      expect(fakePlatform.boughtProductIds, ['mkr_premium']);
+      expect(fakePlatform.boughtOfferTokens, ['mkr_premium:pro-y-plan:token']);
+      expect(await repo.getCurrentTier(), PremiumTier.pro);
+      repo.dispose();
+    });
+
+    test('Lifetime action selects the lifetime product (no base plan to disambiguate)', () async {
+      final repo = PlayBillingRepository(store);
+      final purchaseFuture = repo.purchase(ProductCatalog.proLifetime);
+      await Future<void>.delayed(Duration.zero);
+      fakePlatform.emit([_purchase('mkr_premium_lifetime', PurchaseStatus.purchased, token: 'lifetime-tok')]);
+      await purchaseFuture;
+
+      expect(fakePlatform.boughtProductIds, ['mkr_premium_lifetime']);
+      expect(await repo.getCurrentTier(), PremiumTier.lifetime);
+      repo.dispose();
+    });
+
+    test('wrong-tier cross-mapping is rejected: a product with no matching real offer is never silently substituted', () async {
+      // Play Console has AI Pro monthly only right now - no yearly offer
+      // exists yet (e.g. not configured, or removed). The app must refuse
+      // to buy the monthly offer (or any other product) in its place.
+      fakePlatform.productWrappers = [
+        _FakeInAppPurchasePlatform._subscription('mkr_premium_ai', [('ai-pro-monthly-offer', 'P1M', 5990000, r'$5.99')]),
+      ];
+      final repo = PlayBillingRepository(store);
+
+      expect((await repo.queryProductDetails())[ProductCatalog.aiProYearly.storeLookupKey], isNull);
+      expect(() => repo.purchase(ProductCatalog.aiProYearly), throwsA(isA<StateError>()));
+      expect(fakePlatform.boughtProductIds, isEmpty);
+      repo.dispose();
+    });
+
+    test('still resolves correctly when the operator\'s real base-plan ID literally is "monthly"/"yearly" (backward compatible)', () async {
+      fakePlatform.productWrappers = [
+        _FakeInAppPurchasePlatform._subscription('mkr_premium_ai', [('monthly', 'P1M', 5990000, r'$5.99'), ('yearly', 'P1Y', 59990000, r'$59.99')]),
+      ];
+      final repo = PlayBillingRepository(store);
+      final resolved = (await repo.queryProductDetails())[ProductCatalog.aiProYearly.storeLookupKey];
+
+      expect(resolved, isNotNull);
+      expect((resolved as GooglePlayProductDetails).offerToken, 'mkr_premium_ai:yearly:token');
+      repo.dispose();
+    });
   });
 }

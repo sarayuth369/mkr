@@ -1,12 +1,32 @@
 import 'package:flutter/foundation.dart';
 
 import '../../ai/domain/market_ai_service.dart';
+import '../../billing/application/entitlement_controller.dart';
 import '../domain/chat_message.dart';
 
+/// 2026-09-19 Monetization Release 3 fix - AI Ask has a real per-request AI
+/// provider cost (it proxies to a real backend/AI provider - see
+/// MarketAIService's own doc comment), so it must never fire for a user
+/// without the entitlement that unlocks it. Per the already-documented
+/// product spec (see Entitlement.hasUnlimitedAI's own doc comment: "AI Pro
+/// is the only tier with unlimited AI - Lifetime intentionally does NOT
+/// include unlimited AI"), that entitlement is AI Pro specifically, not
+/// "any paid tier" - Pro's own feature list has no AI features at all, so
+/// broadening this to Pro/Lifetime would silently expand the documented
+/// design rather than fix the reported Free-tier bypass.
+///
+/// This check lives here, in the application-layer controller whose
+/// `send()` is the ONLY call site of `MarketAIService.ask()` in this app
+/// (confirmed by grep - no widget calls the service directly), not only in
+/// the screen's button/input enablement - so no future call path can reach
+/// a real AI request while locked without this running first.
 class AiAskController extends ChangeNotifier {
-  AiAskController(this._service);
+  AiAskController(this._service, this._entitlementController) {
+    _entitlementController.addListener(_onEntitlementChanged);
+  }
 
   final MarketAIService _service;
+  final EntitlementController _entitlementController;
   int _nextId = 0;
 
   final List<ChatMessage> _messages = [];
@@ -15,9 +35,16 @@ class AiAskController extends ChangeNotifier {
   bool _isResponding = false;
   bool get isResponding => _isResponding;
 
+  /// `true` until the viewer holds the AI Pro entitlement — reactive, so a
+  /// purchase completed while this screen is open unlocks it immediately
+  /// (see [_onEntitlementChanged]).
+  bool get isLocked => !_entitlementController.entitlement.hasUnlimitedAI;
+
+  void _onEntitlementChanged() => notifyListeners();
+
   Future<void> send(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty || _isResponding) return;
+    if (trimmed.isEmpty || _isResponding || isLocked) return;
 
     _messages.add(ChatMessage(
       id: 'm${_nextId++}',
@@ -55,5 +82,11 @@ class AiAskController extends ChangeNotifier {
     }
     _isResponding = false;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _entitlementController.removeListener(_onEntitlementChanged);
+    super.dispose();
   }
 }
