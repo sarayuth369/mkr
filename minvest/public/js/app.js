@@ -39,7 +39,8 @@ function banner(msg, isError = false) { const b = $('status-banner'); b.hidden =
 // ───────── theme ─────────
 function initTheme() {
   let saved = null; try { saved = localStorage.getItem('minvest-theme'); } catch { /* storage may be blocked */ }
-  const theme = saved ?? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  // The Android app ("MInvestApp" user agent) defaults to the dark theme until the user picks one.
+  const theme = saved ?? (/MInvestApp\//.test(navigator.userAgent) || window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   document.documentElement.dataset.theme = theme;
 }
 function toggleTheme() {
@@ -421,9 +422,20 @@ function exportCsv() {
     ? [['date', 'date'], ['type', 'type', true], ['dime_thb', 'dime'], ['stashaway_thb', 'stashaway'], ['webull_usd', 'webull'], ['note', 'note', true], ['status', 'status', true], ['entry_id', 'entryId', true], ['revision', 'revision']]
     : [['date', 'date'], ['amount', 'amount'], ['currency', 'ccy', true], ['kind', 'kind', true], ['status', 'status', true], ['note', 'note', true], ['review_flag', 'reviewFlag', true], ['raw_date', 'rawDate', true], ['raw_amount', 'rawAmount', true], ['record_id', 'recordId', true], ['revision', 'revision']];
   const blob = new Blob(['﻿', calc.toCsv(cols, rows)], { type: 'text/csv;charset=utf-8' });
-  const a = el('a', { href: URL.createObjectURL(blob), download: `minvest-${state.tab}-${bangkokNow().date}.csv` });
-  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  toast(`ส่งออก ${rows.length} รายการแล้ว`);
+  const filename = `minvest-${state.tab}-${bangkokNow().date}.csv`;
+  const finish = (href, revoke) => {
+    const a = el('a', { href, download: filename });
+    document.body.append(a); a.click(); a.remove();
+    if (revoke) setTimeout(() => URL.revokeObjectURL(href), 2000);
+    toast(`ส่งออก ${rows.length} รายการแล้ว`);
+  };
+  // The Android app (WebView, user agent "MInvestApp/…") cannot save blob: downloads; it saves data: URLs to Downloads instead.
+  if (/MInvestApp\//.test(navigator.userAgent)) {
+    const reader = new FileReader();
+    reader.onload = () => finish(String(reader.result).replace(';base64,', `;name=${filename};base64,`), false); // the app reads the file name from the data: URL
+    reader.onerror = () => toast('ส่งออกไฟล์ไม่สำเร็จ', true);
+    reader.readAsDataURL(blob);
+  } else finish(URL.createObjectURL(blob), true);
 }
 
 // ───────── generic two-step form dialog ─────────

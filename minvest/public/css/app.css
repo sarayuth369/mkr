@@ -137,7 +137,7 @@ textarea { min-height: 72px; resize: vertical; }
 
 @media (max-width: 640px) {
   body { font-size: 15.5px; }
-  .topbar { padding: 8px 12px; }
+  .topbar { padding: 8px 12px; position: static; } /* a sticky 3-row header would cover ~30% of a phone screen */
   .topbar-actions .btn { padding: 7px 10px; font-size: .9rem; min-height: 38px; }
   #btn-add-daily { flex: 1 1 100%; order: -1; min-height: 46px; font-size: 1rem; }
   .kpi-value { font-size: 1.35rem; }

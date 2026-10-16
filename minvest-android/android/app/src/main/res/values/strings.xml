@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MInvest</string>
+    <string name="title_activity_main">MInvest</string>
+    <string name="package_name">com.biz2success.minvest</string>
+    <string name="custom_url_scheme">com.biz2success.minvest</string>
+</resources>
