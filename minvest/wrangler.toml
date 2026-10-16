@@ -1,0 +1,36 @@
+# minvest - personal investment dashboard (MKR subproject).
+# A NEW, isolated Worker: does not touch mkr-backend, mkr-admin, auc-backend, DNS or any MKR route.
+# Deploy ONLY while `npx wrangler whoami` shows MKR's Cloudflare account (the one that hosts mkr-backend, workers.dev
+# subdomain "biz2success"). The URL then is https://minvest.biz2success.workers.dev. If whoami shows a different account,
+# run `npx wrangler login` with the MKR account first - the URL's subdomain is per account, so it is the quickest tell.
+name = "minvest"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# Static dashboard. The Worker runs first so every response (HTML/JS/CSS too) carries security headers.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"
+
+# Native Workers Rate Limiting (no KV writes). Limits are fixed here; names are looked up in src/index.ts.
+[[ratelimits]]
+name = "LOGIN_LIMITER"
+namespace_id = "73011"
+simple = { limit = 5, period = 60 }
+
+[[ratelimits]]
+name = "API_LIMITER"
+namespace_id = "73012"
+simple = { limit = 120, period = 60 }
+
+# Secrets (NEVER put values here) - set with `npx wrangler secret put <NAME>`:
+#   MINVEST_PASSWORD         owner login password
+#   MINVEST_SESSION_SECRET   long random string used to sign session cookies
+#   MINVEST_SCRIPT_URL       Apps Script web-app /exec URL
+#   MINVEST_SCRIPT_SECRET    same value as the Apps Script property MINVEST_SCRIPT_SECRET
+[vars]
+SESSION_TTL_SECONDS = "43200"

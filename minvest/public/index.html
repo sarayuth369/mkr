@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="th" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light dark">
+  <title>minvest — บันทึกและวิเคราะห์การลงทุน</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f7d6b'/%3E%3Cpath d='M7 21l6-6 4 4 8-9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <!-- ───────── Login ───────── -->
+  <section id="login-view" class="login" hidden>
+    <form id="login-form" class="card login-card" autocomplete="off">
+      <div class="brand brand-lg"><span class="logo" aria-hidden="true"></span><span>minvest</span></div>
+      <p class="muted">บันทึกและวิเคราะห์ผลการลงทุนส่วนตัว — เข้าสู่ระบบเพื่อดูข้อมูล</p>
+      <label class="field"><span>รหัสผ่าน</span><input id="login-password" type="password" autocomplete="current-password" required maxlength="256"></label>
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <button class="btn btn-primary" id="login-submit" type="submit">เข้าสู่ระบบ</button>
+      <p id="login-config" class="notice" hidden>ระบบยังไม่ได้ตั้งค่า (รหัสผ่านและการเชื่อมต่อ Google Sheets) — ดูขั้นตอนในคู่มือ Deploy</p>
+    </form>
+  </section>
+
+  <!-- ───────── Main ───────── -->
+  <div id="main-view" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="logo" aria-hidden="true"></span><span>minvest</span></div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" id="btn-add-daily" type="button">+ บันทึกข้อมูลวันนี้</button>
+        <button class="btn" id="btn-add-value" type="button">อัปเดตมูลค่าพอร์ต</button>
+        <button class="btn" id="btn-add-cashflow" type="button">เงินฝาก/ถอน/ปันผล</button>
+        <button class="btn btn-ghost" id="btn-settings" type="button" aria-label="ตั้งค่า">ตั้งค่า</button>
+        <button class="btn btn-ghost" id="btn-theme" type="button" aria-label="สลับโหมดสี">◐</button>
+        <button class="btn btn-ghost" id="btn-logout" type="button">ออก</button>
+      </div>
+    </header>
+
+    <main class="container">
+      <div id="status-banner" class="banner" role="status" hidden></div>
+      <div class="meta-row">
+        <span id="last-updated" class="muted">กำลังโหลด…</span>
+        <button class="btn btn-ghost btn-sm" id="btn-refresh" type="button">รีเฟรช</button>
+      </div>
+
+      <section aria-labelledby="h-kpi">
+        <h2 id="h-kpi" class="section-title">ภาพรวม</h2>
+        <div id="kpis" class="kpi-grid"></div>
+      </section>
+
+      <section id="alerts-section" aria-labelledby="h-alerts" hidden>
+        <h2 id="h-alerts" class="section-title">สัญญาณเตือน</h2>
+        <ul id="alerts" class="alerts"></ul>
+      </section>
+
+      <section aria-labelledby="h-value">
+        <div class="section-head">
+          <h2 id="h-value" class="section-title">มูลค่าพอร์ตตามเวลา</h2>
+          <div id="range-buttons" class="seg" role="group" aria-label="ช่วงเวลา"></div>
+        </div>
+        <p class="hint">มูลค่าพอร์ตรวมเงินฝาก/ถอนไว้ด้วย จึงไม่ใช่กำไร — THB และ USD แยกกราฟกัน</p>
+        <div class="chart-grid">
+          <figure class="card chart-card"><figcaption>บาท (THB): Dime · StashAway</figcaption><div class="chart-box"><canvas id="chart-value-thb" aria-label="กราฟมูลค่าพอร์ตเป็นบาท" role="img"></canvas></div><div class="empty" id="empty-value-thb" hidden>ยังไม่มีข้อมูลในช่วงนี้</div></figure>
+          <figure class="card chart-card"><figcaption>ดอลลาร์ (USD): Webull</figcaption><div class="chart-box"><canvas id="chart-value-usd" aria-label="กราฟมูลค่าพอร์ตเป็นดอลลาร์" role="img"></canvas></div><div class="empty" id="empty-value-usd" hidden>ยังไม่มีข้อมูลในช่วงนี้</div></figure>
+        </div>
+      </section>
+
+      <section aria-labelledby="h-income">
+        <div class="section-head">
+          <h2 id="h-income" class="section-title">กำไร/ขาดทุนที่บันทึกไว้</h2>
+          <div id="income-bucket" class="seg" role="group" aria-label="รายวัน/รายเดือน">
+            <button type="button" data-bucket="day" class="seg-btn">รายวัน</button>
+            <button type="button" data-bucket="month" class="seg-btn is-active">รายเดือน</button>
+          </div>
+        </div>
+        <p class="hint">เฉพาะรายการชนิด “กำไร/ขาดทุน” ที่คุณบันทึก — เงินสดรับจริงแยกไว้ต่างหาก</p>
+        <div class="chart-grid">
+          <figure class="card chart-card"><figcaption>บาท (THB)</figcaption><div class="chart-box"><canvas id="chart-income-thb" aria-label="กราฟกำไรขาดทุนเป็นบาท" role="img"></canvas></div><div class="empty" id="empty-income-thb" hidden>ยังไม่มีรายการ — กด “+ บันทึกข้อมูลวันนี้”</div></figure>
+          <figure class="card chart-card"><figcaption>ดอลลาร์ (USD)</figcaption><div class="chart-box"><canvas id="chart-income-usd" aria-label="กราฟกำไรขาดทุนเป็นดอลลาร์" role="img"></canvas></div><div class="empty" id="empty-income-usd" hidden>ยังไม่มีรายการ</div></figure>
+        </div>
+      </section>
+
+      <section aria-labelledby="h-compare">
+        <h2 id="h-compare" class="section-title">เปรียบเทียบผลลัพธ์สะสมที่บันทึก</h2>
+        <p class="hint">กำไร/ขาดทุนสะสมจากที่บันทึกจริง แยกตามสกุลเงิน — ไม่เปรียบเทียบบาทกับดอลลาร์โดยตรง</p>
+        <div class="chart-grid">
+          <figure class="card chart-card"><figcaption>สะสม THB</figcaption><div class="chart-box"><canvas id="chart-cum-thb" aria-label="กำไรสะสมเป็นบาท" role="img"></canvas></div><div class="empty" id="empty-cum-thb" hidden>ยังไม่มีข้อมูล</div></figure>
+          <figure class="card chart-card"><figcaption>สะสม USD</figcaption><div class="chart-box"><canvas id="chart-cum-usd" aria-label="กำไรสะสมเป็นดอลลาร์" role="img"></canvas></div><div class="empty" id="empty-cum-usd" hidden>ยังไม่มีข้อมูล</div></figure>
+        </div>
+      </section>
+
+      <section aria-labelledby="h-forecast">
+        <div class="section-head">
+          <h2 id="h-forecast" class="section-title">แนวโน้มและการคาดการณ์</h2>
+          <div id="forecast-platforms" class="seg" role="group" aria-label="เลือกพอร์ต"></div>
+        </div>
+        <div class="card" id="forecast-card"></div>
+        <h3 class="sub-title">ความคืบหน้าเป้าหมาย</h3>
+        <div id="goals" class="goal-grid"></div>
+      </section>
+
+      <section aria-labelledby="h-history">
+        <div class="section-head">
+          <h2 id="h-history" class="section-title">ประวัติและตารางข้อมูล</h2>
+          <div id="history-tabs" class="seg" role="tablist" aria-label="ประเภทตาราง">
+            <button type="button" class="seg-btn is-active" data-tab="daily" role="tab">บันทึกรายวัน</button>
+            <button type="button" class="seg-btn" data-tab="dime" role="tab">มูลค่า Dime</button>
+            <button type="button" class="seg-btn" data-tab="stashaway" role="tab">มูลค่า StashAway</button>
+            <button type="button" class="seg-btn" data-tab="webull" role="tab">มูลค่า Webull</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="table-tools"><input id="table-search" type="search" placeholder="ค้นหา (วันที่ / หมายเหตุ)" aria-label="ค้นหา"><label class="check"><input id="table-void" type="checkbox"><span>แสดงรายการที่ยกเลิก</span></label></div>
+          <div class="table-wrap"><table class="table" id="history-table"><thead></thead><tbody></tbody></table></div>
+          <div class="pager"><button class="btn btn-sm" id="pg-prev" type="button">ก่อนหน้า</button><span id="pg-info" class="muted"></span><button class="btn btn-sm" id="pg-next" type="button">ถัดไป</button></div>
+        </div>
+      </section>
+
+      <footer class="foot muted">ข้อมูลเก็บใน Google Sheets ของคุณ · เวลาอ้างอิง Asia/Bangkok · ตัวเลขคาดการณ์เป็นการประมาณทางสถิติ ไม่ใช่คำแนะนำการลงทุน</footer>
+    </main>
+  </div>
+
+  <!-- ───────── Form dialog (shared by all forms) ───────── -->
+  <dialog id="form-dialog" class="dialog" aria-labelledby="fd-title">
+    <form id="fd-form" method="dialog" novalidate>
+      <header class="dialog-head"><h3 id="fd-title"></h3><button type="button" class="btn btn-ghost btn-sm" id="fd-close" aria-label="ปิด">✕</button></header>
+      <div id="fd-body" class="dialog-body"></div>
+      <p id="fd-error" class="error" role="alert" hidden></p>
+      <footer class="dialog-foot"><button type="button" class="btn" id="fd-back" hidden>ย้อนกลับ</button><button type="submit" class="btn btn-primary" id="fd-submit">ตรวจสอบ</button></footer>
+    </form>
+  </dialog>
+
+  <script src="/vendor/chart.umd.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

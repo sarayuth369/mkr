@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+# Personal financial data - NEVER commit (Excel source, normalized exports, import reports)
+data/
+*.xlsx
+*.xls
