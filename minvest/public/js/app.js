@@ -166,6 +166,23 @@ function renderKpis() {
   }
   box.append(totCard);
 
+  // Automatic P/L from consecutive portfolio values: no recorded deposit/withdrawal => value change is P/L; with one => net flow removed;
+  // suspicious jumps without a recorded flow => "ตรวจสอบ" (never counted). Display only: nothing is written to the sheet.
+  const autoCard = card(el('div', { class: 'kpi-label', text: 'กำไร/ขาดทุนอัตโนมัติจากมูลค่าพอร์ต' }));
+  const autoLines = el('div', { class: 'kpi-lines' });
+  for (const p of PLATFORMS) {
+    const a = calc.autoPL(pf[p] ?? [], d.cashflows, p, { windowDays: 30 });
+    if (!a.ok || !a.latest) { autoLines.append(el('div', { class: 'kpi-line' }, el('span', { class: 'muted', text: LABEL[p] }), el('span', { class: 'muted', text: 'ยังคำนวณไม่ได้' }))); continue; }
+    const l = a.latest, span = `${fmtDate(l.from).slice(0, 5)}→${fmtDate(l.to).slice(0, 5)}`;
+    autoLines.append(l.status === 'check'
+      ? el('div', { class: 'kpi-line' }, el('span', { class: 'muted', text: `${LABEL[p]} ${span}` }), el('span', { class: 'chip chip-warn', title: l.reason, text: 'ตรวจสอบ: อาจมีฝาก/ถอน' }))
+      : el('div', { class: 'kpi-line' }, el('span', { class: 'muted', text: `${LABEL[p]} ${span}` }), el('span', {}, el('b', { class: signClass(l.pl), text: `${fmtMoney(l.pl, cur[p], { sign: true })} (${fmtPct(l.pct)})` }), el('span', { class: 'chip', text: l.status === 'adjusted' ? 'หักฝาก/ถอนแล้ว' : 'ไม่มีฝาก/ถอน' }))));
+    if (l.status === 'check') autoLines.append(el('div', { class: 'muted small', text: l.reason }));
+    if (a.counted) autoLines.append(el('div', { class: 'muted small', text: `  30 วัน: ${fmtMoney(a.sum, cur[p], { sign: true })} (${a.counted} ช่วง${a.skipped ? `, ข้าม ${a.skipped} ช่วงที่ต้องตรวจสอบ` : ''})` }));
+  }
+  autoCard.append(autoLines, el('div', { class: 'kpi-sub', text: 'เทียบมูลค่าครั้งล่าสุดกับครั้งก่อน · ถ้าวันนั้นมีฝาก/ถอนต้องบันทึกที่ “เงินฝาก/ถอน/ปันผล” (ไม่งั้นระบบจะขึ้น “ตรวจสอบ” เมื่อตัวเลขเปลี่ยนมากผิดปกติ) · แยกจากกำไร/ขาดทุนที่คุณกรอกเอง' }));
+  box.append(autoCard);
+
   const entries = activeDaily();
   const periods = [['day', 'วันนี้'], ['month', 'เดือนนี้'], ['year', 'ปีนี้']];
   const plBox = card(el('div', { class: 'kpi-label', text: 'กำไร/ขาดทุนจริงที่บันทึก (Actual P/L)' }));

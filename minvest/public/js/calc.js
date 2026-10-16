@@ -104,6 +104,42 @@ export function adjustedReturn(series, cashflows, platform, confirmedThrough) {
   return { ok: true, pl: round2(pl), pct: denom > 0 ? pl / denom : null, from: start.d, to: end.d, netFlow: round2(net), flows: flows.length };
 }
 
+// ───────── automatic profit/loss from consecutive portfolio values ─────────
+/**
+ * P/L between two consecutive value records of ONE platform, in that platform's own currency (never FX-converted).
+ *  - no deposit/withdrawal recorded in (prev, cur]  -> status 'auto'     : P/L = value change
+ *  - deposit/withdrawal recorded                    -> status 'adjusted' : P/L = value change - net deposits (dividends stay in P/L)
+ *  - no flow recorded BUT the jump is suspicious (> jumpPct, or a note mentions deposit/withdraw) -> 'check' : NOT counted as P/L
+ *  - a cashflow in another currency                 -> 'check'
+ * The system only knows cashflows the owner recorded, hence the 'check' guard.
+ */
+export function periodPL(prev, cur, cashflows, platform, { jumpPct = 0.03 } = {}) {
+  const change = round2(cur.v - prev.v);
+  const flows = (cashflows ?? []).filter((c) => c.platform === platform && (c.type === 'deposit' || c.type === 'withdrawal') && c.date > prev.d && c.date <= cur.d);
+  const base = { from: prev.d, to: cur.d, days: daysBetween(prev.d, cur.d), change };
+  if (flows.some((c) => c.currency !== CCY[platform])) return { ...base, status: 'check', reason: 'มีเงินฝาก/ถอนคนละสกุลเงินกับพอร์ต' };
+  const pct = prev.v > 0 ? change / prev.v : null;
+  if (!flows.length) {
+    if (CASHFLOW_NOTE.test(cur.n ?? "")) return { ...base, status: 'check', reason: 'หมายเหตุมีคำว่าฝาก/ถอน แต่ยังไม่ได้บันทึกในเงินฝาก/ถอน' };
+    if (pct !== null && Math.abs(pct) > jumpPct) return { ...base, status: 'check', reason: `มูลค่าเปลี่ยน ${(Math.abs(pct) * 100).toFixed(1)}% อาจมีฝาก/ถอนที่ยังไม่ได้บันทึก` };
+    return { ...base, status: 'auto', pl: change, pct };
+  }
+  const net = round2(flows.reduce((s, c) => s + (c.type === 'deposit' ? c.amount : -c.amount), 0));
+  const pl = round2(change - net);
+  return { ...base, status: 'adjusted', netFlow: net, flows: flows.length, pl, pct: prev.v > 0 ? pl / prev.v : null };
+}
+
+/** Latest period + the sum of all countable periods in the last `windowDays` (status 'check' periods are excluded and counted). */
+export function autoPL(series, cashflows, platform, { windowDays = 30, jumpPct = 0.03 } = {}) {
+  if (!series || series.length < 2) return { ok: false, reason: 'ต้องมีมูลค่าอย่างน้อย 2 ครั้ง' };
+  const last = latest(series), cutoff = addDays(last.d, -windowDays);
+  const periods = [];
+  for (let i = 1; i < series.length; i++) if (series[i].d >= cutoff) periods.push(periodPL(series[i - 1], series[i], cashflows, platform, { jumpPct }));
+  const counted = periods.filter((p) => p.status !== 'check');
+  const sum = counted.length ? round2(counted.reduce((s, p) => s + p.pl, 0)) : null;
+  return { ok: true, latest: periods.at(-1) ?? null, windowDays, sum, counted: counted.length, skipped: periods.length - counted.length, periods: periods.length };
+}
+
 // ───────── forecast ─────────
 /** Steps used for the trend estimate: gaps with a likely deposit/withdrawal (note keyword, confirmed cashflow, or big jump) are removed. */
 export function usableSteps(series, cashflows = [], platform, { jumpThreshold = 0.08, maxGapDays = 10 } = {}) {
