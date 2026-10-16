@@ -4,6 +4,9 @@
 # subdomain "biz2success"). The URL then is https://minvest.biz2success.workers.dev. If whoami shows a different account,
 # run `npx wrangler login` with the MKR account first - the URL's subdomain is per account, so it is the quickest tell.
 name = "minvest"
+# Pinned to MKR's Cloudflare account (biz2success). Not a secret. Prevents deploying to another logged-in account by mistake
+# (that happened once during testing: wrangler was logged into a different account and the account cache silently followed it).
+account_id = "dcb87cdb20720fd168d94f2dbc95e9f5"
 main = "src/index.ts"
 compatibility_date = "2025-09-01"
 workers_dev = true

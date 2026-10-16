@@ -91,6 +91,21 @@ Google Sheets "minvestment"
 โดเมนที่ใช้งานจริงตอนนี้คือ `workers.dev` (ไม่มีโซน Cloudflare/โดเมนที่ผมยืนยันได้) — หากต้องการ `minvest.<โดเมนของคุณ>` ให้เพิ่ม
 Custom Domain ใน Cloudflare Dashboard (Workers → minvest → Settings → Domains) โดยไม่ต้องแก้โค้ด
 
+### 4b. ตรวจสอบหลัง deploy (รันเองในเทอร์มินัล — รหัสผ่านไม่ถูกแสดง/เก็บ)
+
+`wrangler.toml` ปักหมุด `account_id` ของ MKR ไว้แล้ว (ไม่ใช่ความลับ) — ถ้า wrangler ล็อกอินบัญชีอื่น จะ error แทนการ deploy ผิดบัญชี
+
+```bash
+cd D:FlutterProjectsmkrminvest
+node tools/live-smoke.mjs https://minvest.biz2success.workers.dev
+```
+
+สคริปต์จะถามรหัสผ่านแบบซ่อน แล้วทดสอบ: health, header ความปลอดภัย, login ผิด/ถูก, การปฏิเสธผู้ไม่มีสิทธิ์, Apps Script ตอบและ secret ตรงกัน,
+ชื่อสเปรดชีต = `minvestment`, setup, อ่าน Dashboard, เขียนรายการทดสอบ 1 แถว (0.01, หมายเหตุ `[minvest-smoke-test …]`) → ส่งซ้ำไม่ซ้ำแถว → แก้ไข →
+revision เก่าถูกปฏิเสธ → **void** (แถวยังอยู่ในชีตเป็น `void` ไม่นับใน KPI — ลบทิ้งเองได้) ไม่เขียนมูลค่าพอร์ต/เงินฝาก (เพราะย้อนไม่ได้)
+
+**ห้ามนำเข้า Excel จนกว่าสรุปจะเป็น “ผ่านทั้งหมด”**
+
 ## 5. ขั้นตอน C — นำเข้า Excel ย้อนหลัง
 
 ไฟล์: `C:\Users\lsara\Desktop\value infox.xlsx` (ชีต `Dime24`, `StashAway`, `WeBull`)

@@ -2,13 +2,14 @@ PROJECT: MKR (subproject: minvest)
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: 2026-10-16 minvest - Investment Income Dashboard One-Pass
-TITLE: READ -> AUDIT -> PLAN -> IMPLEMENT -> TEST -> BUILD -> VERIFY -> REPORT -> COMMIT -> PUSH (user /plan prompt, no task file)
-STATUS: WAITING_FOR_GPT_REVIEW
+TASK: 2026-10-16 minvest - Deploy to MKR Cloudflare account (follow-up)
+TITLE: Verify config, set secrets, deploy, live Sheets test, then import
+STATUS: WAITING_FOR_GPT_REVIEW  (BLOCKED on owner: Cloudflare secrets must be entered by the owner)
 
-COMMIT: e7dc076
+COMMIT: see git log (minvest deploy-prep commit after 492751c)
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MINVEST_ONE_PASS_REPORT.md
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MINVEST_DEPLOY_REPORT.md
+(previous one-pass report: CLAUDE_TO_GPT_MINVEST_ONE_PASS_REPORT.md)
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
@@ -66,6 +67,12 @@ PENDING OWNER ACTION:
    to enable cashflow-adjusted return.
 Full steps (Thai): minvest/docs/MINVEST_GUIDE_TH.md
 
+DEPLOY FOLLOW-UP (2026-10-16): wrangler is on biz2success@gmail.com / dcb87cdb... (correct). Found and fixed a stale
+wrangler account cache pointing at the wrong account; account_id is now pinned in minvest/wrangler.toml. Build + 88/88 tests pass;
+dry-run bindings OK; mkr-backend untouched. NOT deployed, no URL claimed, NO Excel import yet.
+Owner must: wrangler secret put x4 (terminal tab "minvest secrets" is open in the project folder), npm run deploy, then
+node tools/live-smoke.mjs https://minvest.biz2success.workers.dev (hidden password prompt, PASS/FAIL only, one voided test row).
+After "ผ่านทั้งหมด": real Sheets read/write verified -> then run the Excel import.
+
 NEXT:
-Claude has completed this pass and stopped, per its own instruction - no serial loop.
-Waiting for GPT review.
+Claude stopped at the owner-action step. Waiting for the owner to enter the secrets / run the smoke test.
