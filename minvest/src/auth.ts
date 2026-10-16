@@ -23,22 +23,29 @@ export async function safeEqual(a: string, b: string, secret: string): Promise<b
   return diff === 0;
 }
 
-export async function createSessionToken(secret: string, ttlSeconds: number, now = Date.now()): Promise<string> {
-  const payload = b64url(enc.encode(JSON.stringify({ iat: Math.floor(now / 1000), exp: Math.floor(now / 1000) + ttlSeconds, n: b64url(crypto.getRandomValues(new Uint8Array(12))) })));
+/** `ver` is the password/session version (see AuthStore): bumping it on a password change kills every older session. */
+export async function createSessionToken(secret: string, ttlSeconds: number, now = Date.now(), ver = 0): Promise<string> {
+  const payload = b64url(enc.encode(JSON.stringify({ iat: Math.floor(now / 1000), exp: Math.floor(now / 1000) + ttlSeconds, v: ver, n: b64url(crypto.getRandomValues(new Uint8Array(12))) })));
   const sig = await crypto.subtle.sign('HMAC', await hmacKey(secret, ['sign']), enc.encode(payload));
   return `${payload}.${b64url(sig)}`;
 }
 
-export async function verifySessionToken(secret: string, token: string | null | undefined, now = Date.now()): Promise<boolean> {
-  if (!token || token.length > 512) return false;
+/** Returns the session version when the signature is valid and the token has not expired, else null. */
+export async function readSessionToken(secret: string, token: string | null | undefined, now = Date.now()): Promise<{ ver: number } | null> {
+  if (!token || token.length > 512) return null;
   const [payload, sig] = token.split('.');
-  if (!payload || !sig || token.split('.').length !== 2) return false;
+  if (!payload || !sig || token.split('.').length !== 2) return null;
   try {
     const ok = await crypto.subtle.verify('HMAC', await hmacKey(secret, ['verify']), fromB64url(sig), enc.encode(payload));
-    if (!ok) return false;
-    const data = JSON.parse(new TextDecoder().decode(fromB64url(payload))) as { exp?: number };
-    return typeof data.exp === 'number' && data.exp * 1000 > now;
-  } catch { return false; }
+    if (!ok) return null;
+    const data = JSON.parse(new TextDecoder().decode(fromB64url(payload))) as { exp?: number; v?: number };
+    if (typeof data.exp !== 'number' || data.exp * 1000 <= now) return null;
+    return { ver: Number.isInteger(data.v) ? (data.v as number) : 0 };
+  } catch { return null; }
+}
+
+export async function verifySessionToken(secret: string, token: string | null | undefined, now = Date.now()): Promise<boolean> {
+  return (await readSessionToken(secret, token, now)) !== null;
 }
 
 export function cookieName(isHttps: boolean) { return isHttps ? '__Host-minvest_session' : 'minvest_session'; }

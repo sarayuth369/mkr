@@ -65,6 +65,28 @@ export function parsePortfolio(body: unknown) {
   if (b.date) out.date = dateStr(b.date, 'วันที่');
   return out;
 }
+export const HIST_KINDS = ['value', 'superseded', 'event_amount', 'note_only', 'usd_event'] as const;
+/** Stable record id: app rows use a UUID entry_id, imported rows use a 32-hex import_key. Never a row number. */
+export function recordId(v: unknown): string {
+  if (typeof v !== 'string' || !(UUID.test(v) || /^[0-9a-f]{32}$/i.test(v))) throw bad('recordId ไม่ถูกต้อง');
+  return v.toLowerCase();
+}
+/** Edit of an existing history record. The platform comes from the URL and can never be changed; amount is in that platform's own currency. */
+export function parsePortfolioEdit(body: unknown) {
+  const b = obj(body);
+  const value = amount(b.value, 'จำนวนเงิน');
+  const kind = oneOf(b.kind ?? 'value', HIST_KINDS, 'ชนิดรายการ');
+  if (value !== null && value < 0) throw bad('จำนวนเงินต้องไม่ติดลบ');
+  if (kind === 'value' && value === null) throw bad('รายการมูลค่าพอร์ตต้องมีจำนวนเงิน');
+  return { date: dateStr(b.date, 'วันที่'), value, kind, note: note(b.note), expectedRevision: parseRevision(b.expectedRevision) };
+}
+export function parsePasswordChange(body: unknown) {
+  const b = obj(body);
+  const str = (x: unknown, l: string) => { if (typeof x !== 'string' || x.length < 1 || x.length > 256) throw bad(`${l} ไม่ถูกต้อง`); return x; };
+  const current = str(b.current, 'รหัสผ่านปัจจุบัน'), next = str(b.next, 'รหัสผ่านใหม่');
+  if (b.confirm !== undefined && b.confirm !== next) throw bad('ยืนยันรหัสผ่านใหม่ไม่ตรงกัน');
+  return { current, next };
+}
 export function parseCashflow(body: unknown) {
   const b = obj(body);
   const amt = amount(b.amount, 'จำนวนเงิน');

@@ -2,37 +2,27 @@ PROJECT: MKR (subproject: minvest)
 
 PROTOCOL: D:\FlutterProjects\gpt-claude\GPT_CLAUDE_PROTOCOL.md
 
-TASK: 2026-10-16 minvest - Excel to Google Sheets Production Import
-TITLE: Verify, import 1,269 historical rows into the real Google Sheet, read back, verify Dashboard
-STATUS: WAITING_FOR_GPT_REVIEW  (result: PASS)
+TASK: 2026-10-16 minvest - Production UX, Portfolio Management, FX Conversion & Secure Settings
+TITLE: Edit/delete history rows, password change (Durable Object), USD->THB (ECB) + Total THB, footer removal
+STATUS: WAITING_FOR_GPT_REVIEW  (result: PARTIAL - authenticated production smoke test needs the owner's login)
 
-COMMIT: see git log (minvest import commit after dd8244d)
+COMMIT: see git log (minvest enhancements commit after aa6e778)
 CLAUDE REPORT:
-D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MINVEST_IMPORT_REPORT.md
-(earlier: CLAUDE_TO_GPT_MINVEST_DEPLOY_REPORT.md, CLAUDE_TO_GPT_MINVEST_ONE_PASS_REPORT.md)
+D:\FlutterProjects\gpt-claude\CLAUDE_TO_GPT_MINVEST_ENHANCEMENTS_REPORT.md
+(earlier: ..._IMPORT_REPORT.md, ..._DEPLOY_REPORT.md, ..._ONE_PASS_REPORT.md)
 
 This file mirrors D:\FlutterProjects\gpt-claude\CURRENT.md (the protocol's
 authoritative shared-state file); both are kept in sync.
 
-RESULT (real Google Sheet "minvestment", production Worker https://minvest.biz2success.workers.dev, version 010d4ce8):
-- Before: Historical_* all 0 rows, Daily_Income 1 void smoke row, no cashflows, no prior import.
-- Imported: Dime 606, StashAway 366, Webull 297 = 1,269 rows (+70 Import_Review, +26 Cashflow_Review suggestions);
-  canary first (3 rows, resend inserted 0, exact readback), then full import, full readback field-by-field: 47/47 checks PASS,
-  independent read-only re-check matches; re-send of 125 sample rows + all 96 review items inserted 0 (idempotent).
-- Dashboard (production): series 598/366/297 points equal the cleaned source; Daily_Income and KPIs untouched
-  (0 active entries); cashflows still 0; adjusted return still "not ready"; forecast available; no smoke row in KPIs.
-- Not promoted to "confirmed": 2 malformed Dime numbers (raw kept, not charted), 1 withdrawal-amount row, 2 USD-event rows,
-  5 three-decimal values (preserved), 26 deposit/withdrawal/dividend hints (pending owner confirmation).
-- Method change: hidden terminal password prompt was unusable, so the guarded import was moved into a shared module and a
-  web panel ("นำเข้าข้อมูลย้อนหลัง"), run in the owner's already-logged-in Chrome (no password typed/seen by Claude).
-- Tests 98/98, build/typecheck clean; no secrets or financial figures in Git; local data/dev files deleted.
-- auc/backend, mkr-backend, mkr-admin, Alpaca/hybrid flags untouched.
+RESULT:
+- Worker minvest deployed (version 905e4177), new Durable Objects AuthStore + FxStore (this Worker only). Apps Script web app updated to Version 3 on the same /exec URL; mvRunSetup run once.
+- Tests 158/158, tsc/build clean. Real Sheet read-only check: Historical_* still 606/366/297 (1,269), headers migrated, Audit_Log created, no duplicates.
+- Production negative tests PASS (auth, CSRF, DO wiring, footer gone, mkr-backend untouched).
+- NOT verified in production: logged-in dashboard, record edit/delete, password-change success, live FX/Total THB (needs owner login).
 
-OWNER ACTIONS (none block use):
-1. Optional: redeploy Apps Script with the updated Code.gs (grid-growth fix for future imports > 1,000 rows/sheet; live writes unaffected).
-2. Review Import_Review; optionally correct the 2 malformed Dime cells.
-3. Record confirmed deposits/withdrawals/dividends (Cashflow_Review is the checklist), then set the "confirmed through" date in Settings.
-4. Voided smoke row stays in Daily_Income (excluded from KPIs); delete manually in Sheets only if desired.
+OWNER ACTIONS:
+1. Log in, run the 4 checks listed at the end of the report, tell Claude the result.
+2. Recommended: change the password via Settings (an old notes file once held credentials) and delete minvest/data/OWNER-NOTES-DO-NOT-COMMIT.txt.
 
 NEXT:
-Claude has completed this pass and stopped. Waiting for GPT review.
+Claude has completed this pass and stopped. Waiting for GPT review / owner command.

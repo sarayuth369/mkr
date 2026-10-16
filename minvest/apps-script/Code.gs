@@ -26,10 +26,13 @@ var MINVEST = {
     CASHFLOW_REVIEW: 'Cashflow_Review',
     IMPORT_REVIEW: 'Import_Review',
     DASH: 'Dashboard_Data',
+    AUDIT: 'Audit_Log',
     SETTINGS: 'Settings',
   },
   DAILY_HEADERS: ['วันที่บันทึก', 'Dime THB', 'StashAway THB', 'Webull USD', 'หมายเหตุ', 'entry_id', 'ชนิดข้อมูล', 'updated_at', 'request_id', 'status', 'revision', 'วันที่ของรายการ'],
-  HIST_HEADERS: ['วันที่', 'ราคา(บาท)', 'ราคา(USD)', 'หมายเหตุ', 'ชนิดแถว', 'review_flag', 'source_sheet', 'source_row', 'raw_date', 'raw_บาท', 'raw_USD', 'raw_หมายเหตุ', 'import_key', 'entry_id', 'request_id', 'status', 'created_at'],
+  HIST_HEADERS: ['วันที่', 'ราคา(บาท)', 'ราคา(USD)', 'หมายเหตุ', 'ชนิดแถว', 'review_flag', 'source_sheet', 'source_row', 'raw_date', 'raw_บาท', 'raw_USD', 'raw_หมายเหตุ', 'import_key', 'entry_id', 'request_id', 'status', 'created_at', 'revision', 'updated_at'],
+  AUDIT_HEADERS: ['เวลา', 'การกระทำ', 'แพลตฟอร์ม', 'record_id', 'revision ใหม่', 'ก่อนแก้ (JSON)', 'หลังแก้ (JSON)'],
+  HIST_EDIT_KINDS: ['value', 'superseded', 'event_amount', 'note_only', 'usd_event'],
   CASHFLOW_HEADERS: ['วันที่', 'แพลตฟอร์ม', 'ประเภท', 'จำนวน', 'สกุลเงิน', 'หมายเหตุ', 'entry_id', 'request_id', 'status', 'created_at'],
   CASHFLOW_REVIEW_HEADERS: ['แพลตฟอร์ม', 'วันที่', 'source_row', 'ประเภทที่คาดว่า', 'จำนวน THB (จากหมายเหตุ)', 'จำนวน USD (จากหมายเหตุ)', 'หมายเหตุ', 'สถานะ', 'review_key'],
   REVIEW_HEADERS: ['แพลตฟอร์ม', 'source_row', 'ระดับ', 'เหตุผล', 'รายละเอียด', 'ค่าต้นฉบับ', 'review_key'],
@@ -73,6 +76,11 @@ function doGet() {
   return ContentService.createTextOutput(JSON.stringify({ ok: true, service: 'minvest' })).setMimeType(ContentService.MimeType.JSON);
 }
 
+/** Owner-only maintenance entry: pick `mvRunSetup` in the Apps Script editor and press Run (same effect as the `setup` action). Idempotent: creates missing sheets/header cells only. */
+function mvRunSetup() {
+  return mv_withLock_(mv_setup_);
+}
+
 function mv_dispatch_(action, p) {
   switch (action) {
     case 'health': return mv_health_();
@@ -84,6 +92,9 @@ function mv_dispatch_(action, p) {
     case 'voidDaily': return mv_withLock_(function () { return mv_voidDaily_(p); });
     case 'listPortfolio': return mv_listPortfolio_(p);
     case 'addPortfolioValue': return mv_withLock_(function () { return mv_addPortfolioValue_(p); });
+    case 'updatePortfolioRecord': return mv_withLock_(function () { return mv_updatePortfolioRecord_(p); });
+    case 'voidPortfolioRecord': return mv_withLock_(function () { return mv_setPortfolioStatus_(p, 'void'); });
+    case 'restorePortfolioRecord': return mv_withLock_(function () { return mv_setPortfolioStatus_(p, 'active'); });
     case 'addCashflow': return mv_withLock_(function () { return mv_addCashflow_(p); });
     case 'updateSettings': return mv_withLock_(function () { return mv_updateSettings_(p); });
     case 'importHistorical': return mv_withLock_(function () { return mv_importHistorical_(p); });
@@ -213,7 +224,12 @@ function mv_setup_() {
   function ensure(name, headers) { var existed = !!ss.getSheetByName(name); var sh = mv_sheet_(ss, name, headers); if (!existed) created.push(name); return sh; }
   var daily = ensure(MINVEST.SHEETS.DAILY, MINVEST.DAILY_HEADERS);
   daily.getRange(2, 1, Math.max(daily.getMaxRows() - 1, 1), 1).setNumberFormat('dd/MM/yyyy H:mm');
-  MINVEST.PLATFORMS.forEach(function (p) { ensure(MINVEST.SHEETS.HIST[p], MINVEST.HIST_HEADERS); });
+  MINVEST.PLATFORMS.forEach(function (p) {
+    var hs = ensure(MINVEST.SHEETS.HIST[p], MINVEST.HIST_HEADERS);
+    // Migration: sheets created before revision/updated_at existed get ONLY the missing header cells (data is never touched).
+    for (var c = 0; c < MINVEST.HIST_HEADERS.length; c++) if (hs.getRange(1, c + 1).getValue() === '') hs.getRange(1, c + 1).setValue(MINVEST.HIST_HEADERS[c]);
+  });
+  ensure(MINVEST.SHEETS.AUDIT, MINVEST.AUDIT_HEADERS);
   ensure(MINVEST.SHEETS.CASHFLOWS, MINVEST.CASHFLOW_HEADERS);
   ensure(MINVEST.SHEETS.CASHFLOW_REVIEW, MINVEST.CASHFLOW_REVIEW_HEADERS);
   ensure(MINVEST.SHEETS.IMPORT_REVIEW, MINVEST.REVIEW_HEADERS);
@@ -336,8 +352,83 @@ function mv_listDaily_(p) {
 var MV_VALUE_CCY = { dime: 'thb', stashaway: 'thb', webull: 'usd' };
 
 function mv_histFromRow_(r, rowNum, platform) {
-  return { row: rowNum, platform: platform, date: mv_toDateStr_(r[0]), thb: r[1] === '' ? null : Number(r[1]), usd: r[2] === '' ? null : Number(r[2]), note: String(r[3] || '').replace(/^'/, ''),
-    kind: String(r[4]), reviewFlag: String(r[5] || ''), sourceRow: r[7] === '' ? null : Number(r[7]), entryId: String(r[13] || ''), status: String(r[15] || 'active') };
+  var unq = function (v) { return String(v === undefined || v === null ? '' : v).replace(/^'/, ''); };
+  return { row: rowNum, platform: platform, date: mv_toDateStr_(r[0]), thb: r[1] === '' ? null : Number(r[1]), usd: r[2] === '' ? null : Number(r[2]), note: unq(r[3]),
+    kind: String(r[4]), reviewFlag: String(r[5] || ''), sourceRow: r[7] === '' ? null : Number(r[7]), entryId: String(r[13] || ''), status: String(r[15] || 'active'),
+    // Stable identity: never the row number (rows can be sorted/inserted in the sheet). App rows have entry_id, imported rows have import_key.
+    recordId: String(r[13] || r[12] || ''), revision: Number(r[17] || 1), updatedAt: r[18] instanceof Date ? Utilities.formatDate(r[18], MINVEST.TZ, 'dd/MM/yyyy H:mm') : String(r[18] || ''),
+    rawDate: unq(r[8]), rawThb: unq(r[9]), rawUsd: unq(r[10]), rawNote: unq(r[11]) };
+}
+
+function mv_recordId_(v) {
+  if (typeof v !== 'string' || !(MINVEST.UUID_RE.test(v) || /^[0-9a-f]{32}$/.test(v))) throw mv_err_('VALIDATION', 'recordId invalid');
+  return v.toLowerCase();
+}
+
+function mv_findHistRecord_(sh, recordId) {
+  var rows = mv_rows_(sh, MINVEST.HIST_HEADERS.length);
+  for (var i = 0; i < rows.length; i++) if (String(rows[i][13]).toLowerCase() === recordId || String(rows[i][12]).toLowerCase() === recordId) return { rowNum: i + 2, row: rows[i] };
+  return null;
+}
+
+function mv_audit_(action, platform, recordId, revision, before, after) {
+  var sh = mv_sheet_(mv_ss_(), MINVEST.SHEETS.AUDIT, MINVEST.AUDIT_HEADERS);
+  sh.appendRow([mv_now_(), action, platform, recordId, revision, JSON.stringify(before), JSON.stringify(after)]);
+}
+
+function mv_snapshot_(e) { return { date: e.date, thb: e.thb, usd: e.usd, note: e.note, kind: e.kind, status: e.status }; }
+
+/**
+ * Edit one portfolio-history record by STABLE id with optimistic concurrency. The platform (and therefore the currency
+ * column) can never change: the amount always lands in the platform's own currency column. Raw imported text is kept.
+ */
+function mv_updatePortfolioRecord_(p) {
+  var platform = mv_enum_(p.platform, MINVEST.PLATFORMS, 'platform');
+  var recordId = mv_recordId_(p.recordId);
+  var date = mv_dateStr_(p.date, 'date', 1);
+  var kind = mv_enum_(p.kind, MINVEST.HIST_EDIT_KINDS, 'kind');
+  var value = mv_amount_(p.value, 'value');
+  if (kind === 'value' && (value === null || value < 0)) throw mv_err_('VALIDATION', 'a value row needs a non-negative amount');
+  if (value !== null && value < 0) throw mv_err_('VALIDATION', 'amount must be non-negative');
+  var note = mv_safeText_(p.note);
+  var sh = mv_sheet_(mv_ss_(), MINVEST.SHEETS.HIST[platform], MINVEST.HIST_HEADERS);
+  var f = mv_findHistRecord_(sh, recordId);
+  if (!f) throw mv_err_('NOT_FOUND', 'record not found in this portfolio');
+  if (String(f.row[15] || 'active') !== 'active') throw mv_err_('CONFLICT', 'record is deleted - restore it first');
+  var rev = Number(f.row[17] || 1);
+  if (rev !== Number(p.expectedRevision)) throw mv_err_('CONFLICT', 'record changed elsewhere, reload');
+  var before = mv_histFromRow_(f.row, f.rowNum, platform);
+  var col = MV_VALUE_CCY[platform] === 'thb' ? 2 : 3; // 1-based column of the platform's OWN currency
+  sh.getRange(f.rowNum, 1).setValue(mv_dateCell_(date));
+  sh.getRange(f.rowNum, col).setValue(value === null ? '' : value);
+  sh.getRange(f.rowNum, 4).setValue(note);
+  sh.getRange(f.rowNum, 5).setValue(kind);
+  if (String(f.row[5] || '') !== '') sh.getRange(f.rowNum, 6).setValue('แก้ไขแล้วโดยเจ้าของ (ดู Audit_Log)');
+  sh.getRange(f.rowNum, 18).setValue(rev + 1);
+  sh.getRange(f.rowNum, 19).setValue(mv_now_());
+  var after = mv_histFromRow_(sh.getRange(f.rowNum, 1, 1, MINVEST.HIST_HEADERS.length).getValues()[0], f.rowNum, platform);
+  mv_audit_('edit', platform, recordId, rev + 1, mv_snapshot_(before), mv_snapshot_(after));
+  return { entry: after };
+}
+
+/** Soft delete / restore. The row stays in the sheet (status void), is excluded from every series/KPI, and is audited. */
+function mv_setPortfolioStatus_(p, status) {
+  var platform = mv_enum_(p.platform, MINVEST.PLATFORMS, 'platform');
+  var recordId = mv_recordId_(p.recordId);
+  var sh = mv_sheet_(mv_ss_(), MINVEST.SHEETS.HIST[platform], MINVEST.HIST_HEADERS);
+  var f = mv_findHistRecord_(sh, recordId);
+  if (!f) throw mv_err_('NOT_FOUND', 'record not found in this portfolio');
+  var rev = Number(f.row[17] || 1);
+  if (rev !== Number(p.expectedRevision)) throw mv_err_('CONFLICT', 'record changed elsewhere, reload');
+  var current = String(f.row[15] || 'active');
+  if (current === status) throw mv_err_('CONFLICT', 'record is already ' + status);
+  var before = mv_histFromRow_(f.row, f.rowNum, platform);
+  sh.getRange(f.rowNum, 16).setValue(status);
+  sh.getRange(f.rowNum, 18).setValue(rev + 1);
+  sh.getRange(f.rowNum, 19).setValue(mv_now_());
+  var after = mv_histFromRow_(sh.getRange(f.rowNum, 1, 1, MINVEST.HIST_HEADERS.length).getValues()[0], f.rowNum, platform);
+  mv_audit_(status === 'void' ? 'delete' : 'restore', platform, recordId, rev + 1, mv_snapshot_(before), mv_snapshot_(after));
+  return { entry: after };
 }
 
 function mv_addPortfolioValue_(p) {
@@ -351,7 +442,7 @@ function mv_addPortfolioValue_(p) {
   var rows = mv_rows_(sh, MINVEST.HIST_HEADERS.length);
   for (var i = 0; i < rows.length; i++) if (String(rows[i][14]).toLowerCase() === requestId) return { duplicate: true, entry: mv_histFromRow_(rows[i], i + 2, platform) };
   var ccy = MV_VALUE_CCY[platform];
-  var row = [mv_dateCell_(date), ccy === 'thb' ? value : '', ccy === 'usd' ? value : '', note, 'value', '', 'app', '', '', '', '', '', '', mv_uuid_(), requestId, 'active', mv_now_()];
+  var row = [mv_dateCell_(date), ccy === 'thb' ? value : '', ccy === 'usd' ? value : '', note, 'value', '', 'app', '', '', '', '', '', '', mv_uuid_(), requestId, 'active', mv_now_(), 1, ''];
   sh.appendRow(row);
   var rowNum = sh.getLastRow();
   sh.getRange(rowNum, 1).setNumberFormat('dd/MM/yyyy');
@@ -427,7 +518,7 @@ function mv_importHistorical_(p) {
     var raw = x.raw || {};
     toAdd.push([date ? mv_dateCell_(date) : '', mv_importAmount_(x.thb, 'thb'), mv_importAmount_(x.usd, 'usd'),
       mv_safeText_(x.note, 2000), mv_enum_(x.kind, ['value', 'superseded', 'event_amount', 'usd_event', 'note_only', 'value_unparsed'], 'kind'), mv_safeText_(x.reviewFlag, 2000),
-      mv_safeText_(x.sourceSheet), Number(x.sourceRow) || '', mv_safeText_(raw.date), mv_safeText_(raw.thb), mv_safeText_(raw.usd), mv_safeText_(raw.note, 2000), x.importKey, '', '', 'active', mv_now_()]);
+      mv_safeText_(x.sourceSheet), Number(x.sourceRow) || '', mv_safeText_(raw.date), mv_safeText_(raw.thb), mv_safeText_(raw.usd), mv_safeText_(raw.note, 2000), x.importKey, '', '', 'active', mv_now_(), 1, '']);
   });
   if (toAdd.length) {
     var start = sh.getLastRow() + 1;

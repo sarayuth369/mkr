@@ -1,9 +1,10 @@
 // minvest dashboard controller. All dynamic text goes through textContent (no innerHTML) -> no XSS surface.
 import { api, get, post, put, ApiError } from './api.js';
 import * as calc from './calc.js';
-import { barChart, cumulativeChart, forecastChart, valueChart } from './charts.js';
+import { barChart, cumulativeChart, forecastChart, totalChart, valueChart } from './charts.js';
 import { initImportUi } from './import-ui.js';
-import { bangkokNow, fmtDate, fmtMoney, fmtNum, fmtPct, signClass } from './format.js';
+import { initSecurityUi, openSecurity } from './security-ui.js';
+import { bangkokNow, fmtDate, fmtMoney, fmtPct, fmtRate, signClass } from './format.js';
 
 const $ = (id) => document.getElementById(id);
 const PLATFORMS = calc.PLATFORMS;
@@ -12,7 +13,9 @@ const TYPE_LABEL = { profit_loss: 'กำไร/ขาดทุน', cash_receiv
 const KIND_LABEL = { value: 'มูลค่า', superseded: 'ถูกแทนที่ (วันเดียวกัน)', event_amount: 'จำนวนธุรกรรม', usd_event: 'ธุรกรรม USD', note_only: 'หมายเหตุ', value_unparsed: 'ตัวเลขผิดรูปแบบ - ตรวจสอบ' };
 const RANGES = [['7d', '7 วัน'], ['30d', '30 วัน'], ['90d', '90 วัน'], ['1y', '1 ปี'], ['all', 'ทั้งหมด']];
 
-const state = { dash: null, daily: [], range: '90d', bucket: 'month', fc: 'dime', tab: 'daily', portfolio: {}, table: { query: '', sortKey: null, dir: 'desc', page: 1 }, showVoid: false };
+const HIST_EDIT_KINDS = [['value', 'มูลค่าพอร์ต'], ['event_amount', 'จำนวนธุรกรรม'], ['usd_event', 'ธุรกรรม USD'], ['note_only', 'หมายเหตุ'], ['superseded', 'ถูกแทนที่ (วันเดียวกัน)']];
+const newTable = () => ({ query: '', sortKey: null, dir: 'desc', page: 1, kind: '', from: '', to: '' });
+const state = { dash: null, daily: [], range: '90d', bucket: 'month', fc: 'dime', tab: 'daily', portfolio: {}, table: newTable(), showVoid: false, session: null, fx: null, fxHist: null };
 
 // ───────── tiny DOM helpers ─────────
 function el(tag, attrs = {}, ...kids) {
@@ -51,13 +54,18 @@ function showLogin(configured = true) {
   $('main-view').hidden = true; $('login-view').hidden = false; $('login-config').hidden = configured;
   $('login-password').value = ''; setTimeout(() => $('login-password').focus(), 50);
 }
-async function showMain() { $('login-view').hidden = true; $('main-view').hidden = false; await refresh(); }
+async function showMain() {
+  $('login-view').hidden = true; $('main-view').hidden = false;
+  try { state.session = await get('/api/session'); } catch { /* keep the previous value */ }
+  await refresh();
+}
 
 async function boot() {
   initTheme();
   wire();
   try {
     const s = await get('/api/session');
+    state.session = s;
     if (s.authenticated) await showMain(); else showLogin(s.configured);
   } catch (e) { showLogin(true); $('login-error').textContent = e.message; $('login-error').hidden = false; }
 }
@@ -68,6 +76,7 @@ async function refresh() {
   try {
     const [dash, daily] = await Promise.all([get('/api/dashboard'), get('/api/daily?includeVoid=1')]);
     state.dash = dash; state.daily = daily.entries; state.portfolio = {};
+    await loadFx(false);
     banner(null); renderAll();
   } catch (e) {
     if (e.status === 401) return;
@@ -79,7 +88,40 @@ async function refresh() {
 const today = () => state.dash?.today ?? bangkokNow().date;
 const activeDaily = () => state.dash?.daily ?? [];
 
-function renderAll() { renderKpis(); renderAlerts(); renderCharts(); renderForecast(); renderGoals(); renderTable(); }
+/** USD->THB reference rate from the Worker (server-side fetch + cache). A failure is shown, never papered over with an old/guessed rate. */
+async function loadFx(force) {
+  try { state.fx = force ? await post('/api/fx/refresh') : await get('/api/fx'); }
+  catch (e) { if (e.status === 401) throw e; state.fx = { status: 'unavailable', error: e.message }; }
+  state.fxHist = null;
+  const starts = PLATFORMS.map((p) => state.dash?.portfolio?.[p]?.[0]?.d).filter(Boolean).sort();
+  if (!starts.length || state.fx.status === 'unavailable') return;
+  try { state.fxHist = await get(`/api/fx/history?from=${calc.addDays(starts[0], -7)}&to=${today()}`); } catch { state.fxHist = null; }
+}
+const fetchedLabel = (iso) => (iso ? bangkokNow(new Date(iso)).label : '—');
+
+function renderAll() { renderFxBar(); renderKpis(); renderAlerts(); renderCharts(); renderTotals(); renderForecast(); renderGoals(); renderTable(); }
+
+function renderFxBar() {
+  const fx = state.fx, bar = clear($('fx-bar'));
+  if (!fx) { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.className = `fx-bar is-${fx.status}`;
+  const refresh = el('button', { class: 'btn btn-sm', type: 'button', id: 'btn-fx-refresh', onclick: refreshFx, text: 'รีเฟรชอัตรา' });
+  if (fx.status === 'unavailable') {
+    bar.append(el('div', {}, el('span', { class: 'chip chip-neg', text: 'ไม่มีอัตราแลกเปลี่ยน' }), ' ยังคำนวณมูลค่า Webull เป็นบาทไม่ได้ — ', el('span', { class: 'muted', text: fx.error ?? '' })), refresh);
+    return;
+  }
+  const stale = fx.status === 'stale';
+  bar.append(el('div', {},
+    el('span', { class: `chip ${stale ? 'chip-warn' : 'chip-ok'}`, text: stale ? 'อัตราอาจไม่เป็นปัจจุบัน' : 'อัตราล่าสุด' }),
+    ` USD/THB ${fmtRate(fx.rate)} · อัตราอ้างอิงวันที่ ${fmtDate(fx.rateDate)} · ดึงเมื่อ ${fetchedLabel(fx.fetchedAt)} (เวลาไทย)`,
+    el('div', { class: 'muted small', text: `แหล่งที่มา: ${fx.source} — เป็นอัตราอ้างอิงรายวันทำการ ไม่ใช่อัตราซื้อขายจริงของโบรกเกอร์${fx.error ? ` · ${fx.error}` : ''}${fx.note ? ` · ${fx.note}` : ''}` })), refresh);
+}
+async function refreshFx() {
+  const b = $('btn-fx-refresh'); if (b) b.disabled = true;
+  try { await loadFx(true); renderAll(); toast(state.fx.status === 'unavailable' ? 'ดึงอัตราแลกเปลี่ยนไม่สำเร็จ' : 'อัปเดตอัตราแลกเปลี่ยนแล้ว', state.fx.status === 'unavailable'); }
+  catch (e) { if (e.status !== 401) toast(e.message, true); }
+}
 
 // ───────── KPIs ─────────
 function card(...kids) { return el('div', { class: 'card kpi' }, ...kids); }
@@ -91,27 +133,41 @@ function renderKpis() {
   const lu = calc.lastUpdated(pf);
   $('last-updated').textContent = lu ? `ข้อมูลมูลค่าพอร์ตล่าสุด ${fmtDate(lu)} · โหลดเมื่อ ${bangkokNow().label} (เวลาไทย)` : 'ยังไม่มีข้อมูลมูลค่าพอร์ต — นำเข้าข้อมูลจาก Excel หรือกด “อัปเดตมูลค่าพอร์ต”';
 
+  const now = calc.totalThbNow(pf, state.fx);
   for (const p of PLATFORMS) {
-    const s = pf[p] ?? [], l = calc.latest(s), ch = l ? calc.valueChange(s, calc.addDays(l.d, -30)) : null;
+    const s = pf[p] ?? [], l = calc.latest(s), ch = l ? calc.windowChange(s, calc.windowStart(l.d, '30d')) : null;
+    const age = l ? calc.daysBetween(l.d, t) : 0;
     box.append(card(
       el('div', { class: 'kpi-label' }, el('span', { class: `dot dot-${p}` }), `พอร์ต ${LABEL[p]} (${cur[p]})`),
       el('div', { class: 'kpi-value', text: l ? fmtMoney(l.v, cur[p]) : 'ยังไม่มีข้อมูล' }),
-      el('div', { class: 'kpi-sub', text: l ? `ณ ${fmtDate(l.d)}` : '' }),
-      ch ? el('div', { class: 'kpi-sub' }, `เปลี่ยนมูลค่า 30 วัน `, el('b', { class: signClass(ch.abs), text: `${fmtMoney(ch.abs, cur[p], { sign: true })} (${fmtPct(ch.pct)})` }), el('span', { class: 'chip chip-warn', text: 'ไม่ใช่กำไร' })) : null,
+      el('div', { class: 'kpi-sub' }, l ? `มูลค่า ณ ${fmtDate(l.d)}` : '', age > 4 ? el('span', { class: 'chip chip-warn', text: `ข้อมูลเก่า ${age} วัน` }) : null),
+      p === 'webull' && l ? (now.webullThb !== null
+        ? el('div', { class: 'kpi-sub' }, '≈ ', el('b', { text: fmtMoney(now.webullThb, 'THB') }), ` (× ${fmtRate(now.rate)} · อัตรา ${fmtDate(now.rateDate)})`, now.stale ? el('span', { class: 'chip chip-warn', text: 'อัตราเก่า' }) : null)
+        : el('div', { class: 'kpi-sub' }, el('span', { class: 'chip chip-neg', text: 'ยังคำนวณเป็นบาทไม่ได้' }), ' ไม่มีอัตราแลกเปลี่ยนที่ตรวจสอบได้')) : null,
+      l ? (ch?.ok
+        ? el('div', { class: 'kpi-sub' }, 'เปลี่ยนมูลค่า 30 วัน ', el('b', { class: signClass(ch.abs), text: `${fmtMoney(ch.abs, cur[p], { sign: true })} (${fmtPct(ch.pct)})` }), el('span', { class: 'chip chip-warn', text: 'ไม่ใช่กำไร' }))
+        : el('div', { class: 'kpi-sub muted', text: `ยังคำนวณการเปลี่ยนแปลง 30 วันไม่ได้ — ${ch?.reason ?? ''}` })) : null,
     ));
   }
 
-  const tot = calc.totals(pf, d.settings);
-  box.append(card(
-    el('div', { class: 'kpi-label', text: 'มูลค่าพอร์ตรวม (แยกสกุลเงิน)' }),
-    el('div', { class: 'kpi-lines' }, line('รวมบาท (Dime + StashAway)', fmtMoney(tot.thb, 'THB')), line('รวมดอลลาร์ (Webull)', fmtMoney(tot.usd, 'USD')),
-      tot.combinedThb !== null ? line(`ประมาณรวมเป็นบาท (USD/THB ${fmtNum(tot.rate)}${tot.rateDate ? ` ณ ${fmtDate(tot.rateDate)}` : ''})`, fmtMoney(tot.combinedThb, 'THB')) : null),
-    el('div', { class: 'kpi-sub', text: tot.combinedThb === null ? 'ไม่รวม USD เป็น THB เพราะยังไม่ได้ตั้งอัตราแลกเปลี่ยน (ตั้งค่าเอง ไม่เดา)' : 'อัตราแลกเปลี่ยนเป็นค่าที่คุณกำหนดเอง' }),
-  ));
+  // Total THB = Dime + StashAway + Webull USD x rate. USD is never added to THB directly.
+  const totCard = card(el('div', { class: 'kpi-label', text: 'มูลค่าพอร์ตรวมเป็นบาท (Total THB)' }));
+  if (now.total === null) {
+    totCard.append(el('div', { class: 'kpi-value', text: 'ยังคำนวณไม่ได้' }),
+      el('div', { class: 'kpi-sub', text: now.blocked ? 'ไม่มีอัตราแลกเปลี่ยน USD/THB ที่ตรวจสอบได้ จึงไม่รวม Webull เป็นบาท (ไม่เดา ไม่ใช้อัตราเก่าแบบเงียบ ๆ)' : 'ยังไม่มีข้อมูลมูลค่าพอร์ต' }),
+      now.thbSubtotal !== null ? el('div', { class: 'kpi-lines' }, line('Dime + StashAway (เฉพาะบาท)', fmtMoney(now.thbSubtotal, 'THB')), line('Webull (USD ต้นฉบับ)', fmtMoney(now.webullUsd, 'USD'))) : null);
+  } else {
+    totCard.append(el('div', { class: 'kpi-value', text: fmtMoney(now.total, 'THB') }),
+      el('div', { class: 'kpi-lines' }, line('Dime', fmtMoney(now.dime, 'THB')), line('StashAway', fmtMoney(now.stashaway, 'THB')),
+        line(`Webull ${fmtMoney(now.webullUsd, 'USD')} × ${fmtRate(now.rate)}`, fmtMoney(now.webullThb, 'THB'))),
+      el('div', { class: 'kpi-sub' }, `ใช้มูลค่าล่าสุดของแต่ละพอร์ต${new Set(Object.values(now.asOf).filter(Boolean)).size > 1 ? ' (วันที่ของข้อมูลต่างกัน)' : ''} · อัตรา ${fmtDate(now.rateDate)}`,
+        now.stale ? el('span', { class: 'chip chip-warn', text: 'อัตราเก่า' }) : null, now.partial ? el('span', { class: 'chip chip-warn', text: `ข้อมูลยังไม่ครบ: ไม่มี ${now.missing.map((m) => LABEL[m]).join(', ')}` }) : null));
+  }
+  box.append(totCard);
 
   const entries = activeDaily();
   const periods = [['day', 'วันนี้'], ['month', 'เดือนนี้'], ['year', 'ปีนี้']];
-  const plBox = card(el('div', { class: 'kpi-label', text: 'กำไร/ขาดทุนที่บันทึก' }));
+  const plBox = card(el('div', { class: 'kpi-label', text: 'กำไร/ขาดทุนจริงที่บันทึก (Actual P/L)' }));
   const lines = el('div', { class: 'kpi-lines' });
   for (const [k, label] of periods) {
     const s = calc.sumDaily(entries, t, k);
@@ -132,7 +188,7 @@ function renderKpis() {
   const al = el('div', { class: 'kpi-lines' });
   for (const p of PLATFORMS) {
     const r = calc.adjustedReturn(pf[p] ?? [], d.cashflows, p, d.settings.cashflows_confirmed_through);
-    al.append(r.ok ? line(LABEL[p], `${fmtPct(r.pct)} (${fmtMoney(r.pl, cur[p], { sign: true })})`, signClass(r.pl)) : el('div', { class: 'kpi-line' }, el('span', { class: 'muted', text: LABEL[p] }), el('span', { class: 'muted', text: 'ยังไม่พร้อม' })));
+    al.append(r.ok ? line(LABEL[p], `${fmtPct(r.pct)} (${fmtMoney(r.pl, cur[p], { sign: true })})`, signClass(r.pl)) : el('div', { class: 'kpi-line' }, el('span', { class: 'muted', text: LABEL[p] }), el('span', { class: 'chip chip-warn', text: 'ข้อมูลยังไม่ครบ' })));
   }
   adj.append(al, el('div', { class: 'kpi-sub', text: d.settings.cashflows_confirmed_through ? `คำนวณถึง ${fmtDate(d.settings.cashflows_confirmed_through)} จากเงินฝาก/ถอนที่คุณยืนยัน` : 'ต้องบันทึกเงินฝาก/ถอนให้ครบ แล้วตั้ง “ยืนยันเงินฝากครบถึงวันที่” ในตั้งค่า — ระบบไม่เดากำไรจากมูลค่าพอร์ต' }));
   box.append(adj);
@@ -156,6 +212,52 @@ function renderCharts() {
   const cum = calc.cumulative(calc.incomeByBucket(activeDaily(), 'day', 'profit_loss', today()));
   cumulativeChart('chart-cum-thb', ['dime', 'stashaway'], cum, 'THB');
   cumulativeChart('chart-cum-usd', ['webull'], cum, 'USD');
+}
+
+// ───────── total THB, allocation, 7/30/90/YTD value change ─────────
+function renderTotals() {
+  const d = state.dash, pf = d.portfolio, t = today();
+  const idx = calc.fxIndex(state.fxHist), series = calc.totalThbSeries(pf, idx);
+  const from = calc.rangeStart(t, state.range);
+  totalChart('chart-total-thb', series.points.filter((p) => p.d >= from));
+
+  const now = calc.totalThbNow(pf, state.fx), alloc = calc.allocation(now), ac = clear($('allocation-card'));
+  ac.append(el('div', { class: 'kpi-label', text: 'สัดส่วนพอร์ตใน Total THB' }));
+  if (!alloc) ac.append(el('p', { class: 'muted', text: 'ยังคำนวณไม่ได้ — ต้องมีอัตราแลกเปลี่ยนและมูลค่าพอร์ต' }));
+  else for (const a of alloc) {
+    const bar = el('span'); bar.style.width = `${(a.share * 100).toFixed(1)}%`; bar.className = `fill-${a.platform}`;
+    ac.append(el('div', { class: 'alloc-row' }, el('div', { class: 'kpi-line' }, el('span', {}, el('span', { class: `dot dot-${a.platform}` }), ` ${LABEL[a.platform]}`), el('b', { text: `${(a.share * 100).toFixed(1)}% · ${fmtMoney(a.thb, 'THB')}` })), el('div', { class: 'bar' }, bar)));
+  }
+
+  // value change windows (NOT profit). Strict: shows "ยังคำนวณไม่ได้" instead of a shorter/unevidenced window.
+  const wc = clear($('windows-card'));
+  wc.append(el('div', { class: 'kpi-label', text: 'การเปลี่ยนแปลงมูลค่าพอร์ตตามช่วงเวลา (Portfolio Value Change — ไม่ใช่กำไร)' }));
+  const head = el('tr', {}, el('th', { text: 'พอร์ต' }), calc.WINDOWS.map(([, label]) => el('th', { class: 'num', text: label })), el('th', { text: 'ข้อมูลล่าสุด' }));
+  const cell = (r, ccy, extra) => (r.ok
+    ? el('td', { class: 'num' }, el('b', { class: signClass(r.abs), text: fmtMoney(r.abs, ccy, { sign: true }) }), el('div', { class: 'muted small', text: fmtPct(r.pct) }), extra ?? null)
+    : el('td', { class: 'num muted small', title: r.reason, text: 'ยังคำนวณไม่ได้' }));
+  const rows = PLATFORMS.map((p) => {
+    const s = pf[p] ?? [], l = calc.latest(s), age = l ? calc.daysBetween(l.d, t) : null;
+    return el('tr', {}, el('td', {}, el('span', { class: `dot dot-${p}` }), ` ${LABEL[p]} (${d.currency[p]})`),
+      calc.WINDOWS.map(([k]) => cell(calc.windowChange(s, calc.windowStart(t, k)), d.currency[p])),
+      el('td', {}, l ? fmtDate(l.d) : '—', age !== null && age > 4 ? el('span', { class: 'chip chip-warn', text: `เก่า ${age} วัน` }) : null));
+  });
+  const totRow = el('tr', { class: 'row-total' }, el('td', {}, el('b', { text: 'รวม (THB)' })),
+    calc.WINDOWS.map(([k]) => {
+      const r = calc.totalWindowChange(series.points, calc.windowStart(t, k));
+      return cell(r, 'THB', r.ok ? el('div', { class: 'muted small', text: `ผลจากอัตราแลกเปลี่ยน ${fmtMoney(r.fxEffect, 'THB', { sign: true })}` }) : null);
+    }), el('td', { class: 'muted small', text: series.points.length ? fmtDate(series.points.at(-1).d) : '—' }));
+  wc.append(el('div', { class: 'table-wrap' }, el('table', { class: 'table' }, el('thead', {}, head), el('tbody', {}, rows, totRow))));
+
+  const notes = [];
+  if (!series.points.length) notes.push(state.fx?.status === 'unavailable' ? 'ยังคำนวณมูลค่ารวมย้อนหลังเป็นบาทไม่ได้เพราะไม่มีอัตราแลกเปลี่ยน' : 'ยังคำนวณมูลค่ารวมย้อนหลังไม่ได้ — ต้องมีข้อมูลทั้ง 3 พอร์ตและอัตราแลกเปลี่ยน');
+  else {
+    notes.push(`มูลค่ารวมย้อนหลังเริ่มวันที่ ${fmtDate(series.start)} (วันแรกที่มีข้อมูลครบทั้ง 3 พอร์ต) · แต่ละพอร์ตใช้มูลค่าล่าสุดถึงวันนั้น · Webull แปลงด้วยอัตรา “ของวันนั้น” (ECB รายวันทำการ)`);
+    if (series.carried) notes.push(`${series.carried} วันเป็นวันหยุด/ไม่มีอัตราประกาศ จึงใช้อัตราของวันทำการก่อนหน้า`);
+    if (series.missing) notes.push(`${series.missing} วันไม่มีอัตราก่อนหน้าให้ใช้ จึงไม่แสดงเป็นบาท (ไม่ใช้อัตราปัจจุบันแทน)`);
+    notes.push('ข้อมูล USD ต้นฉบับของ Webull ไม่ถูกแก้ไข การแปลงเป็นบาทเป็นการคำนวณเพื่อแสดงผลเท่านั้น');
+  }
+  $('total-notes').textContent = notes.join(' · ');
 }
 
 // ───────── forecast + goals ─────────
@@ -189,10 +291,24 @@ function renderGoals() {
 }
 
 // ───────── history table ─────────
+/** All rows of the active tab, normalised. Deleted rows are filtered later (default hidden, toggle shows them). */
 const histRows = () => {
-  if (state.tab === 'daily') return state.daily.filter((e) => state.showVoid || e.status === 'active').map((e) => ({ ...e, date: e.entryDate, typeLabel: TYPE_LABEL[e.type] ?? e.type }));
-  return (state.portfolio[state.tab] ?? []).map((e) => ({ ...e, kindLabel: KIND_LABEL[e.kind] ?? e.kind }));
+  if (state.tab === 'daily') return state.daily.map((e) => ({ ...e, date: e.entryDate, kind: e.type, typeLabel: TYPE_LABEL[e.type] ?? e.type }));
+  const ccy = calc.CCY[state.tab];
+  return (state.portfolio[state.tab] ?? []).map((e) => {
+    const own = ccy === 'THB' ? e.thb : e.usd, other = ccy === 'THB' ? e.usd : e.thb;
+    return { ...e, ccy, amount: own, otherAmount: other, otherCcy: ccy === 'THB' ? 'USD' : 'THB', kindLabel: KIND_LABEL[e.kind] ?? e.kind };
+  });
 };
+const tabFilters = () => ({ kind: state.table.kind, from: state.table.from, to: state.table.to, showVoid: state.showVoid });
+const searchKeys = () => ['date', 'note', 'typeLabel', 'kindLabel', 'reviewFlag', 'ccy'];
+
+function fillKindFilter() {
+  const sel = clear($('tf-kind'));
+  const opts = state.tab === 'daily' ? Object.entries(TYPE_LABEL) : Object.entries(KIND_LABEL);
+  sel.append(el('option', { value: '', text: 'ทุกชนิด' }), opts.map(([v, l]) => el('option', { value: v, text: l })));
+  sel.value = state.table.kind;
+}
 
 async function ensurePortfolio(p) {
   if (state.portfolio[p]) return;
@@ -201,12 +317,12 @@ async function ensurePortfolio(p) {
 
 async function renderTable() {
   const t = state.table, daily = state.tab === 'daily';
-  $('table-void').parentElement.hidden = !daily;
   if (!daily) await ensurePortfolio(state.tab);
+  $('tf-kind-wrap').hidden = false;
   const cols = daily
     ? [['date', 'วันที่รายการ', true], ['typeLabel', 'ชนิด'], ['dime', 'Dime ฿', true, 'num'], ['stashaway', 'StashAway ฿', true, 'num'], ['webull', 'Webull $', true, 'num'], ['note', 'หมายเหตุ'], ['_', '']]
-    : [['date', 'วันที่', true], ['thb', 'บาท', true, 'num'], ['usd', 'USD', true, 'num'], ['kindLabel', 'ชนิดแถว'], ['note', 'หมายเหตุ / ตรวจสอบ']];
-  const view = calc.tableView(histRows(), { query: t.query, sortKey: t.sortKey ?? 'date', dir: t.dir, page: t.page, pageSize: 15, searchKeys: ['date', 'note', 'typeLabel', 'kindLabel', 'reviewFlag'] });
+    : [['date', 'วันที่', true], ['amount', 'จำนวนเงิน', true, 'num'], ['ccy', 'สกุล'], ['kindLabel', 'ชนิดแถว'], ['note', 'หมายเหตุ / ตรวจสอบ'], ['_', '']];
+  const view = calc.tableView(calc.filterHistory(histRows(), tabFilters()), { query: t.query, sortKey: t.sortKey ?? 'date', dir: t.dir, page: t.page, pageSize: 15, searchKeys: searchKeys() });
   const head = clear($('history-table').tHead); const hr = el('tr');
   for (const [key, label, sortable, cls] of cols) hr.append(el('th', { class: `${sortable ? 'sortable' : ''} ${cls ?? ''}`, 'aria-sort': (t.sortKey ?? 'date') === key ? (t.dir === 'asc' ? 'ascending' : 'descending') : null, onclick: sortable ? () => { t.dir = (t.sortKey ?? 'date') === key && t.dir === 'desc' ? 'asc' : 'desc'; t.sortKey = key; t.page = 1; renderTable(); } : null, text: label + ((t.sortKey ?? 'date') === key ? (t.dir === 'asc' ? ' ▲' : ' ▼') : '') }));
   head.append(hr);
@@ -214,7 +330,11 @@ async function renderTable() {
   if (!view.rows.length) body.append(el('tr', {}, el('td', { colspan: cols.length, class: 'muted', text: 'ไม่มีข้อมูลที่ตรงกับเงื่อนไข' })));
   for (const r of view.rows) {
     const cells = cols.map(([key, , , cls]) => {
-      if (key === '_') return el('td', {}, r.status === 'active' ? el('div', { class: 'actions' }, el('button', { class: 'btn btn-sm', type: 'button', onclick: () => openDailyForm(r), text: 'แก้ไข' }), el('button', { class: 'btn btn-sm', type: 'button', onclick: () => voidDaily(r), text: 'ยกเลิก' })) : el('span', { class: 'muted', text: 'ยกเลิกแล้ว' }));
+      if (key === '_' && daily) return el('td', {}, r.status === 'active' ? el('div', { class: 'actions' }, el('button', { class: 'btn btn-sm', type: 'button', onclick: () => openDailyForm(r), text: 'แก้ไข' }), el('button', { class: 'btn btn-sm', type: 'button', onclick: () => voidDaily(r), text: 'ยกเลิก' })) : el('span', { class: 'muted', text: 'ยกเลิกแล้ว' }));
+      if (key === '_') return el('td', {}, r.status === 'void'
+        ? el('div', { class: 'actions' }, el('span', { class: 'chip chip-neg', text: 'ลบแล้ว' }), el('button', { class: 'btn btn-sm', type: 'button', onclick: () => openRestoreForm(r), 'aria-label': `กู้คืนรายการวันที่ ${fmtDate(r.date)}`, text: 'กู้คืน' }))
+        : el('div', { class: 'actions' }, el('button', { class: 'btn btn-sm', type: 'button', onclick: () => openRecordEditForm(r), 'aria-label': `แก้ไขรายการวันที่ ${fmtDate(r.date)}`, text: 'แก้ไข' }), el('button', { class: 'btn btn-sm btn-danger', type: 'button', onclick: () => openRecordDeleteForm(r), 'aria-label': `ลบรายการวันที่ ${fmtDate(r.date)}`, text: 'ลบ' })));
+      if (key === 'amount') return el('td', { class: cls }, r.amount === null || r.amount === undefined ? '—' : fmtMoney(r.amount, r.ccy), r.otherAmount !== null && r.otherAmount !== undefined ? el('div', { class: 'muted small', text: `(อีกสกุล: ${fmtMoney(r.otherAmount, r.otherCcy)})` }) : null);
       if (key === 'date') return el('td', { text: fmtDate(r.date) });
       if (['dime', 'stashaway', 'thb'].includes(key)) return el('td', { class: cls, text: r[key] === null || r[key] === undefined ? '—' : fmtMoney(r[key], 'THB') });
       if (['webull', 'usd'].includes(key)) return el('td', { class: cls, text: r[key] === null || r[key] === undefined ? '—' : fmtMoney(r[key], 'USD') });
@@ -231,6 +351,79 @@ async function renderTable() {
 async function voidDaily(r) {
   if (!window.confirm(`ยกเลิกรายการวันที่ ${fmtDate(r.entryDate)}?\n(รายการจะถูกทำเครื่องหมายว่ายกเลิกและไม่นับใน KPI แต่ยังเก็บไว้ในชีต)`)) return;
   try { await post(`/api/daily/${r.entryId}/void`, { expectedRevision: r.revision }); toast('ยกเลิกรายการแล้ว'); await refresh(); } catch (e) { toast(e.message, true); if (e.code === 'CONFLICT') await refresh(); }
+}
+
+// ───────── portfolio history records: edit / delete (soft) / restore ─────────
+// The platform and its currency are fixed by the row itself (the server derives the currency column from the platform) -
+// the form can only change date, amount (in that platform's own currency), kind and note.
+const reloadPortfolio = async () => { state.portfolio = {}; await refresh(); };
+const recordSummary = (r) => `${LABEL[r.platform ?? state.tab]} · ${fmtDate(r.date)} · ${KIND_LABEL[r.kind] ?? r.kind} · ${r.amount === null || r.amount === undefined ? 'ไม่มีจำนวนเงิน' : fmtMoney(r.amount, r.ccy)}`;
+const changed = (a, b, fmt = (x) => x) => (a === b ? fmt(b) : `${fmt(a)} → ${fmt(b)}`);
+
+function openRecordEditForm(r) {
+  const platform = state.tab, ccy = calc.CCY[platform];
+  const isKnownKind = HIST_EDIT_KINDS.some(([k]) => k === r.kind);
+  openForm({
+    title: `แก้ไขรายการ ${LABEL[platform]}`,
+    intro: `สกุลเงินของพอร์ตนี้คือ ${ccy} (แก้สกุลเงินหรือย้ายพอร์ตไม่ได้) · ${r.reviewFlag ? `⚠ ${r.reviewFlag} · ` : ''}ทุกการแก้ไขถูกบันทึกใน Audit_Log ของชีต${r.kind === 'value_unparsed' ? ' · แถวนี้ตัวเลขผิดรูปแบบ: กรอกค่าที่ถูกต้อง แล้วระบบจะเปลี่ยนเป็นรายการมูลค่า' : ''}`,
+    initial: { date: r.date, value: r.amount ?? '', kind: isKnownKind ? r.kind : 'value', note: r.note ?? '' },
+    fields: [
+      dateField('date', 'วันที่ของรายการ'),
+      { id: 'value', label: `จำนวนเงิน (${ccy})`, kind: 'text', placeholder: 'เช่น 725040.29' },
+      { id: 'kind', label: 'ชนิดแถว', kind: 'select', options: HIST_EDIT_KINDS.map(([value, label]) => ({ value, label })) },
+      { id: 'note', label: 'หมายเหตุ', kind: 'textarea' },
+    ],
+    parse: (v) => {
+      if (!v.date) return { error: 'กรุณาเลือกวันที่' };
+      if (v.date > calc.addDays(bangkokNow().date, 1)) return { error: 'วันที่เกินวันนี้ (เวลาไทย) ไม่ได้' };
+      if (v.date < '2000-01-01') return { error: 'วันที่เก่าเกินไป' };
+      const n = num(v.value, 'จำนวนเงิน', { required: v.kind === 'value', min: 0 });
+      if (n.error) return n;
+      return { payload: { date: v.date, value: n.value, kind: v.kind, note: v.note.trim(), expectedRevision: r.revision } };
+    },
+    summarize: (p) => [['รายการ', recordSummary(r)], ['วันที่', changed(fmtDate(r.date), fmtDate(p.date))], ['จำนวนเงิน', changed(r.amount === null ? '—' : fmtMoney(r.amount, ccy), p.value === null ? '—' : fmtMoney(p.value, ccy))], ['ชนิดแถว', changed(KIND_LABEL[r.kind] ?? r.kind, KIND_LABEL[p.kind] ?? p.kind)], ['หมายเหตุ', changed(r.note || '—', p.note || '—')]],
+    submit: (p) => put(`/api/portfolio/${platform}/${r.recordId}`, p),
+    successMessage: 'แก้ไขรายการแล้ว — บันทึกลง Google Sheets และคำนวณ KPI/กราฟใหม่แล้ว', after: reloadPortfolio,
+  });
+}
+
+function openRecordDeleteForm(r) {
+  const platform = state.tab;
+  openForm({
+    title: 'ลบรายการนี้?', noConfirm: true, danger: true, submitText: 'ยืนยันลบ', fields: [],
+    intro: `${recordSummary(r)} — รายการจะถูกทำเครื่องหมาย “ลบ” (ยังเก็บไว้ในชีตและ Audit_Log กู้คืนได้) และจะไม่ถูกนับใน KPI/กราฟ/คาดการณ์ทันที`,
+    parse: () => ({ payload: {} }),
+    submit: () => post(`/api/portfolio/${platform}/${r.recordId}/void`, { expectedRevision: r.revision }),
+    successMessage: 'ลบรายการแล้ว (กู้คืนได้จาก “แสดงรายการที่ลบ”)', after: reloadPortfolio,
+  });
+}
+
+function openRestoreForm(r) {
+  const platform = state.tab;
+  openForm({
+    title: 'กู้คืนรายการนี้?', noConfirm: true, submitText: 'ยืนยันกู้คืน', fields: [],
+    intro: `${recordSummary(r)} — รายการจะกลับมานับใน KPI/กราฟอีกครั้ง`,
+    parse: () => ({ payload: {} }),
+    submit: () => post(`/api/portfolio/${platform}/${r.recordId}/restore`, { expectedRevision: r.revision }),
+    successMessage: 'กู้คืนรายการแล้ว', after: reloadPortfolio,
+  });
+}
+
+// ───────── CSV export (current tab, current filters/search/sort; original currency + ISO dates; formula-injection safe) ─────────
+function exportCsv() {
+  const t = state.table, daily = state.tab === 'daily';
+  const view = calc.tableView(calc.filterHistory(histRows(), tabFilters()), { query: t.query, sortKey: t.sortKey ?? 'date', dir: t.dir, page: 1, pageSize: 1e9, searchKeys: searchKeys() });
+  const rows = view.rows.map((r) => (daily
+    ? { ...r, status: r.status }
+    : { ...r, rawAmount: r.ccy === 'THB' ? r.rawThb : r.rawUsd }));
+  if (!rows.length) return toast('ไม่มีข้อมูลให้ส่งออกตามตัวกรองนี้', true);
+  const cols = daily
+    ? [['date', 'date'], ['type', 'type', true], ['dime_thb', 'dime'], ['stashaway_thb', 'stashaway'], ['webull_usd', 'webull'], ['note', 'note', true], ['status', 'status', true], ['entry_id', 'entryId', true], ['revision', 'revision']]
+    : [['date', 'date'], ['amount', 'amount'], ['currency', 'ccy', true], ['kind', 'kind', true], ['status', 'status', true], ['note', 'note', true], ['review_flag', 'reviewFlag', true], ['raw_date', 'rawDate', true], ['raw_amount', 'rawAmount', true], ['record_id', 'recordId', true], ['revision', 'revision']];
+  const blob = new Blob(['﻿', calc.toCsv(cols, rows)], { type: 'text/csv;charset=utf-8' });
+  const a = el('a', { href: URL.createObjectURL(blob), download: `minvest-${state.tab}-${bangkokNow().date}.csv` });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`ส่งออก ${rows.length} รายการแล้ว`);
 }
 
 // ───────── generic two-step form dialog ─────────
@@ -261,8 +454,14 @@ function readValues(fields) {
 }
 
 function openForm(cfg) {
-  formCtx = { cfg, step: 'edit', values: cfg.initial ?? {}, payload: null, busy: false };
+  formCtx = { cfg, step: 'edit', values: cfg.initial ?? {}, payload: null, busy: false, dirty: false };
   $('fd-title').textContent = cfg.title; renderFormStep(); dlg().showModal();
+}
+/** Closing with unsaved edits asks first; a busy (saving) dialog cannot be dismissed. */
+function requestCloseForm() {
+  if (formCtx?.busy) return false;
+  if (formCtx?.dirty && !window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก — ปิดและทิ้งข้อมูลนี้?')) return false;
+  formCtx = null; dlg().close(); return true;
 }
 function renderFormStep() {
   const { cfg, step } = formCtx, body = clear($('fd-body'));
@@ -273,15 +472,16 @@ function renderFormStep() {
       const f = cfg.fields[i], nodes = fieldNode(f, formCtx.values[f.id]);
       if (f.pairWithNext) { body.append(el('div', { class: 'field-row' }, nodes, fieldNode(cfg.fields[++i], formCtx.values[cfg.fields[i].id]))); } else body.append(nodes);
     }
+    if (cfg.extra) body.append(cfg.extra());
     if (cfg.intro) body.prepend(el('p', { class: 'notice', text: cfg.intro }));
-    $('fd-back').hidden = true; $('fd-submit').textContent = cfg.noConfirm ? 'บันทึก' : 'ตรวจสอบ';
+    $('fd-back').hidden = true; $('fd-submit').textContent = cfg.submitText ?? (cfg.noConfirm ? 'บันทึก' : 'ตรวจสอบ');
+    $('fd-submit').className = `btn ${cfg.danger ? 'btn-danger' : 'btn-primary'}`;
   } else {
     body.append(el('p', { class: 'muted', text: 'ตรวจสอบข้อมูลก่อนยืนยัน — บันทึกแล้วจะเขียนลง Google Sheets' }), el('div', { class: 'summary' }, cfg.summarize(formCtx.payload).map(([k, v]) => el('div', { class: 'summary-row' }, el('span', { class: 'muted', text: k }), el('b', { text: v })))));
-    $('fd-back').hidden = false; $('fd-submit').textContent = cfg.submitLabel ?? 'ยืนยันบันทึก';
+    $('fd-back').hidden = false; $('fd-submit').textContent = cfg.submitLabel ?? 'ยืนยันบันทึก'; $('fd-submit').className = 'btn btn-primary';
   }
   $('fd-submit').disabled = false;
-  if (step === 'edit') setTimeout(() => body.querySelector('input:not([type=radio]),select,textarea')?.focus(), 30);
-}
+  if (step === 'edit') setTimeout(() => body.querySelector('input:not([type=radio]),select,textarea')?.focus(), 30);}
 async function onFormSubmit(ev) {
   ev.preventDefault();
   if (!formCtx || formCtx.busy) return;
@@ -374,18 +574,21 @@ function openCashflowForm() {
 function openSettingsForm() {
   const s = state.dash?.settings ?? {};
   openForm({
-    title: 'ตั้งค่า', noConfirm: true, intro: 'เว้นว่าง = ล้างค่า · ไม่มีการเดาอัตราแลกเปลี่ยนหรือเป้าหมายแทนคุณ',
-    initial: { goal_dime_thb: s.goal_dime_thb ?? '', goal_stashaway_thb: s.goal_stashaway_thb ?? '', goal_webull_usd: s.goal_webull_usd ?? '', usd_thb_rate: s.usd_thb_rate ?? '', usd_thb_rate_date: s.usd_thb_rate_date ?? '', cashflows_confirmed_through: s.cashflows_confirmed_through ?? '', forecast_window_days: s.forecast_window_days ?? '180' },
+    title: 'ตั้งค่า', noConfirm: true, intro: 'เว้นว่าง = ล้างค่า · อัตรา USD→THB ดึงอัตโนมัติจาก ECB ผ่านเซิร์ฟเวอร์ (ไม่ต้องตั้งเอง และไม่เดา)',
+    initial: { goal_dime_thb: s.goal_dime_thb ?? '', goal_stashaway_thb: s.goal_stashaway_thb ?? '', goal_webull_usd: s.goal_webull_usd ?? '', cashflows_confirmed_through: s.cashflows_confirmed_through ?? '', forecast_window_days: s.forecast_window_days ?? '180' },
+    extra: () => el('section', { class: 'settings-security', 'aria-labelledby': 'h-sec' },
+      el('h4', { id: 'h-sec', text: 'ความปลอดภัย' }),
+      el('p', { class: 'muted small', text: 'เปลี่ยนรหัสผ่านเข้าระบบ — เก็บแบบแฮชถาวร ไม่ต้องแก้ Cloudflare secret ทุกครั้ง' }),
+      el('button', { type: 'button', class: 'btn', onclick: () => { if (requestCloseForm()) openSecurity(state.session, toast); }, text: 'เปลี่ยนรหัสผ่าน…' })),
     fields: [
       { id: 'goal_dime_thb', label: 'เป้าหมายพอร์ต Dime (บาท)', kind: 'text' }, { id: 'goal_stashaway_thb', label: 'เป้าหมายพอร์ต StashAway (บาท)', kind: 'text' }, { id: 'goal_webull_usd', label: 'เป้าหมายพอร์ต Webull (USD)', kind: 'text' },
-      { id: 'usd_thb_rate', label: 'อัตรา USD→THB ที่คุณกำหนด (ไม่บังคับ)', kind: 'text', pairWithNext: true }, { id: 'usd_thb_rate_date', label: 'ณ วันที่', kind: 'date' },
       { id: 'cashflows_confirmed_through', label: 'ยืนยันว่าบันทึกเงินฝาก/ถอนครบถึงวันที่', kind: 'date', hint: 'ใช้คำนวณผลตอบแทนปรับเงินฝาก — ตั้งเมื่อมั่นใจว่าไม่มีรายการตกหล่นเท่านั้น' },
       { id: 'forecast_window_days', label: 'จำนวนวันย้อนหลังที่ใช้ประมาณแนวโน้ม (30–730)', kind: 'text', inputmode: 'numeric' },
     ],
     parse: (v) => {
       const out = {};
-      for (const k of ['goal_dime_thb', 'goal_stashaway_thb', 'goal_webull_usd', 'usd_thb_rate']) { const n = num(v[k], k, { min: 0 }); if (n.error) return { error: 'ค่าเป้าหมาย/อัตราแลกเปลี่ยนต้องเป็นตัวเลขไม่ติดลบ' }; out[k] = n.value; }
-      out.usd_thb_rate_date = v.usd_thb_rate_date || null; out.cashflows_confirmed_through = v.cashflows_confirmed_through || null;
+      for (const k of ['goal_dime_thb', 'goal_stashaway_thb', 'goal_webull_usd']) { const n = num(v[k], k, { min: 0 }); if (n.error) return { error: 'ค่าเป้าหมายต้องเป็นตัวเลขไม่ติดลบ' }; out[k] = n.value; }
+      out.cashflows_confirmed_through = v.cashflows_confirmed_through || null;
       const days = Number(v.forecast_window_days); if (!Number.isInteger(days) || days < 30 || days > 730) return { error: 'จำนวนวันต้องเป็น 30–730' };
       out.forecast_window_days = days;
       return { payload: out };
@@ -401,7 +604,7 @@ function wire() {
     try { await post('/api/login', { password: $('login-password').value }); $('login-password').value = ''; await showMain(); }
     catch (e) { err.textContent = e.message; err.hidden = false; } finally { $('login-submit').disabled = false; }
   });
-  $('btn-logout').addEventListener('click', async () => { try { await post('/api/logout'); } finally { state.dash = null; state.daily = []; state.portfolio = {}; showLogin(true); } });
+  $('btn-logout').addEventListener('click', async () => { try { await post('/api/logout'); } finally { state.dash = null; state.daily = []; state.portfolio = {}; state.fx = null; state.fxHist = null; showLogin(true); } });
   window.addEventListener('minvest:unauthenticated', () => { state.dash = null; showLogin(true); toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true); });
   window.addEventListener('offline', () => banner('ออฟไลน์ — แสดงข้อมูลที่โหลดไว้ล่าสุด การบันทึกจะทำไม่ได้จนกว่าจะกลับมาออนไลน์', true));
   window.addEventListener('online', () => { banner(null); refresh(); });
@@ -412,13 +615,23 @@ function wire() {
   const rb = $('range-buttons');
   for (const [k, label] of RANGES) rb.append(el('button', { type: 'button', class: `seg-btn${k === state.range ? ' is-active' : ''}`, 'data-range': k, onclick: () => { state.range = k; for (const b of rb.children) b.classList.toggle('is-active', b.dataset.range === k); renderCharts(); }, text: label }));
   $('income-bucket').addEventListener('click', (ev) => { const b = ev.target.closest('[data-bucket]'); if (!b) return; state.bucket = b.dataset.bucket; for (const x of $('income-bucket').children) x.classList.toggle('is-active', x === b); renderCharts(); });
-  $('history-tabs').addEventListener('click', (ev) => { const b = ev.target.closest('[data-tab]'); if (!b) return; state.tab = b.dataset.tab; state.table = { query: '', sortKey: null, dir: 'desc', page: 1 }; $('table-search').value = ''; for (const x of $('history-tabs').children) x.classList.toggle('is-active', x === b); renderTable(); });
+  const resetFilterInputs = () => { $('table-search').value = ''; $('tf-from').value = ''; $('tf-to').value = ''; fillKindFilter(); };
+  fillKindFilter();
+  $('history-tabs').addEventListener('click', (ev) => { const b = ev.target.closest('[data-tab]'); if (!b) return; state.tab = b.dataset.tab; state.table = newTable(); resetFilterInputs(); for (const x of $('history-tabs').children) x.classList.toggle('is-active', x === b); renderTable(); });
   $('table-search').addEventListener('input', (ev) => { state.table.query = ev.target.value; state.table.page = 1; renderTable(); });
-  $('table-void').addEventListener('change', (ev) => { state.showVoid = ev.target.checked; renderTable(); });
+  $('table-void').addEventListener('change', (ev) => { state.showVoid = ev.target.checked; state.table.page = 1; renderTable(); });
+  $('tf-kind').addEventListener('change', (ev) => { state.table.kind = ev.target.value; state.table.page = 1; renderTable(); });
+  $('tf-from').addEventListener('change', (ev) => { state.table.from = ev.target.value; state.table.page = 1; renderTable(); });
+  $('tf-to').addEventListener('change', (ev) => { state.table.to = ev.target.value; state.table.page = 1; renderTable(); });
+  $('btn-reset-filters').addEventListener('click', () => { const keep = { sortKey: state.table.sortKey, dir: state.table.dir }; state.table = { ...newTable(), ...keep }; state.showVoid = false; $('table-void').checked = false; resetFilterInputs(); renderTable(); });
+  $('btn-export').addEventListener('click', exportCsv);
+  initSecurityUi({ onChanged: async () => { try { state.session = await get('/api/session'); } catch { /* ignore */ } } });
   $('pg-prev').addEventListener('click', () => { state.table.page--; renderTable(); }); $('pg-next').addEventListener('click', () => { state.table.page++; renderTable(); });
   $('fd-form').addEventListener('submit', onFormSubmit);
-  $('fd-close').addEventListener('click', () => { dlg().close(); formCtx = null; });
-  dlg().addEventListener('cancel', () => { formCtx = null; });
+  $('fd-close').addEventListener('click', requestCloseForm);
+  dlg().addEventListener('cancel', (ev) => { ev.preventDefault(); requestCloseForm(); }); // Esc: never silently drops unsaved input
+  $('fd-body').addEventListener('input', () => { if (formCtx) formCtx.dirty = true; });
+  $('fd-body').addEventListener('change', () => { if (formCtx) formCtx.dirty = true; });
   $('fd-back').addEventListener('click', () => { formCtx.step = 'edit'; renderFormStep(); });
 }
 

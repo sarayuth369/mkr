@@ -4,6 +4,8 @@ const n2 = nf(2, 2);
 const n0 = nf(0, 0);
 
 export const fmtNum = (v, digits = 2) => (v === null || v === undefined || Number.isNaN(v) ? '—' : (digits === 0 ? n0 : n2).format(v));
+const n4 = nf(2, 4);
+export const fmtRate = (v) => (v === null || v === undefined || Number.isNaN(v) ? '—' : n4.format(v));
 export function fmtMoney(v, ccy, { sign = false } = {}) {
   if (v === null || v === undefined || Number.isNaN(v)) return '—';
   const sym = ccy === 'USD' ? '$' : '฿';

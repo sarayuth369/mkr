@@ -30,6 +30,20 @@ name = "API_LIMITER"
 namespace_id = "73012"
 simple = { limit = 120, period = 60 }
 
+# Durable Objects (SQLite-backed, free-plan compatible). AuthStore = password hash + session version + brute-force throttle;
+# FxStore = USD->THB reference-rate cache. They are the ONLY new Cloudflare resources and belong to this Worker alone.
+[[durable_objects.bindings]]
+name = "AUTH_STORE"
+class_name = "AuthStore"
+
+[[durable_objects.bindings]]
+name = "FX_STORE"
+class_name = "FxStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AuthStore", "FxStore"]
+
 # Secrets (NEVER put values here) - set with `npx wrangler secret put <NAME>`:
 #   MINVEST_PASSWORD         owner login password
 #   MINVEST_SESSION_SECRET   long random string used to sign session cookies

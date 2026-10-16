@@ -33,9 +33,8 @@ describe('recorded income KPIs', () => {
 
 describe('totals, goals, value change', () => {
   const portfolio = { dime: [{ d: '2026-10-15', v: 1000 }], stashaway: [{ d: '2026-10-15', v: 500.5 }], webull: [{ d: '2026-10-15', v: 100 }] };
-  it('does not merge THB and USD unless the owner provided a rate', () => {
-    expect(c.totals(portfolio, {})).toMatchObject({ thb: 1500.5, usd: 100, combinedThb: null, rate: null });
-    expect(c.totals(portfolio, { usd_thb_rate: '30', usd_thb_rate_date: '2026-10-15' })).toMatchObject({ combinedThb: 4500.5, rate: 30 });
+  it('per-currency totals never add USD to THB', () => {
+    expect(c.totals(portfolio)).toEqual({ thb: 1500.5, usd: 100 });
   });
   it('goal progress and last updated', () => {
     const g = c.goalProgress(portfolio, { goal_dime_thb: '2000' });

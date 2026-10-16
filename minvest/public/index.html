@@ -48,7 +48,19 @@
 
       <section aria-labelledby="h-kpi">
         <h2 id="h-kpi" class="section-title">ภาพรวม</h2>
+        <div id="fx-bar" class="fx-bar" role="status" aria-live="polite"></div>
         <div id="kpis" class="kpi-grid"></div>
+      </section>
+
+      <section aria-labelledby="h-total">
+        <div class="section-head"><h2 id="h-total" class="section-title">มูลค่ารวมเป็นบาท และการเปลี่ยนแปลง</h2></div>
+        <p class="hint">เป็นการเปลี่ยนแปลงของ “มูลค่าพอร์ต” (รวมเงินฝาก/ถอน และการขยับของอัตราแลกเปลี่ยน) — ไม่ใช่กำไร/ขาดทุน</p>
+        <div class="chart-grid">
+          <figure class="card chart-card"><figcaption>มูลค่ารวม (THB) = Dime + StashAway + Webull USD × อัตรารายวัน</figcaption><div class="chart-box"><canvas id="chart-total-thb" aria-label="กราฟมูลค่ารวมเป็นบาท" role="img"></canvas></div><div class="empty" id="empty-total-thb" hidden>ยังคำนวณไม่ได้ — ต้องมีข้อมูลทั้ง 3 พอร์ตและอัตราแลกเปลี่ยน</div></figure>
+          <div class="card" id="allocation-card"></div>
+        </div>
+        <div class="card" id="windows-card"></div>
+        <p id="total-notes" class="hint"></p>
       </section>
 
       <section id="alerts-section" aria-labelledby="h-alerts" hidden>
@@ -113,13 +125,20 @@
           </div>
         </div>
         <div class="card">
-          <div class="table-tools"><input id="table-search" type="search" placeholder="ค้นหา (วันที่ / หมายเหตุ)" aria-label="ค้นหา"><label class="check"><input id="table-void" type="checkbox"><span>แสดงรายการที่ยกเลิก</span></label></div>
+          <div class="table-tools">
+            <input id="table-search" type="search" placeholder="ค้นหา (วันที่ / หมายเหตุ)" aria-label="ค้นหา">
+            <label class="inline-field" id="tf-kind-wrap"><span>ชนิดแถว</span><select id="tf-kind" aria-label="กรองตามชนิดแถว"></select></label>
+            <label class="inline-field"><span>ตั้งแต่</span><input id="tf-from" type="date" aria-label="วันที่เริ่ม"></label>
+            <label class="inline-field"><span>ถึง</span><input id="tf-to" type="date" aria-label="วันที่สิ้นสุด"></label>
+            <label class="check"><input id="table-void" type="checkbox"><span>แสดงรายการที่ลบ/ยกเลิก</span></label>
+            <button class="btn btn-sm" id="btn-reset-filters" type="button">ล้างตัวกรอง</button>
+            <button class="btn btn-sm" id="btn-export" type="button">ส่งออก CSV</button>
+          </div>
           <div class="table-wrap"><table class="table" id="history-table"><thead></thead><tbody></tbody></table></div>
           <div class="pager"><button class="btn btn-sm" id="pg-prev" type="button">ก่อนหน้า</button><span id="pg-info" class="muted"></span><button class="btn btn-sm" id="pg-next" type="button">ถัดไป</button></div>
         </div>
       </section>
 
-      <footer class="foot muted">ข้อมูลเก็บใน Google Sheets ของคุณ · เวลาอ้างอิง Asia/Bangkok · ตัวเลขคาดการณ์เป็นการประมาณทางสถิติ ไม่ใช่คำแนะนำการลงทุน</footer>
     </main>
   </div>
 
@@ -130,6 +149,24 @@
       <div id="fd-body" class="dialog-body"></div>
       <p id="fd-error" class="error" role="alert" hidden></p>
       <footer class="dialog-foot"><button type="button" class="btn" id="fd-back" hidden>ย้อนกลับ</button><button type="submit" class="btn btn-primary" id="fd-submit">ตรวจสอบ</button></footer>
+    </form>
+  </dialog>
+
+  <!-- ───────── Security: change password ───────── -->
+  <dialog id="security-dialog" class="dialog" aria-labelledby="sec-title">
+    <form id="sec-form" method="dialog" novalidate autocomplete="off">
+      <header class="dialog-head"><h3 id="sec-title">ความปลอดภัย · เปลี่ยนรหัสผ่าน</h3><button type="button" class="btn btn-ghost btn-sm" id="sec-close" aria-label="ปิด">✕</button></header>
+      <div class="dialog-body">
+        <p id="sec-source" class="notice"></p>
+        <label class="field"><span>รหัสผ่านปัจจุบัน</span><span class="pw-row"><input id="sec-current" type="password" autocomplete="current-password" maxlength="256" required><button type="button" class="btn btn-sm pw-toggle" data-target="sec-current" aria-pressed="false">แสดง</button></span></label>
+        <label class="field"><span>รหัสผ่านใหม่ (อย่างน้อย 12 ตัวอักษร)</span><span class="pw-row"><input id="sec-new" type="password" autocomplete="new-password" maxlength="128" required aria-describedby="sec-strength-text"><button type="button" class="btn btn-sm pw-toggle" data-target="sec-new" aria-pressed="false">แสดง</button></span></label>
+        <div class="strength" aria-hidden="true"><span id="sec-bar"></span></div>
+        <ul id="sec-strength-text" class="strength-text" aria-live="polite"></ul>
+        <label class="field"><span>ยืนยันรหัสผ่านใหม่</span><span class="pw-row"><input id="sec-confirm" type="password" autocomplete="new-password" maxlength="128" required><button type="button" class="btn btn-sm pw-toggle" data-target="sec-confirm" aria-pressed="false">แสดง</button></span></label>
+        <p class="muted small">เมื่อเปลี่ยนสำเร็จ อุปกรณ์/เบราว์เซอร์อื่นที่ล็อกอินค้างอยู่จะถูกออกจากระบบทันที (เครื่องนี้ยังอยู่ในระบบต่อ) รหัสผ่านเก็บแบบแฮช (PBKDF2 + salt) ใน Cloudflare — ไม่เก็บเป็นข้อความธรรมดา และไม่ส่งไป Google Sheets</p>
+      </div>
+      <p id="sec-error" class="error" role="alert" hidden></p>
+      <footer class="dialog-foot"><button type="submit" class="btn btn-primary" id="sec-submit">เปลี่ยนรหัสผ่าน</button></footer>
     </form>
   </dialog>
 

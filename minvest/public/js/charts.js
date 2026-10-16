@@ -39,6 +39,17 @@ export function valueChart(id, platforms, series, ccy, extra = []) {
   draw(id, { type: 'line', data: { datasets: [...ds, ...extra] }, options: base(ccy) });
 }
 
+/** Total THB line. Each point keeps its parts + the rate used so the tooltip can show exactly how the number was built. */
+export function totalChart(id, points) {
+  const o = base('THB');
+  o.plugins.tooltip.callbacks.afterBody = (items) => {
+    const p = points[items[0].dataIndex]; if (!p) return [];
+    return [`Dime ${fmtMoney(p.dime, 'THB')}`, `StashAway ${fmtMoney(p.stashaway, 'THB')}`, `Webull ${fmtMoney(p.webullUsd, 'USD')} × ${p.rate} = ${fmtMoney(p.webullThb, 'THB')}`, p.carried ? `อัตราจากวันทำการก่อนหน้า (${fmtDate(p.rateDate)})` : `อัตราวันที่ ${fmtDate(p.rateDate)}`];
+  };
+  const c = css('--accent');
+  draw(id, { type: 'line', data: { datasets: [{ label: 'รวม (THB)', borderColor: c, backgroundColor: c, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.1, data: points.map((p) => ({ x: toMs(p.d), y: p.total })) }] }, options: o });
+}
+
 export function barChart(id, platforms, rows, ccy) {
   const ds = platforms.map((p) => {
     const any = rows.some((r) => r[p] !== 0);
