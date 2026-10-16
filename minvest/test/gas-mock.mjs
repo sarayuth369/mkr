@@ -16,7 +16,7 @@ class Range {
   constructor(sheet, r, c, nr, nc) { Object.assign(this, { sheet, r, c, nr, nc }); }
   getValues() { const out = []; for (let i = 0; i < this.nr; i++) { const row = []; for (let j = 0; j < this.nc; j++) row.push(this.sheet.get(this.r + i, this.c + j)); out.push(row); } return out; }
   getValue() { return this.sheet.get(this.r, this.c); }
-  setValues(v) { for (let i = 0; i < this.nr; i++) for (let j = 0; j < this.nc; j++) this.sheet.set(this.r + i, this.c + j, v[i][j]); return this; }
+  setValues(v) { if (this.r + this.nr - 1 > this.sheet.maxRows) throw new Error('Exception: The coordinates of the range are outside the dimensions of the sheet.'); for (let i = 0; i < this.nr; i++) for (let j = 0; j < this.nc; j++) this.sheet.set(this.r + i, this.c + j, v[i][j]); return this; }
   setValue(v) { this.sheet.set(this.r, this.c, v); return this; }
   setNumberFormat() { return this; }
 }
@@ -29,6 +29,7 @@ class Sheet {
   getMaxRows() { return this.maxRows; }
   getRange(r, c, nr = 1, nc = 1) { return new Range(this, r, c, nr, nc); }
   appendRow(vals) { const r = this.getLastRow() + 1; vals.forEach((v, j) => this.set(r, j + 1, v)); }
+  insertRowsAfter(pos, n) { this.maxRows += n; }
   setFrozenRows() {}
   clearContents() { this.data = []; }
 }

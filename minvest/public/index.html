@@ -32,6 +32,7 @@
         <button class="btn btn-primary" id="btn-add-daily" type="button">+ บันทึกข้อมูลวันนี้</button>
         <button class="btn" id="btn-add-value" type="button">อัปเดตมูลค่าพอร์ต</button>
         <button class="btn" id="btn-add-cashflow" type="button">เงินฝาก/ถอน/ปันผล</button>
+        <button class="btn btn-ghost" id="btn-import" type="button">นำเข้าข้อมูลย้อนหลัง</button>
         <button class="btn btn-ghost" id="btn-settings" type="button" aria-label="ตั้งค่า">ตั้งค่า</button>
         <button class="btn btn-ghost" id="btn-theme" type="button" aria-label="สลับโหมดสี">◐</button>
         <button class="btn btn-ghost" id="btn-logout" type="button">ออก</button>
@@ -130,6 +131,23 @@
       <p id="fd-error" class="error" role="alert" hidden></p>
       <footer class="dialog-foot"><button type="button" class="btn" id="fd-back" hidden>ย้อนกลับ</button><button type="submit" class="btn btn-primary" id="fd-submit">ตรวจสอบ</button></footer>
     </form>
+  </dialog>
+
+  <!-- ───────── Historical import dialog ───────── -->
+  <dialog id="import-dialog" class="dialog dialog-wide" aria-labelledby="im-title">
+    <div>
+      <header class="dialog-head"><h3 id="im-title">นำเข้าข้อมูลย้อนหลัง (Excel → Google Sheets)</h3><button type="button" class="btn btn-ghost btn-sm" id="im-close" aria-label="ปิด">✕</button></header>
+      <div class="dialog-body">
+        <p class="notice">เลือกไฟล์ <b>normalized.json</b> ที่ได้จากคำสั่ง <code>node tools/import-excel.mjs --file "…\value infox.xlsx"</code> (ไฟล์อยู่ที่ <code>minvest\data\normalized.json</code>).
+          ไฟล์ถูกอ่านในเบราว์เซอร์นี้เท่านั้น แล้วส่งเข้า Google Sheets ของคุณผ่านเซสชันที่ login อยู่ — ไม่มีการส่งไปที่อื่น</p>
+        <label class="field"><span>ไฟล์ normalized.json</span><input id="im-file" type="file" accept="application/json,.json"></label>
+        <p id="im-summary" class="muted" hidden></p>
+        <p id="im-error" class="error" role="alert" hidden></p>
+        <ul id="im-log" class="import-log" aria-live="polite"></ul>
+        <p id="im-status" class="im-status" hidden></p>
+      </div>
+      <footer class="dialog-foot"><button type="button" class="btn btn-primary" id="im-run" disabled>ตรวจสอบและนำเข้า</button></footer>
+    </div>
   </dialog>
 
   <script src="/vendor/chart.umd.js"></script>

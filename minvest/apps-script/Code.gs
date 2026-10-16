@@ -193,6 +193,12 @@ function mv_sheet_(ss, name, headers) {
   return sh;
 }
 
+/** setValues beyond the grid throws in Sheets; grow the sheet first (default grid is only 1000 rows). */
+function mv_ensureRows_(sh, lastNeededRow) {
+  var max = sh.getMaxRows();
+  if (lastNeededRow > max) sh.insertRowsAfter(max, lastNeededRow - max);
+}
+
 function mv_rows_(sh, ncols) {
   var last = sh.getLastRow();
   if (last < 2) return [];
@@ -425,6 +431,7 @@ function mv_importHistorical_(p) {
   });
   if (toAdd.length) {
     var start = sh.getLastRow() + 1;
+    mv_ensureRows_(sh, start + toAdd.length - 1);
     sh.getRange(start, 1, toAdd.length, MINVEST.HIST_HEADERS.length).setValues(toAdd);
     sh.getRange(start, 1, toAdd.length, 1).setNumberFormat('dd/MM/yyyy');
   }
@@ -450,7 +457,7 @@ function mv_importSimple_(p, which) {
       x.suggestedAmountThb === null || x.suggestedAmountThb === undefined ? '' : mv_amount_(x.suggestedAmountThb, 'thb'), x.suggestedAmountUsd === null || x.suggestedAmountUsd === undefined ? '' : mv_amount_(x.suggestedAmountUsd, 'usd'),
       mv_safeText_(x.note, 2000), 'pending_owner_confirmation', key]);
   });
-  if (toAdd.length) sh.getRange(sh.getLastRow() + 1, 1, toAdd.length, ncols).setValues(toAdd);
+  if (toAdd.length) { mv_ensureRows_(sh, sh.getLastRow() + toAdd.length); sh.getRange(sh.getLastRow() + 1, 1, toAdd.length, ncols).setValues(toAdd); }
   return { inserted: toAdd.length, skipped: skipped };
 }
 

@@ -198,3 +198,18 @@ describe('import precision (regression: 3-decimal source values must not abort a
     expect(g.call('importHistorical', { platform: 'dime', rows: [row(4, 1e12)] }).ok).toBe(false);
   });
 });
+
+describe('grid growth (regression: Sheets setValues fails beyond the default 1000-row grid)', () => {
+  it('imports more rows than the default grid holds, in several batches, without error', () => {
+    const mk = (n) => ({ date: '2026-01-01', thb: n, usd: null, note: null, kind: 'value', sourceSheet: 'Dime24', sourceRow: n, raw: {}, reviewFlag: '', importKey: n.toString(16).padStart(32, '0') });
+    let inserted = 0;
+    for (let b = 0; b < 9; b++) {
+      const rows = Array.from({ length: 150 }, (_, i) => mk(b * 150 + i + 1));
+      const r = g.call('importHistorical', { platform: 'dime', rows });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      inserted += r.data.inserted;
+    }
+    expect(inserted).toBe(1350);
+    expect(g.ss.getSheetByName('Historical_Dime').getLastRow()).toBe(1351);
+  });
+});

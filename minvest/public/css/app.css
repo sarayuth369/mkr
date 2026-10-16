@@ -147,3 +147,12 @@ textarea { min-height: 72px; resize: vertical; }
   .section-head .seg { max-width: 100%; overflow-x: auto; flex-wrap: nowrap; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+.dialog-wide { width: min(720px, calc(100vw - 24px)); }
+.import-log { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; font-size: .86rem; font-variant-numeric: tabular-nums; }
+.import-log li { padding: 4px 8px; border-radius: 6px; background: var(--surface); word-break: break-word; }
+.import-log li.pass::before { content: "PASS  "; color: var(--pos); font-weight: 700; }
+.import-log li.fail::before { content: "FAIL  "; color: var(--neg); font-weight: 700; }
+.im-status { margin-top: 12px; padding: 10px 14px; border-radius: 10px; font-weight: 700; border: 1px solid var(--line); }
+.im-status.is-pass { border-color: var(--pos); color: var(--pos); } .im-status.is-fail { border-color: var(--neg); color: var(--neg); }
+code { background: var(--surface); padding: 1px 6px; border-radius: 6px; font-size: .85em; }

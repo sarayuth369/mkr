@@ -2,6 +2,7 @@
 import { api, get, post, put, ApiError } from './api.js';
 import * as calc from './calc.js';
 import { barChart, cumulativeChart, forecastChart, valueChart } from './charts.js';
+import { initImportUi } from './import-ui.js';
 import { bangkokNow, fmtDate, fmtMoney, fmtNum, fmtPct, signClass } from './format.js';
 
 const $ = (id) => document.getElementById(id);
@@ -406,6 +407,7 @@ function wire() {
   window.addEventListener('online', () => { banner(null); refresh(); });
   $('btn-refresh').addEventListener('click', refresh); $('btn-theme').addEventListener('click', toggleTheme);
   $('btn-add-daily').addEventListener('click', () => openDailyForm()); $('btn-add-value').addEventListener('click', openValueForm);
+  initImportUi(refresh);
   $('btn-add-cashflow').addEventListener('click', openCashflowForm); $('btn-settings').addEventListener('click', openSettingsForm);
   const rb = $('range-buttons');
   for (const [k, label] of RANGES) rb.append(el('button', { type: 'button', class: `seg-btn${k === state.range ? ' is-active' : ''}`, 'data-range': k, onclick: () => { state.range = k; for (const b of rb.children) b.classList.toggle('is-active', b.dataset.range === k); renderCharts(); }, text: label }));
