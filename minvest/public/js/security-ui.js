@@ -67,7 +67,7 @@ export function initSecurityUi({ onChanged }) {
       onChanged?.();
     } catch (e) {
       const a = e instanceof ApiError ? e.details?.attempts : null;
-      showError(e instanceof ApiError ? e.message + (a && e.code === 'INVALID_CURRENT' ? ` — ผิดแล้ว ${a.used}/${a.max} ครั้ง (เหลืออีก ${a.left} ครั้ง ก่อนระบบล็อก 1 ชั่วโมง)` : '') : 'เปลี่ยนรหัสผ่านไม่สำเร็จ'); // generic: never echoes input
+      showError(e instanceof ApiError ? e.message + (a && e.code === 'INVALID_CURRENT' ? ` — ผิดแล้ว ${a.used}/${a.max} ครั้ง` : '') : 'เปลี่ยนรหัสผ่านไม่สำเร็จ'); // generic: never echoes input
     } finally { busy = false; $('sec-submit').disabled = !session.passwordChangeAvailable; }
   });
 }

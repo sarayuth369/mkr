@@ -69,7 +69,7 @@ function setLoginLock(seconds) {
 }
 function showLoginAttempts(a) {
   const err = $('login-error');
-  err.textContent = `รหัสผ่านไม่ถูกต้อง — ผิดแล้ว ${a.used}/${a.max} ครั้ง (เหลืออีก ${a.left} ครั้ง ก่อนระบบล็อก 1 ชั่วโมง)`; err.hidden = false;
+  err.textContent = `รหัสผ่านไม่ถูกต้อง — ผิดแล้ว ${a.used}/${a.max} ครั้ง`; err.hidden = false;
 }
 function showLogin(configured = true, lock = null) {
   $('main-view').hidden = true; $('login-view').hidden = false; $('login-config').hidden = configured;
