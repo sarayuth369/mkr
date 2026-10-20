@@ -192,3 +192,5 @@ code { background: var(--surface); padding: 1px 6px; border-radius: 6px; font-si
   #history-table th:last-child, #history-table td:last-child { position: sticky; right: 0; background: var(--card); box-shadow: -8px 0 8px -8px rgba(0, 0, 0, .45); }
   #history-table .actions { flex-direction: column; }
 }
+
+.login-title { margin: 6px 0 2px; text-align: center; font-weight: 700; letter-spacing: .28em; font-size: 1.05rem; color: var(--muted); }
