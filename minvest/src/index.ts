@@ -15,8 +15,9 @@ async function doCall<T>(ns: DurableObjectNamespace, name: string, path: string,
   const res = await ns.get(ns.idFromName(name)).fetch(`https://do.internal${path}`, body === undefined ? undefined : { method: 'POST', body: JSON.stringify(body) });
   return (await res.json()) as T;
 }
-interface VerifyResult { ok: boolean; ver?: number; locked?: boolean; retryAfter?: number }
-interface ChangeResult { ok: boolean; ver?: number; locked?: boolean; retryAfter?: number; code?: string; reasons?: string[] }
+interface VerifyResult { ok: boolean; ver?: number; locked?: boolean; retryAfter?: number; used?: number; left?: number; max?: number }
+interface ChangeResult extends VerifyResult { code?: string; reasons?: string[] }
+interface LockStatus { locked: boolean; retryAfter: number; used: number; left: number; max: number }
 const FX_UNAVAILABLE = { status: 'unavailable', error: 'ยังไม่ได้เปิดใช้บริการอัตราแลกเปลี่ยน' };
 
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -42,7 +43,10 @@ function json(status: number, body: unknown, extra: Record<string, string> = {})
   return withHeaders(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } }), { 'Cache-Control': 'private, no-store', ...extra });
 }
 const ok = (data: unknown, extra?: Record<string, string>) => json(200, { ok: true, data }, extra);
-const fail = (status: number, code: string, message: string, extra?: Record<string, string>) => json(status, { ok: false, error: { code, message } }, extra);
+const fail = (status: number, code: string, message: string, extra?: Record<string, string>, details?: Record<string, unknown>) => json(status, { ok: false, error: { code, message, ...(details ?? {}) } }, extra);
+/** Wrong-password / lock replies carry the attempt counter so the UI can show it (no secret in it). */
+const attemptInfo = (r: { used?: number; left?: number; max?: number; retryAfter?: number }) => ({ attempts: { used: r.used ?? 0, left: r.left ?? 0, max: r.max ?? 3 }, ...(r.retryAfter ? { retryAfter: r.retryAfter } : {}) });
+const LOCK_MSG = 'ใส่รหัสผ่านผิดครบ 3 ครั้ง ระบบล็อก 1 ชั่วโมง โปรดลองใหม่ภายหลัง';
 
 // Best-effort per-isolate fallback when the Workers Rate Limiting binding is unavailable (local dev/tests).
 const memHits = new Map<string, number[]>();
@@ -115,8 +119,8 @@ async function api(request: Request, env: Env, url: URL, deps: Deps): Promise<Re
     let ver = 0;
     if (env.AUTH_STORE) {
       const r = await doCall<VerifyResult>(env.AUTH_STORE, 'owner', '/verify', { password: pw });
-      if (r.locked) return fail(429, 'LOCKED', 'ลองรหัสผิดหลายครั้ง ระบบล็อกชั่วคราว โปรดลองใหม่ภายหลัง', { 'Retry-After': String(r.retryAfter ?? 900) });
-      if (!r.ok) return fail(401, 'INVALID_CREDENTIALS', 'รหัสผ่านไม่ถูกต้อง');
+      if (r.locked) return fail(429, 'LOCKED', LOCK_MSG, { 'Retry-After': String(r.retryAfter ?? 3600) }, attemptInfo(r));
+      if (!r.ok) return fail(401, 'INVALID_CREDENTIALS', 'รหัสผ่านไม่ถูกต้อง', undefined, attemptInfo(r));
       ver = r.ver ?? 0;
     } else if (!(await safeEqual(pw, env.MINVEST_PASSWORD!, env.MINVEST_SESSION_SECRET!))) {
       return fail(401, 'INVALID_CREDENTIALS', 'รหัสผ่านไม่ถูกต้อง');
@@ -138,7 +142,10 @@ async function api(request: Request, env: Env, url: URL, deps: Deps): Promise<Re
     authed = s.ver === sess.ver;
     passwordSource = s.source;
   }
-  if (path === '/api/session' && method === 'GET') return ok({ authenticated: authed, configured: isConfigured(env), ...(authed ? { passwordSource, passwordChangeAvailable: Boolean(env.AUTH_STORE) } : {}) });
+  if (path === '/api/session' && method === 'GET') {
+    const lock = !authed && env.AUTH_STORE && isConfigured(env) ? await doCall<LockStatus>(env.AUTH_STORE, 'owner', '/status') : null;
+    return ok({ authenticated: authed, configured: isConfigured(env), ...(authed ? { passwordSource, passwordChangeAvailable: Boolean(env.AUTH_STORE) } : {}), ...(lock && (lock.locked || lock.used > 0) ? { lock } : {}) });
+  }
   if (!authed) return fail(401, 'UNAUTHENTICATED', 'กรุณาเข้าสู่ระบบ');
 
   const f = deps.fetchImpl ?? fetch;
@@ -149,9 +156,9 @@ async function api(request: Request, env: Env, url: URL, deps: Deps): Promise<Re
     if (!(await allow(env.LOGIN_LIMITER, `pwchange:${ip}`, 5, 60_000, now))) return fail(429, 'RATE_LIMITED', 'ลองเปลี่ยนรหัสผ่านบ่อยเกินไป รอ 1 นาที', { 'Retry-After': '60' });
     const { current, next } = v.parsePasswordChange(await readJson(request, 2048));
     const r = await doCall<ChangeResult>(env.AUTH_STORE, 'owner', '/change', { current, next });
-    if (r.locked) return fail(429, 'LOCKED', 'ลองรหัสผิดหลายครั้ง ระบบล็อกชั่วคราว โปรดลองใหม่ภายหลัง', { 'Retry-After': String(r.retryAfter ?? 900) });
+    if (r.locked) return fail(429, 'LOCKED', LOCK_MSG, { 'Retry-After': String(r.retryAfter ?? 3600) }, attemptInfo(r));
     if (!r.ok) {
-      if (r.code === 'INVALID_CURRENT') return fail(403, 'INVALID_CURRENT', 'รหัสผ่านปัจจุบันไม่ถูกต้อง');
+      if (r.code === 'INVALID_CURRENT') return fail(403, 'INVALID_CURRENT', 'รหัสผ่านปัจจุบันไม่ถูกต้อง', undefined, attemptInfo(r));
       if (r.code === 'SAME_PASSWORD') return fail(400, 'SAME_PASSWORD', 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสเดิม');
       if (r.code === 'WEAK_PASSWORD') return fail(400, 'WEAK_PASSWORD', `รหัสผ่านใหม่ไม่ปลอดภัยพอ: ${(r.reasons ?? []).join(' / ')}`);
       throw new HttpError(500, 'INTERNAL', 'เกิดข้อผิดพลาดภายในระบบ');

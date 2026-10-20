@@ -194,17 +194,65 @@ describe('password change (Durable Object, PBKDF2)', () => {
   });
 });
 
-describe('AuthStore brute-force lock', () => {
-  it('locks after 10 failures within 15 min (login and change share the counter), unlocks later, success resets', async () => {
-    let t = 1_000_000;
-    const store = new AuthStore({ storage: memStorage() }, { MINVEST_PASSWORD: OLD_PW, MINVEST_SESSION_SECRET: 'abcdefghijklmnopqrstuvwxyz012345' }, () => t);
-    const call = async (path, body) => (await store.fetch(new Request('https://x' + path, { method: 'POST', body: JSON.stringify(body) }))).json();
-    for (let i = 0; i < 10; i++) expect((await call('/verify', { password: 'bad' + i })).ok).toBe(false);
-    const locked = await call('/verify', { password: OLD_PW }); // correct password is also refused while locked
-    expect(locked).toMatchObject({ ok: false, locked: true }); expect(locked.retryAfter).toBeGreaterThan(0);
-    expect((await call('/change', { current: OLD_PW, next: NEW_PW })).locked).toBe(true);
-    t += 16 * 60_000;
-    expect((await call('/verify', { password: OLD_PW })).ok).toBe(true);
+describe('login lock: 3 wrong passwords => 1 hour lock, with an attempt counter', () => {
+  const HOUR = 3600;
+  const badLogin = (pw = 'wrong-password-xyz') => run(req('/api/login', { method: 'POST', body: { password: pw } }));
+  beforeEach(() => _resetRateLimitForTests());
+
+  it('reports how many attempts were used/left, locks on the 3rd, refuses even the right password, unlocks after exactly 1 hour', async () => {
+    const r1 = await badLogin(); const b1 = await r1.json();
+    expect(r1.status).toBe(401); expect(b1.error.attempts).toEqual({ used: 1, left: 2, max: 3 });
+    _resetRateLimitForTests();
+    const b2 = await (await badLogin()).json();
+    expect(b2.error.attempts).toEqual({ used: 2, left: 1, max: 3 });
+    _resetRateLimitForTests();
+    const r3 = await badLogin(); const b3 = await r3.json();
+    expect(r3.status).toBe(429); expect(b3.error.code).toBe('LOCKED');
+    expect(b3.error.retryAfter).toBe(HOUR); expect(r3.headers.get('retry-after')).toBe(String(HOUR));
+    expect(b3.error.attempts).toEqual({ used: 3, left: 0, max: 3 });
+    _resetRateLimitForTests();
+    const right = await run(req('/api/login', { method: 'POST', body: { password: OLD_PW } })); // correct password, still locked
+    expect(right.status).toBe(429); expect(right.headers.get('set-cookie')).toBeNull();
+    clock += 59 * 60_000; _resetRateLimitForTests();
+    const still = await (await run(req('/api/login', { method: 'POST', body: { password: OLD_PW } }))).json();
+    expect(still.error.retryAfter).toBeGreaterThan(0); expect(still.error.retryAfter).toBeLessThanOrEqual(60);
+    clock += 61_000; _resetRateLimitForTests();
+    expect((await run(req('/api/login', { method: 'POST', body: { password: OLD_PW } }))).status).toBe(200);
+  });
+  it('a correct login resets the counter; counting starts again from 0 after the lock ends', async () => {
+    await badLogin(); _resetRateLimitForTests();
+    expect((await login()).res.status).toBe(200); _resetRateLimitForTests();
+    expect((await (await badLogin()).json()).error.attempts.used).toBe(1);
+    _resetRateLimitForTests(); await badLogin(); _resetRateLimitForTests(); await badLogin(); // locked
+    clock += HOUR * 1000 + 1000; _resetRateLimitForTests();
+    expect((await (await badLogin()).json()).error.attempts).toEqual({ used: 1, left: 2, max: 3 });
+  });
+  it('failures older than 1 hour are forgotten', async () => {
+    await badLogin(); _resetRateLimitForTests(); await badLogin();
+    clock += HOUR * 1000 + 1000; _resetRateLimitForTests();
+    expect((await (await badLogin()).json()).error.attempts.used).toBe(1);
+  });
+  it('/api/session tells the login page about the counter and the lock (no secrets)', async () => {
+    expect((await (await run(req('/api/session', { origin: null }))).json()).data.lock).toBeUndefined();
+    await badLogin();
+    expect((await (await run(req('/api/session', { origin: null }))).json()).data.lock).toMatchObject({ locked: false, used: 1, left: 2, max: 3 });
+    _resetRateLimitForTests(); await badLogin(); _resetRateLimitForTests(); await badLogin();
+    const lock = (await (await run(req('/api/session', { origin: null }))).json()).data.lock;
+    expect(lock).toMatchObject({ locked: true, used: 3, left: 0 }); expect(lock.retryAfter).toBe(HOUR);
+  });
+  it('a locked system does not log out an already signed-in browser, and password-change attempts share the counter', async () => {
+    const { cookie } = await login();
+    for (let i = 0; i < 3; i++) { _resetRateLimitForTests(); await change(cookie, { current: 'wrong-current-pw', next: NEW_PW }); }
+    expect((await run(req('/api/dashboard', { cookie }))).status).toBe(200);
+    _resetRateLimitForTests();
+    expect((await badLogin(OLD_PW)).status).toBe(429); // locked for login too
+  });
+  it('owner recovery: bumping MINVEST_PASSWORD_EPOCH clears the lock', async () => {
+    for (let i = 0; i < 3; i++) { _resetRateLimitForTests(); await badLogin(); }
+    _resetRateLimitForTests();
+    expect((await badLogin(OLD_PW)).status).toBe(429);
+    const recovered = { ...env, MINVEST_PASSWORD_EPOCH: 'epoch-after-lock' }; mkEnv.cur = recovered; _resetRateLimitForTests();
+    expect((await login(OLD_PW, recovered)).res.status).toBe(200);
   });
 });
 

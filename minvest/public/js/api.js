@@ -21,6 +21,7 @@ export async function api(method, path, body) {
   // Upstream (Apps Script) messages are English; show Thai for the cases a user can actually hit.
   const thai = { CONFLICT: 'รายการนี้ถูกแก้ไขหรือยกเลิกจากที่อื่นแล้ว — โหลดข้อมูลใหม่ให้แล้ว กรุณาตรวจสอบและลองอีกครั้ง', NOT_FOUND: 'ไม่พบรายการนี้ (อาจถูกลบในชีต) — โหลดข้อมูลใหม่แล้ว', BUSY: 'ระบบกำลังบันทึกข้อมูลอื่นอยู่ กรุณาลองอีกครั้งในไม่กี่วินาที' };
   const err = new ApiError(thai[code] ?? json?.error?.message ?? `เกิดข้อผิดพลาด (HTTP ${res.status})`, code, res.status);
+  err.details = json?.error ?? null; // e.g. {attempts:{used,left,max}, retryAfter} on login
   if (res.status === 401 && path !== '/api/login') window.dispatchEvent(new CustomEvent('minvest:unauthenticated'));
   throw err;
 }

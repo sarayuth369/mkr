@@ -51,9 +51,31 @@ function toggleTheme() {
 }
 
 // ───────── views / auth ─────────
-function showLogin(configured = true) {
+// ───────── login: wrong-password counter + 1-hour lock (state lives on the server; this only displays it) ─────────
+let lockTimer = null, loginLocked = false;
+const fmtLeft = (sec) => { const m = Math.floor(sec / 60), s2 = sec % 60; return m ? `${m} นาที ${String(s2).padStart(2, '0')} วินาที` : `${s2} วินาที`; };
+function setLoginLock(seconds) {
+  clearInterval(lockTimer);
+  const input = $('login-password'), btn = $('login-submit'), err = $('login-error');
+  const end = Date.now() + seconds * 1000;
+  loginLocked = true;
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    if (!left) { clearInterval(lockTimer); loginLocked = false; input.disabled = false; btn.disabled = false; err.hidden = true; input.focus(); return; }
+    input.disabled = true; btn.disabled = true; input.value = '';
+    err.textContent = `🔒 ระบบถูกล็อก — ใส่รหัสผ่านผิดครบ 3 ครั้ง ลองใหม่ได้ในอีก ${fmtLeft(left)}`; err.hidden = false;
+  };
+  tick(); lockTimer = setInterval(tick, 1000);
+}
+function showLoginAttempts(a) {
+  const err = $('login-error');
+  err.textContent = `รหัสผ่านไม่ถูกต้อง — ผิดแล้ว ${a.used}/${a.max} ครั้ง (เหลืออีก ${a.left} ครั้ง ก่อนระบบล็อก 1 ชั่วโมง)`; err.hidden = false;
+}
+function showLogin(configured = true, lock = null) {
   $('main-view').hidden = true; $('login-view').hidden = false; $('login-config').hidden = configured;
   $('login-password').value = ''; setTimeout(() => $('login-password').focus(), 50);
+  if (lock?.locked) setLoginLock(lock.retryAfter);
+  else if (lock?.used > 0) showLoginAttempts(lock);
 }
 async function showMain() {
   $('login-view').hidden = true; $('main-view').hidden = false;
@@ -67,7 +89,7 @@ async function boot() {
   try {
     const s = await get('/api/session');
     state.session = s;
-    if (s.authenticated) await showMain(); else showLogin(s.configured);
+    if (s.authenticated) await showMain(); else showLogin(s.configured, s.lock);
   } catch (e) { showLogin(true); $('login-error').textContent = e.message; $('login-error').hidden = false; }
 }
 
@@ -631,7 +653,11 @@ function wire() {
   $('login-form').addEventListener('submit', async (ev) => {
     ev.preventDefault(); const err = $('login-error'); err.hidden = true; $('login-submit').disabled = true;
     try { await post('/api/login', { password: $('login-password').value }); $('login-password').value = ''; await showMain(); }
-    catch (e) { err.textContent = e.message; err.hidden = false; } finally { $('login-submit').disabled = false; }
+    catch (e) {
+      if (e.code === 'LOCKED') setLoginLock(e.details?.retryAfter ?? 3600);
+      else if (e.code === 'INVALID_CREDENTIALS' && e.details?.attempts) { showLoginAttempts(e.details.attempts); $('login-password').value = ''; $('login-password').focus(); }
+      else { err.textContent = e.message; err.hidden = false; }
+    } finally { if (!loginLocked) $('login-submit').disabled = false; }
   });
   $('btn-logout').addEventListener('click', async () => { try { await post('/api/logout'); } finally { state.dash = null; state.daily = []; state.portfolio = {}; state.fx = null; state.fxHist = null; showLogin(true); } });
   window.addEventListener('minvest:unauthenticated', () => { state.dash = null; showLogin(true); toast('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่', true); });
